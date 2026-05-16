@@ -1,0 +1,45 @@
+# Runtime and dependency artifacts
+.git/
+.venv/
+venv/
+ENV/
+__pycache__/
+.pytest_cache/
+node_modules/
+logs/
+
+# Secrets and local state
+.env
+*.env
+.vault-token
+.vault_env
+master.key
+*.key
+*.enc
+ledger.db
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.duckdb
+*.session
+*.session-journal
+
+# Generated model/data artifacts
+user_data/data/
+user_data/models/
+*.pkl
+*.parquet
+*.joblib
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.onnx
+
+# Large context dumps and generated reports
+project_dump.txt
+test_output.log
+graphify-out/

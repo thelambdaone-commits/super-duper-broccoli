@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check . --ignore E501,F401,E402 --line-length=120
+      - name: Type check with mypy
+        run: |
+          pip install mypy types-requests types-python-dateutil
+          mypy . --ignore-missing-imports --check-untyped-defs || true
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v --tb=short --cov=. --cov-report=term-missing
+      - name: Dry-run validation
+        run: |
+          python main_agentic_clob.py --dry-run --mode PAPER || echo "Dry-run may need .vault_env"

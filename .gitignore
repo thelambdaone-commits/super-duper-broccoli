@@ -1,0 +1,63 @@
+# Byte-compiled / optimized / DLLs
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# Configuration and Secrets Vault
+.env
+*.env
+config_secrets.json
+.vault-token
+master.key
+*.duckdb
+*.key
+
+# Local Databases (Ledger State Persistence)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# Freqtrade & FreqAI local runtime artifacts
+user_data/strategies/__pycache__/
+user_data/data/
+user_data/models/
+.mcp_session/
+
+# Runtime logs and deployment
+logs/
+vault.log
+vault.pid
+.vault_env
+
+# Telegram session files (Telethon — legacy)
+*.session
+*.session-journal
+
+# ML model artifacts
+*.pkl
+*.parquet
+*.joblib
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.onnx
+
+# Training / dump artifacts
+*.jsonl
+project_dump.txt
+
+# Pytest cache
+.pytest_cache/
+
+# Node / PM2
+node_modules/
+pm2-*.json

@@ -1,0 +1,273 @@
+import json
+import logging
+import os
+import pickle
+import tempfile
+from typing import Any, Optional
+
+import numpy as np
+from lightgbm import LGBMClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+
+logger = logging.getLogger("HybridQuantModel")
+
+
+MODEL_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "user_data", "models"
+)
+
+
+class TFTEmbeddingHook:
+    def __init__(self, d_model: int = 128) -> None:
+        self.d_model = d_model
+        self._model: Any = None
+
+    def load_tft(self, checkpoint_path: str) -> bool:
+        try:
+            import torch
+            from user_data.hypernetworks.tft_layers import TemporalFusionTransformer
+            self._model = TemporalFusionTransformer(
+                d_features=self.d_model, d_model=self.d_model
+            )
+            state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+            self._model.load_state_dict(state)
+            self._model.eval()
+            logger.info(f"TFT loaded from {checkpoint_path}")
+            return True
+        except Exception as e:
+            logger.warning(f"TFT load failed (non-blocking): {e}")
+            return False
+
+    def extract_embeddings(self, X: np.ndarray) -> np.ndarray:
+        if self._model is None:
+            return X
+        try:
+            import torch
+            with torch.no_grad():
+                x_t = torch.tensor(X, dtype=torch.float32).unsqueeze(1)
+                _ = self._model(x_t)
+                embeddings = self._model.grn(
+                    self._model.lstm(self._model.input_proj(x_t))[0]
+                )
+                return embeddings[:, -1, :].numpy()
+        except Exception as e:
+            logger.warning(f"TFT embedding extraction failed: {e}")
+            return X
+
+
+class HybridQuantModel:
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        max_depth: int = 5,
+        learning_rate: float = 0.05,
+        meta_learner: str = "logistic",
+        random_state: int = 42,
+        tft_hook: Optional[TFTEmbeddingHook] = None,
+    ) -> None:
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.learning_rate = learning_rate
+        self.random_state = random_state
+        self._models: dict[str, Any] = {}
+        self._meta: Any = None
+        self._classes: Optional[np.ndarray] = None
+        self._feature_names: list[str] = []
+        self._tft_hook = tft_hook
+
+        self._meta_type = meta_learner
+
+    def _init_learners(self) -> None:
+        common = {
+            "n_estimators": self.n_estimators,
+            "max_depth": self.max_depth,
+            "random_state": self.random_state,
+            "n_jobs": -1,
+        }
+        self._models = {
+            "xgb": XGBClassifier(
+                learning_rate=self.learning_rate,
+                verbosity=0,
+                **common,
+            ),
+            "lgbm": LGBMClassifier(
+                learning_rate=self.learning_rate,
+                verbosity=-1,
+                min_child_samples=5,
+                **common,
+            ),
+            "rf": RandomForestClassifier(**common),
+        }
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "HybridQuantModel":
+        self._classes = np.unique(y)
+        self._init_learners()
+
+        if self._tft_hook is not None:
+            X = self._tft_hook.extract_embeddings(X)
+
+        for name, model in self._models.items():
+            model.fit(X, y)
+            logger.debug(f"{name} trained (score={model.score(X, y):.4f})")
+
+        meta_X = np.column_stack([
+            model.predict_proba(X)[:, 1] for model in self._models.values()
+        ])
+
+        if self._meta_type == "logistic":
+            self._meta = LogisticRegression(random_state=self.random_state)
+        else:
+            self._meta = LogisticRegression(random_state=self.random_state)
+        self._meta.fit(meta_X, y)
+
+        logger.info(
+            f"HybridQuantModel trained — base: {list(self._models.keys())} "
+            f"meta: {self._meta_type} "
+            f"(train accuracy: {self.score(X, y):.4f})"
+        )
+        return self
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        if not self._models or self._meta is None:
+            raise RuntimeError("Model not fitted. Call fit() first.")
+
+        if self._tft_hook is not None:
+            X = self._tft_hook.extract_embeddings(X)
+
+        meta_X = np.column_stack([
+            model.predict_proba(X)[:, 1] for model in self._models.values()
+        ])
+        return self._meta.predict_proba(meta_X)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        proba = self.predict_proba(X)
+        return (proba[:, 1] >= 0.5).astype(np.int32)
+
+    def predict_direction(self, X: np.ndarray, threshold: float = 0.5) -> np.ndarray:
+        proba = self.predict_proba(X)
+        return np.where(proba[:, 1] >= threshold, 1, -1)
+
+    def score(self, X: np.ndarray, y: np.ndarray) -> float:
+        from sklearn.metrics import accuracy_score
+        return float(accuracy_score(y, self.predict(X)))
+
+    def feature_importance(self) -> dict[str, float]:
+        if not self._models:
+            return {}
+        importance: dict[str, float] = {}
+        for name, model in self._models.items():
+            if hasattr(model, "feature_importances_"):
+                imp = model.feature_importances_
+                imp_sum = float(imp.sum())
+                for i, val in enumerate(imp):
+                    fname = self._feature_names[i] if i < len(self._feature_names) else f"f_{i}"
+                    importance[f"{name}_{fname}"] = float(val) / imp_sum if imp_sum > 0 else 0.0
+        return importance
+
+    def get_meta_weights(self) -> dict[str, float]:
+        if self._meta is None:
+            return {}
+        names = list(self._models.keys())
+        weights = self._meta.coef_[0] if hasattr(self._meta, "coef_") else []
+        return {names[i]: float(w) for i, w in enumerate(weights)} if len(weights) == len(names) else {}
+
+    def save(self, path: str) -> str:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+            dir=os.path.dirname(path),
+        )
+        with os.fdopen(fd, "wb") as f:
+            pickle.dump({
+                "models": self._models,
+                "meta": self._meta,
+                "classes": self._classes,
+                "feature_names": self._feature_names,
+                "config": {
+                    "n_estimators": self.n_estimators,
+                    "max_depth": self.max_depth,
+                    "learning_rate": self.learning_rate,
+                    "random_state": self.random_state,
+                    "meta_type": self._meta_type,
+                },
+            }, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        logger.info(f"Model saved to {path}")
+        return path
+
+    def load(self, path: str) -> "HybridQuantModel":
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        self._models = data["models"]
+        self._meta = data["meta"]
+        self._classes = data.get("classes")
+        self._feature_names = data.get("feature_names", [])
+        cfg = data.get("config", {})
+        self.n_estimators = cfg.get("n_estimators", self.n_estimators)
+        self.max_depth = cfg.get("max_depth", self.max_depth)
+        self.learning_rate = cfg.get("learning_rate", self.learning_rate)
+        self.random_state = cfg.get("random_state", self.random_state)
+        self._meta_type = cfg.get("meta_type", self._meta_type)
+        logger.info(f"Model loaded from {path}")
+        return self
+
+    def summary(self) -> dict:
+        meta_weights = self.get_meta_weights()
+        return {
+            "model_type": "HybridQuantModel",
+            "base_learners": list(self._models.keys()),
+            "meta_learner": self._meta_type,
+            "meta_weights": meta_weights,
+            "n_estimators": self.n_estimators,
+            "max_depth": self.max_depth,
+            "learning_rate": self.learning_rate,
+            "n_features": len(self._feature_names) if self._feature_names else 0,
+            "tft_enabled": self._tft_hook is not None and self._tft_hook._model is not None,
+        }
+
+
+def train_model_from_store(
+    store,
+    ticker: str,
+    feature_names: list[str],
+    target_col: str = "returns_direction",
+    min_samples: int = 100,
+    model_path: Optional[str] = None,
+    tft_hook: Optional[TFTEmbeddingHook] = None,
+    **kwargs,
+) -> Optional[HybridQuantModel]:
+    all_features: list[np.ndarray] = []
+    all_targets: list[np.ndarray] = []
+
+    for fname in feature_names:
+        history = store.get_feature_history(ticker, fname)
+        if len(history) >= min_samples:
+            vals = np.array([h["value"] for h in history], dtype=np.float32)
+            all_features.append(vals)
+
+    if len(all_features) < 2:
+        logger.warning(f"Not enough features for {ticker} (need >=2, got {len(all_features)})")
+        return None
+
+    X = np.column_stack(all_features)
+    returns = X[:, -1] if X.shape[1] > 1 else X[:, 0]
+    y = np.where(np.diff(returns, prepend=returns[0]) > 0, 1, 0).astype(np.int32)
+
+    if len(y) < min_samples:
+        logger.warning(f"Not enough samples for {ticker} ({len(y)} < {min_samples})")
+        return None
+
+    model = HybridQuantModel(tft_hook=tft_hook, **kwargs)
+    model._feature_names = feature_names
+    model.fit(X, y)
+
+    if model_path:
+        model.save(model_path)
+
+    return model

@@ -1,0 +1,389 @@
+{
+  "version": 1,
+  "purpose": "Compact context index for external projects and local skills. Use this before loading repository dumps.",
+  "projects": [
+    {
+      "id": "scrapling",
+      "name": "Scrapling",
+      "repo": "https://github.com/D4Vinci/Scrapling",
+      "category": "web_scraping",
+      "status": "optional_adapter",
+      "token_strategy": "Use utils.scrapling_adapter.scrape_text for narrow page extraction; do not paste scraped pages into prompts unless summarized first.",
+      "use_for": [
+        "Adaptive web scraping",
+        "CSS-selector extraction",
+        "Collecting compact market/news/page text for downstream signal parsing"
+      ],
+      "avoid_for": [
+        "Trading execution",
+        "Long unattended crawls without rate limits",
+        "Fetching secrets or authenticated pages"
+      ],
+      "local_entrypoints": [
+        "utils/scrapling_adapter.py"
+      ],
+      "install": [
+        "pip install \"scrapling[fetchers]\""
+      ]
+    },
+    {
+      "id": "hermes_agent",
+      "name": "Hermes Agent",
+      "repo": "https://github.com/NousResearch/hermes-agent",
+      "category": "agent_framework",
+      "status": "external_reference",
+      "token_strategy": "Use as architecture reference for memory/tools/skills loops; keep only design decisions in continuous_improvement/knowledge_base.",
+      "use_for": [
+        "Self-improving agent loop patterns",
+        "Tool and skill routing ideas",
+        "Memory and messaging architecture"
+      ],
+      "avoid_for": [
+        "Direct runtime dependency until a bounded adapter is implemented",
+        "Replacing the existing risk and execution engine"
+      ],
+      "local_entrypoints": [
+        "continuous_improvement/agent.py",
+        "continuous_improvement/skills/"
+      ]
+    },
+    {
+      "id": "praisonai",
+      "name": "PraisonAI",
+      "repo": "https://github.com/MervinPraison/PraisonAI",
+      "category": "agent_framework",
+      "status": "optional_dependency",
+      "token_strategy": "Use only for bounded multi-agent workflows; pass compact task specs and file paths instead of whole-file context.",
+      "use_for": [
+        "Parallel code review workflows",
+        "Agent task orchestration",
+        "RAG/tool workflow prototypes"
+      ],
+      "avoid_for": [
+        "Production trading decisions without deterministic guardrails",
+        "Unbounded autonomous code changes"
+      ],
+      "install": [
+        "pip install praisonaiagents"
+      ]
+    },
+    {
+      "id": "meta_agent_more_agents",
+      "name": "Meta-Agent-with-More-Agents",
+      "repo": "https://github.com/Jeomon/Meta-Agent-with-More-Agents",
+      "category": "agent_pattern",
+      "status": "external_reference",
+      "token_strategy": "Use the meta-agent delegation pattern only as a planning pattern; delegate by file ownership and explicit output contract.",
+      "use_for": [
+        "Meta-agent task decomposition",
+        "Specialist review passes",
+        "Parallel exploration with concise findings"
+      ],
+      "avoid_for": [
+        "Duplicating local CI skills",
+        "Large context fan-out without a single compact synthesis"
+      ]
+    },
+    {
+      "id": "solana_jupiter_arbitrage_bot",
+      "name": "Solana Jupiter Arbitrage Bot",
+      "repo": "https://github.com/thelambdaone-commits/solana-jupiter-arbitrage-bot",
+      "category": "solana_arbitrage",
+      "status": "external_reference",
+      "token_strategy": "Use as external design reference for Jupiter quote/swap arbitrage only; keep Polymarket CLOB execution isolated unless an explicit Solana adapter is added.",
+      "use_for": [
+        "Jupiter route quote/swap concepts",
+        "Solana arbitrage loop design",
+        "Slippage, route, and profitability checks"
+      ],
+      "avoid_for": [
+        "Directly mixing Solana private keys into Vault trading path without a new secret policy",
+        "Executing Solana swaps from the Polymarket CLOB bot",
+        "Assuming token prices map to binary CLOB probabilities"
+      ],
+      "required_guardrails": [
+        "Separate Solana wallet secrets from CLOB secrets",
+        "Paper/simulation mode first",
+        "Explicit profitability model with fees, slippage, and priority fees",
+        "No PROD swap path without ALLOW_SOLANA_PROD=true and authenticated control plane"
+      ]
+    },
+    {
+      "id": "llm_council",
+      "name": "LLM Council",
+      "repo": "https://github.com/karpathy/llm-council",
+      "category": "agent_pattern",
+      "status": "local_adapter",
+      "token_strategy": "Use config/llm_council.json and MCP build_llm_council_plan before any live model call.",
+      "use_for": [
+        "Multi-model second opinions",
+        "Anonymized cross-review of difficult design or risk questions",
+        "Chairman synthesis for compact final decisions"
+      ],
+      "avoid_for": [
+        "Sending secrets, raw logs, Telegram updates, or private keys to external providers",
+        "Direct trading execution",
+        "Unbounded model fan-out without max_models"
+      ],
+      "local_entrypoints": [
+        "utils/llm_council.py",
+        "scripts/llm_council.py",
+        "config/llm_council.json"
+      ],
+      "required_guardrails": [
+        "Dry-run plans by default",
+        "OpenRouter key must come from environment or Vault",
+        "Council output is advisory only and must pass deterministic project validators"
+      ]
+    },
+    {
+      "id": "mirofish",
+      "name": "MiroFish",
+      "repo": "https://github.com/666ghj/MiroFish",
+      "category": "swarm_simulation",
+      "status": "local_planning_adapter",
+      "license": "AGPL-3.0 upstream; do not vendor upstream code without license review.",
+      "token_strategy": "Use config/mirofish.json and build_mirofish_simulation_plan to create compact simulation briefs before any model calls.",
+      "use_for": [
+        "Swarm-style scenario planning",
+        "Market and public-opinion prediction research",
+        "Persona/cohort generation and contradiction tracking",
+        "Pre-trade research briefs that remain advisory"
+      ],
+      "avoid_for": [
+        "Direct trading execution",
+        "Sending secrets, raw logs, or private Telegram updates to external models",
+        "Large unbounded simulations without round and agent caps",
+        "Copying AGPL upstream code directly into this repo without approval"
+      ],
+      "local_entrypoints": [
+        "utils/mirofish_adapter.py",
+        "scripts/mirofish_plan.py",
+        "config/mirofish.json"
+      ],
+      "required_guardrails": [
+        "Planning only by default",
+        "Bound rounds and agent counts",
+        "Finance scenarios must include fees, slippage, liquidity, latency, and manipulation assumptions",
+        "Simulation output must pass HMM, risk engine, ledger, and execution mode checks before action"
+      ]
+    },
+    {
+      "id": "graphify",
+      "name": "Graphify",
+      "repo": "https://github.com/safishamsi/graphify",
+      "category": "knowledge_graph",
+      "status": "recommended_context_tool",
+      "package": "graphifyy",
+      "token_strategy": "Build or update graphify-out first, then answer codebase questions with graph queries, GRAPH_REPORT.md highlights, and narrow file reads instead of dumping the repository.",
+      "use_for": [
+        "Queryable codebase knowledge graph",
+        "Cross-file architecture questions",
+        "Finding related modules without loading full files",
+        "Low-token onboarding for future AI agents"
+      ],
+      "avoid_for": [
+        "Trading execution",
+        "Indexing secrets, encrypted user data, logs, or runtime databases",
+        "Treating inferred graph edges as audited facts without checking source files"
+      ],
+      "local_entrypoints": [
+        ".graphifyignore",
+        "graphify-out/GRAPH_REPORT.md",
+        "graphify-out/graph.json"
+      ],
+      "install": [
+        "pip install graphifyy",
+        "graphify install --platform codex",
+        "graphify update .",
+        "graphify cluster-only . --no-viz"
+      ],
+      "required_guardrails": [
+        "Respect .graphifyignore before indexing",
+        "Prefer graphify query/path/explain outputs before reading broad source files",
+        "Keep graphify-out generated artifacts out of prompts unless summarized"
+      ]
+    },
+    {
+      "id": "claude_mem",
+      "name": "Claude-Mem",
+      "repo": "https://github.com/thedotmack/claude-mem",
+      "category": "persistent_memory",
+      "status": "external_reference",
+      "token_strategy": "Use its progressive-disclosure memory pattern: compact search results first, timeline/context second, full observations only for filtered IDs.",
+      "use_for": [
+        "Persistent memory design across agent sessions",
+        "Session summary compression",
+        "SQLite/FTS-style searchable observations",
+        "Context reinjection with token visibility"
+      ],
+      "avoid_for": [
+        "Capturing secrets, Vault output, Telegram private messages, or raw trading logs",
+        "Auto-injecting large historical context into every prompt",
+        "Replacing local deterministic validators"
+      ],
+      "install": [
+        "npx claude-mem install",
+        "/plugin marketplace add thedotmack/claude-mem"
+      ],
+      "required_guardrails": [
+        "Use private/exclusion controls for secrets and user data",
+        "Store compact summaries rather than full transcripts",
+        "Retrieve by IDs and batch only the necessary observations"
+      ]
+    },
+    {
+      "id": "everything_claude_code",
+      "name": "Everything Claude Code",
+      "repo": "https://github.com/affaan-m/everything-claude-code",
+      "category": "agent_skill_pack",
+      "status": "external_reference",
+      "token_strategy": "Borrow only selected Codex-compatible skills and AGENTS.md patterns; do not bulk-import the full skill pack into this repository.",
+      "use_for": [
+        "Codex-compatible AGENTS.md conventions",
+        "Cost-aware LLM workflow patterns",
+        "Search-first and verification-loop skills",
+        "Reusable security and documentation review checklists"
+      ],
+      "avoid_for": [
+        "Vendoring every skill, command, hook, and MCP server",
+        "Loading the whole upstream repo as context",
+        "Applying generic frontend/content skills to trading execution code"
+      ],
+      "install": [
+        "Review upstream skills first; copy only the specific skill needed",
+        "Keep project-local Codex instructions in AGENTS.md and .codex/"
+      ],
+      "required_guardrails": [
+        "Selective adoption only",
+        "Preserve this repo's trading risk controls as the source of truth",
+        "Run tests after importing any workflow rule that changes agent behavior"
+      ]
+    },
+    {
+      "id": "superpowers",
+      "name": "Superpowers",
+      "repo": "https://github.com/obra/superpowers",
+      "category": "agent_methodology",
+      "status": "external_reference",
+      "token_strategy": "Use as a lightweight methodology reference for spec-first, plan-first, TDD, and review loops; keep the active context to the current task and touched files.",
+      "use_for": [
+        "Specification-driven implementation",
+        "TDD workflow discipline",
+        "Review and verification checklists",
+        "Reducing rework by clarifying scope before broad edits"
+      ],
+      "avoid_for": [
+        "Mandatory process overhead for small fixes",
+        "Replacing repo-specific MCP/project context tools",
+        "Expanding task scope beyond the user's request"
+      ],
+      "install": [
+        "Use upstream methodology as reference; do not install runtime dependencies by default"
+      ],
+      "required_guardrails": [
+        "Keep plans short and scoped",
+        "Prefer existing tests and narrow new tests",
+        "Do not bypass execution-mode, ledger, or risk guardrails"
+      ]
+    },
+    {
+      "id": "ruflo",
+      "name": "Ruflo",
+      "repo": "https://github.com/ruvnet/ruflo",
+      "category": "agent_orchestration",
+      "status": "external_reference",
+      "token_strategy": "Use Ruflo-style orchestration only for bounded, parallel research or review tasks with strict per-agent file ownership and compact synthesis.",
+      "use_for": [
+        "Multi-agent orchestration patterns",
+        "RAG-backed agent workflow ideas",
+        "Parallel code review or research planning",
+        "Codex/Claude plugin architecture references"
+      ],
+      "avoid_for": [
+        "Autonomous live trading actions",
+        "Unbounded swarms over the full repository",
+        "Sending secrets, private Telegram content, or raw ledger data to external agents"
+      ],
+      "install": [
+        "npx ruflo init",
+        "/plugin marketplace add ruvnet/ruflo"
+      ],
+      "required_guardrails": [
+        "Bound agent count, scope, and file ownership",
+        "Require one compact synthesis before implementation",
+        "Treat all outputs as advisory until local tests and risk checks pass"
+      ]
+    },
+    {
+      "id": "market_intelligence_platform_app",
+      "name": "Market Intelligence Platform App",
+      "repo": "https://github.com/seeker-jpg/market-intelligence-platform-app",
+      "category": "market_intelligence",
+      "status": "local_python_adapter",
+      "token_strategy": "Use the local Python adapter and reports instead of loading the upstream app. Start with utils/crypto_market_intelligence.py and scripts/crypto_market_intelligence.py.",
+      "use_for": [
+        "Crypto prediction-market intelligence",
+        "Polymarket Gamma market ranking",
+        "Watchlist-oriented BTC/ETH/SOL monitoring",
+        "Advisory market reports for Telegram, API, or CLI"
+      ],
+      "avoid_for": [
+        "Direct trading execution",
+        "Replacing parser, ledger, risk, HMM, or execution-mode guardrails",
+        "Treating ranked opportunities as orders without deterministic validation",
+        "Sending secrets or private Telegram data to external services"
+      ],
+      "local_entrypoints": [
+        "utils/crypto_market_intelligence.py",
+        "scripts/crypto_market_intelligence.py",
+        "api_server.py#/v1/market-intelligence/crypto",
+        "tests/test_crypto_market_intelligence.py"
+      ],
+      "required_guardrails": [
+        "Advisory only by default",
+        "Use PolymarketClient public market data; no secrets required",
+        "All generated signals must pass parser, risk, ledger, and execution mode checks before action",
+        "Keep reports compact for Telegram and LLM prompts"
+      ]
+    }
+  ],
+  "local_skills": [
+    {
+      "id": "security",
+      "entrypoint": "continuous_improvement.skills.security.SecuritySkill",
+      "priority_files": [
+        "utils/vault_handler.py",
+        "core/freqai_engine.py",
+        "api_server.py"
+      ]
+    },
+    {
+      "id": "trading",
+      "entrypoint": "continuous_improvement.skills.trading.TradingSkill",
+      "priority_files": [
+        "core/signal_executor.py",
+        "core/portfolio_risk_engine.py",
+        "utils/signal_parser.py"
+      ]
+    },
+    {
+      "id": "execution",
+      "entrypoint": "continuous_improvement.skills.execution.ExecutionSkill",
+      "priority_files": [
+        "execution/passive_executor.py",
+        "core/freqai_engine.py",
+        "core/signal_executor.py"
+      ]
+    },
+    {
+      "id": "mcp",
+      "entrypoint": "continuous_improvement.skills.mcp.MCPSkill",
+      "priority_files": [
+        "mcp_agents/mcp_server.py",
+        "mcp_agents/lobstar_agent.py",
+        "config/mcp_tools.json"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "web_scraping": [
+    {
+      "name": "Scrapling",
+      "repo": "https://github.com/D4Vinci/Scrapling",
+      "package": "scrapling",
+      "purpose": "Adaptive web scraping, fetchers, spiders, CLI, and optional MCP/AI support.",
+      "status": "optional"
+    }
+  ],
+  "context_compression": [
+    {
+      "name": "Graphify",
+      "repo": "https://github.com/safishamsi/graphify",
+      "package": "graphifyy",
+      "purpose": "Builds a queryable project knowledge graph so agents can ask targeted architecture questions instead of reading large source dumps.",
+      "status": "recommended_context_tool"
+    },
+    {
+      "name": "Claude-Mem",
+      "repo": "https://github.com/thedotmack/claude-mem",
+      "purpose": "Persistent session memory with progressive retrieval: compact search, timeline context, then selected full observations.",
+      "status": "external_reference"
+    }
+  ],
+  "market_intelligence": [
+    {
+      "name": "Market Intelligence Platform App",
+      "repo": "https://github.com/seeker-jpg/market-intelligence-platform-app",
+      "purpose": "Reference architecture adapted locally as a Python crypto market intelligence layer for Polymarket/Gamma markets.",
+      "status": "local_python_adapter",
+      "local_entrypoints": [
+        "utils/crypto_market_intelligence.py",
+        "scripts/crypto_market_intelligence.py",
+        "api_server.py#/v1/market-intelligence/crypto"
+      ]
+    }
+  ],
+  "agent_methodologies": [
+    {
+      "name": "Everything Claude Code",
+      "repo": "https://github.com/affaan-m/everything-claude-code",
+      "purpose": "Codex/Claude/OpenCode-compatible skill and instruction patterns; adopt selectively to avoid loading a large generic skill pack.",
+      "status": "external_reference"
+    },
+    {
+      "name": "Superpowers",
+      "repo": "https://github.com/obra/superpowers",
+      "purpose": "Spec-first, TDD-oriented agentic development methodology for reducing rework and keeping task context focused.",
+      "status": "external_reference"
+    },
+    {
+      "name": "Ruflo",
+      "repo": "https://github.com/ruvnet/ruflo",
+      "purpose": "Multi-agent orchestration and RAG workflow reference for bounded research/review tasks.",
+      "status": "external_reference"
+    }
+  ],
+  "agent_frameworks": [
+    {
+      "name": "Hermes Agent",
+      "repo": "https://github.com/NousResearch/hermes-agent",
+      "purpose": "Self-improving agent loop, tools, skills, memory, messaging gateways, MCP integration.",
+      "status": "external_reference"
+    },
+    {
+      "name": "PraisonAI",
+      "repo": "https://github.com/MervinPraison/PraisonAI",
+      "package": "praisonaiagents",
+      "purpose": "Multi-agent workflows with memory, RAG, tools, and broad LLM provider support.",
+      "status": "optional"
+    },
+    {
+      "name": "Meta-Agent-with-More-Agents",
+      "repo": "https://github.com/Jeomon/Meta-Agent-with-More-Agents",
+      "purpose": "Meta-agent task delegation pattern using specialist agents for tool use and reasoning.",
+      "status": "external_reference"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+[Unit]
+Description=Quant-Agentic Trading Core (Polymarket CLOB)
+Documentation=https://github.com/anomalyco/opencode
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/quant-agentic-trading-core-v2
+Environment=PYTHONUNBUFFERED=1
+Environment=VAULT_ADDR=http://127.0.0.1:8200
+Environment=CHAT_ID=-1003714224501
+Environment=TARGET_CHANNEL=Lobstar
+ExecStart=/home/%i/quant-agentic-trading-core-v2/.venv/bin/python /home/%i/quant-agentic-trading-core-v2/main_agentic_clob.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/%i/quant-agentic-trading-core-v2/logs/systemd-out.log
+StandardError=append:/home/%i/quant-agentic-trading-core-v2/logs/systemd-err.log
+
+[Install]
+WantedBy=multi-user.target

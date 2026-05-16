@@ -1,0 +1,395 @@
+{
+  "server": {
+    "name": "quant-agentic-mcp",
+    "version": "1.0.0",
+    "transport": "stdio",
+    "description": "MCP server for quant-agentic-trading-core. Exposes ledger state, HMM market regime, and emergency circuit breaker."
+  },
+  "tools": [
+    {
+      "name": "get_ledger_state",
+      "description": "Reads active positions, capital allocation, and available capital from the SQLite ledger.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_market_regime",
+      "description": "Queries the live HMM filter status, regime label, and Dissimilarity Index for OOD detection.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "description": "Asset ticker symbol (default: SOL)"
+          },
+          "returns_json": {
+            "type": "string",
+            "description": "Optional JSON-encoded array of recent returns for live inference"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "emergency_circuit_breaker",
+      "description": "Instantly freezes or unfreezes all outbound trading operations. Action must be 'ENGAGE' or 'DISENGAGE'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["ENGAGE", "DISENGAGE"],
+            "description": "ENGAGE to freeze trading, DISENGAGE to resume"
+          }
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "get_friction_model",
+      "description": "Returns the current execution friction cost per contract used in backtest validation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "lobstar_submit_signal",
+      "description": "Bridge for LOBSTAR semantic agent: accepts a parsed signal dict and routes it through typing validation before execution.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["BUY", "SELL", "HOLD"]
+          },
+          "asset": {
+            "type": "string",
+            "description": "Asset ticker (e.g., SOL, BTC, ETH)"
+          },
+          "side": {
+            "type": "string",
+            "enum": ["BUY", "SELL"]
+          },
+          "size": {
+            "type": "number",
+            "description": "Order size in units"
+          },
+          "price": {
+            "type": "number",
+            "description": "Limit price"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Model confidence in [0, 1]",
+            "default": 0.5
+          }
+        },
+        "required": ["action", "asset", "side", "size", "price"]
+      }
+    },
+    {
+      "name": "get_circuit_breaker_status",
+      "description": "Returns whether the emergency circuit breaker is currently engaged.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "list_project_contexts",
+      "description": "Returns compact IDs and metadata for external project contexts. Use before loading full project docs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Optional category filter, e.g. web_scraping, agent_framework, solana_arbitrage"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_project_context",
+      "description": "Returns a compact context card for one external project by id, including intended use and guardrails.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Project context id, e.g. scrapling, praisonai, solana_jupiter_arbitrage_bot"
+          }
+        },
+        "required": ["project_id"]
+      }
+    },
+    {
+      "name": "list_local_skill_contexts",
+      "description": "Returns compact local CI skill contexts and priority files for targeted analysis.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "list_ai_specialists",
+      "description": "Returns specialized AI roles for targeted low-token project improvement tasks.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Optional task filter, e.g. security, execution, provider"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_ai_specialist",
+      "description": "Returns one AI specialist contract with priority files, provider policy, and output contract.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "specialist_id": {
+            "type": "string"
+          }
+        },
+        "required": ["specialist_id"]
+      }
+    },
+    {
+      "name": "get_ai_specialist_prompt_context",
+      "description": "Returns compact prompt context for a specialist. Use instead of loading whole-repo context.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "specialist_id": {
+            "type": "string"
+          }
+        },
+        "required": ["specialist_id"]
+      }
+    },
+    {
+      "name": "get_project_prompt_context",
+      "description": "Returns compact project context plus persistent memory for low-token prompts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Current task or prompt goal."
+          },
+          "specialist_id": {
+            "type": "string",
+            "description": "Optional specialist id, e.g. security_auditor or mcp_toolsmith."
+          },
+          "component": {
+            "type": "string",
+            "description": "Optional component filter for project memory."
+          },
+          "token_budget": {
+            "type": "integer",
+            "default": 2500
+          },
+          "as_text": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "list_project_memory",
+      "description": "Lists compact persistent memory entries for this project.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 10
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "record_project_memory",
+      "description": "Records a compact project memory entry for future prompts. Do not store secrets or raw private data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "default": "note"
+          },
+          "tags_json": {
+            "type": "string",
+            "default": "[]"
+          },
+          "details": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "default": "mcp"
+          }
+        },
+        "required": ["component", "summary"]
+      }
+    },
+    {
+      "name": "get_ai_routing_policy",
+      "description": "Returns token-saving and safety policy for specialist routing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "list_free_ai_provider_sources",
+      "description": "Returns configured public sources for legitimate free-tier/local AI provider discovery.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_llm_council_config",
+      "description": "Returns the local LLM Council configuration without exposing API keys.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "build_llm_council_plan",
+      "description": "Builds a dry-run LLM Council execution plan for a question. Does not call external LLMs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "max_models": {
+            "type": "integer",
+            "default": 0
+          }
+        },
+        "required": ["question"]
+      }
+    },
+    {
+      "name": "run_llm_council_query",
+      "description": "Runs the LLM Council through OpenRouter. Defaults to dry-run to prevent accidental external calls.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "max_models": {
+            "type": "integer",
+            "default": 0
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": ["question"]
+      }
+    },
+    {
+      "name": "get_mirofish_config",
+      "description": "Returns the local MiroFish-style swarm simulation configuration.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "build_mirofish_simulation_plan",
+      "description": "Builds a bounded MiroFish-style swarm simulation plan. Planning only; no external execution.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prediction_question": {
+            "type": "string"
+          },
+          "seed_materials_json": {
+            "type": "string",
+            "description": "JSON array of seed material strings",
+            "default": "[]"
+          },
+          "rounds": {
+            "type": "integer",
+            "default": 0
+          },
+          "agents": {
+            "type": "integer",
+            "default": 0
+          },
+          "domain": {
+            "type": "string",
+            "default": "market_prediction"
+          }
+        },
+        "required": ["prediction_question"]
+      }
+    },
+    {
+      "name": "build_mirofish_trading_research_brief",
+      "description": "Builds a MiroFish-style trading research brief with project risk guardrails.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string"
+          },
+          "market_context": {
+            "type": "string"
+          },
+          "prediction_question": {
+            "type": "string",
+            "default": ""
+          },
+          "rounds": {
+            "type": "integer",
+            "default": 0
+          },
+          "agents": {
+            "type": "integer",
+            "default": 0
+          }
+        },
+        "required": ["ticker", "market_context"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.0.3, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/ogj9f33gvvzc/quant-agentic-trading-core-v2
+configfile: pytest.ini
+plugins: anyio-4.13.0, asyncio-0.21.0
+asyncio: mode=Mode.AUTO
+collecting ... collected 19 items
+
+tests/test_system_integrity.py::TestLayer1VaultSynthetic::test_vault_handler_injects_credentials_to_ram PASSED
+tests/test_system_integrity.py::TestLayer2SignalIngestion::test_regex_telegram_signal_deterministic PASSED
+tests/test_system_integrity.py::TestLayer2SignalIngestion::test_regex_multiple_formats PASSED
+tests/test_system_integrity.py::TestLayer3HMMRegimeFilter::test_hmm_predicts_regime_state PASSED
+tests/test_system_integrity.py::TestLayer3HMMRegimeFilter::test_hmm_blocks_erratic_volatility PASSED
+tests/test_system_integrity.py::TestLayer4ProbabilityCalibrator::test_calibrator_transforms_raw_proba PASSED
+tests/test_system_integrity.py::TestLayer5RiskManagement::test_portfolio_risk_engine_init PASSED
+tests/test_system_integrity.py::TestLayer6CircuitBreakerAndLedger::test_circuit_breaker_triggers_on_rogue_allocation PASSED
+tests/test_system_integrity.py::TestLayer6CircuitBreakerAndLedger::test_ledger_wal_persistence PASSED
+tests/test_system_integrity.py::TestLayer6CircuitBreakerAndLedger::test_insufficient_capital_rejection PASSED
+tests/test_system_integrity.py::TestLayer7PassiveExecutor::test_passive_executor_with_post_only_flag PASSED
+tests/test_system_integrity.py::TestLayer7PassiveExecutor::test_passive_executor_timeout_handling PASSED
+tests/test_system_integrity.py::TestLayer8ExecutionModes::test_execution_mode_paper PASSED
+tests/test_system_integrity.py::TestLayer8ExecutionModes::test_execution_mode_shadow PASSED
+tests/test_system_integrity.py::TestLayer8ExecutionModes::test_execution_mode_invalid_rejected PASSED
+tests/test_system_integrity.py::TestLayer9PositionTracking::test_record_and_retrieve_paper_positions PASSED
+tests/test_system_integrity.py::TestLayer9PositionTracking::test_close_paper_position PASSED
+tests/test_system_integrity.py::TestLayer10EndToEndIntegration::test_full_system_pipeline_deterministic_dual_path PASSED
+tests/test_system_integrity.py::TestLayer10EndToEndIntegration::test_rogue_agent_scenario_circuit_breaker_cap PASSED
+
+=============================== warnings summary ===============================
+tests/test_system_integrity.py::TestLayer7PassiveExecutor::test_passive_executor_timeout_handling
+  /usr/lib/python3.11/asyncio/events.py:80: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    self._context.run(self._callback, *self._args)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 19 passed, 1 warning in 11.13s ========================

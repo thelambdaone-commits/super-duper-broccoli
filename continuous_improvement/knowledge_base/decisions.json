@@ -1,0 +1,11 @@
+[
+  {
+    "timestamp": 1778908842.8225865,
+    "date": "2026-05-16T05:20:42.822599",
+    "category": "architecture",
+    "component": "refactoring",
+    "description": "Extracted get_regime_label to utils/regime_utils.py",
+    "rationale": "Eliminated 3x duplication",
+    "outcome": ""
+  }
+]

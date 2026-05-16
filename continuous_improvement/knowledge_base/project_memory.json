@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "purpose": "Persistent compact memory for project prompts. Store decisions, gotchas, preferences, and verification notes; never store secrets or raw private data.",
+  "updated_at": "2026-05-16T16:48:26.626306",
+  "entries": [
+    {
+      "timestamp": 1778889600,
+      "date": "2026-05-16T00:00:00",
+      "kind": "decision",
+      "component": "agent_context",
+      "summary": "Future prompts should use the lowest-token path: AGENTS.md, project_memory, project_contexts, and Graphify queries before broad file reads or full-repo dumps.",
+      "details": "Graphify is installed as graphifyy and graphify-out contains the local project graph. External agent frameworks are reference/context tools unless a bounded adapter and tests are added.",
+      "tags": [
+        "context",
+        "memory",
+        "token_saving"
+      ],
+      "source": "initial_setup"
+    },
+    {
+      "timestamp": 1778949592.5840285,
+      "date": "2026-05-16T16:39:52.584028",
+      "kind": "verification",
+      "component": "telegram",
+      "summary": "Verified Telegram delivery and PM2 bot health on 2026-05-16: fixed core startup indentation, restored signal executor test APIs, made Telegram send raw text by default, isolated API FeatureStore path, and fixed market scan report fallback.",
+      "details": "",
+      "tags": [
+        "telegram",
+        "pm2",
+        "health"
+      ],
+      "source": "cli"
+    },
+    {
+      "timestamp": 1778950106.6262236,
+      "date": "2026-05-16T16:48:26.626224",
+      "kind": "integration",
+      "component": "market_intelligence",
+      "summary": "Added local Python crypto adaptation of seeker-jpg/market-intelligence-platform-app: utils/crypto_market_intelligence.py, CLI, API endpoint /v1/market-intelligence/crypto, context cards, and tests. Classification uses lexical boundaries to avoid short-ticker false positives.",
+      "details": "",
+      "tags": [
+        "crypto",
+        "market_intelligence",
+        "python"
+      ],
+      "source": "cli"
+    }
+  ]
+}
