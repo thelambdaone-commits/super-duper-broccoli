@@ -1,5 +1,9 @@
 # Quant Agentic Trading Core
 
+<p align="center">
+  <img src="assets/lobstar.png" alt="Lobstar Logo" width="250"/>
+</p>
+
 Agentic trading bot for Polymarket CLOB — ingests Telegram signals, sizes via Kelly + HMM regime filter, executes maker-first with passive order placement. Backed by a FastAPI REST API, Streamlit dashboard, MCP tool server, and a continuous-improvement agent system.
 
 ## Architecture
