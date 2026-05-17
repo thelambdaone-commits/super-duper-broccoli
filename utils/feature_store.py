@@ -113,6 +113,17 @@ class FeatureStore:
                 fusion_mode VARCHAR
             )
         """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS web_events_raw (
+                event_id INTEGER PRIMARY KEY DEFAULT nextval('seq_snapshot'),
+                timestamp DOUBLE NOT NULL,
+                source VARCHAR NOT NULL,
+                event_type VARCHAR NOT NULL,
+                market_slug VARCHAR,
+                condition_id VARCHAR,
+                raw_json VARCHAR NOT NULL
+            )
+        """)
         self._conn.commit()
         logger.info("FeatureStore schema initialized")
 
@@ -144,9 +155,13 @@ class FeatureStore:
         return row[0] if row else 0
 
     def record_feature(
-        self, ticker: str, feature_name: str, feature_value: float
+        self,
+        ticker: str,
+        feature_name: str,
+        feature_value: float,
+        timestamp: Optional[float] = None,
     ) -> None:
-        ts = time.time()
+        ts = time.time() if timestamp is None else float(timestamp)
         self._conn.execute("""
             INSERT INTO features_computed (timestamp, ticker, feature_name, feature_value)
             VALUES (?, ?, ?, ?)
@@ -170,6 +185,65 @@ class FeatureStore:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (ts, ticker, model_version, raw_brier, calibrated_brier,
               brier_improvement, n_samples, fusion_mode))
+
+    def record_web_event(
+        self,
+        source: str,
+        event_type: str,
+        payload: dict,
+        market_slug: str = "",
+        condition_id: str = "",
+        timestamp: Optional[float] = None,
+    ) -> int:
+        ts = time.time() if timestamp is None else float(timestamp)
+        self._conn.execute("""
+            INSERT INTO web_events_raw
+                (timestamp, source, event_type, market_slug, condition_id, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            ts,
+            source,
+            event_type,
+            market_slug or str(payload.get("slug", "")),
+            condition_id or str(payload.get("condition_id", payload.get("conditionId", ""))),
+            json.dumps(payload, sort_keys=True),
+        ))
+        row = self._conn.execute("SELECT MAX(event_id) FROM web_events_raw").fetchone()
+        return row[0] if row else 0
+
+    def get_web_events(
+        self,
+        since_ts: float = 0.0,
+        limit: int = 100,
+        event_type: Optional[str] = None,
+    ) -> list[dict]:
+        if event_type:
+            rows = self._conn.execute("""
+                SELECT timestamp, source, event_type, market_slug, condition_id, raw_json
+                FROM web_events_raw
+                WHERE timestamp >= ? AND event_type = ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """, (since_ts, event_type, limit)).fetchall()
+        else:
+            rows = self._conn.execute("""
+                SELECT timestamp, source, event_type, market_slug, condition_id, raw_json
+                FROM web_events_raw
+                WHERE timestamp >= ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """, (since_ts, limit)).fetchall()
+        return [
+            {
+                "timestamp": r[0],
+                "source": r[1],
+                "event_type": r[2],
+                "market_slug": r[3],
+                "condition_id": r[4],
+                "raw": json.loads(r[5]),
+            }
+            for r in rows
+        ]
 
     def record_signal(
         self,
@@ -280,19 +354,32 @@ class FeatureStore:
         return [dict(zip(columns, row)) for row in rows]
 
     def get_feature_history(
-        self, ticker: str, feature_name: str, since_ts: float = 0.0, limit: int = 1000
+        self,
+        ticker: str,
+        feature_name: str,
+        since_ts: float = 0.0,
+        limit: int = 1000,
+        until_ts: Optional[float] = None,
     ) -> list[dict]:
-        rows = self._conn.execute("""
-            SELECT timestamp, feature_value FROM features_computed
-            WHERE ticker = ? AND feature_name = ? AND timestamp >= ?
-            ORDER BY timestamp ASC
-            LIMIT ?
-        """, (ticker, feature_name, since_ts, limit)).fetchall()
+        if until_ts is None:
+            rows = self._conn.execute("""
+                SELECT timestamp, feature_value FROM features_computed
+                WHERE ticker = ? AND feature_name = ? AND timestamp >= ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """, (ticker, feature_name, since_ts, limit)).fetchall()
+        else:
+            rows = self._conn.execute("""
+                SELECT timestamp, feature_value FROM features_computed
+                WHERE ticker = ? AND feature_name = ? AND timestamp >= ? AND timestamp <= ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """, (ticker, feature_name, since_ts, float(until_ts), limit)).fetchall()
         return [{"timestamp": r[0], "value": r[1]} for r in rows]
 
     def purge_before(self, cutoff_ts: float) -> int:
         total = 0
-        for table in ["market_microstructure", "features_computed", "signals_ingested", "decisions_log"]:
+        for table in ["market_microstructure", "features_computed", "signals_ingested", "decisions_log", "web_events_raw"]:
             before = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             self._conn.execute(f"DELETE FROM {table} WHERE timestamp < ?", (cutoff_ts,))
             after = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
@@ -317,7 +404,7 @@ class FeatureStore:
 
     def get_stats(self) -> dict:
         stats = {}
-        for table in ["market_microstructure", "features_computed", "signals_ingested", "decisions_log"]:
+        for table in ["market_microstructure", "features_computed", "signals_ingested", "decisions_log", "web_events_raw"]:
             row = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
             stats[table] = row[0]
         return stats

@@ -46,6 +46,7 @@ CMD_HELP = (
     "/cb — Circuit breaker state\n"
     "/ck — API/RPC diagnostic\n"
     "/whales — Top traders discovery\n"
+    "/copy [start|stop|set <wallet>] — Copy trading control\n"
     "/gen — New Wallet (Encrypted)\n"
     "/import [PK] — Import wallet\n\n"
     "💬 *Signal:* `BUY BTC @ 0.50`"
@@ -71,6 +72,7 @@ class TelegramListener:
         allow_private_messages: bool = True,
         proxy_url: Optional[str] = None,
         media_dir: str = "data/telegram_media",
+        access_control=None,
     ) -> None:
         self.bot_token = bot_token
         self.channel = channel_username
@@ -80,6 +82,7 @@ class TelegramListener:
         self.allow_private_messages = allow_private_messages
         self.proxy_url = proxy_url
         self.media_dir = media_dir
+        self.access_control = access_control
         self.on_signal = on_signal
         self.queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=500)
         self.application: Optional[Application] = None
@@ -90,7 +93,9 @@ class TelegramListener:
         self._store = None
         self._executor = None
         self._scanner = None
+        self._copy_agent = None
         self._start_time: Optional[datetime] = None
+        self._trade_count = 0
 
     def attach_components(
         self,
@@ -100,6 +105,7 @@ class TelegramListener:
         store=None,
         executor=None,
         scanner=None,
+        copy_agent=None,
     ) -> None:
         self._ledger = ledger
         self._risk = risk
@@ -107,6 +113,7 @@ class TelegramListener:
         self._store = store
         self._executor = executor
         self._scanner = scanner
+        self._copy_agent = copy_agent
 
     def set_services(
         self,
@@ -139,8 +146,8 @@ class TelegramListener:
         if self._ledger:
             try:
                 return self._ledger.get_execution_mode()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Ledger mode lookup failed: %s", exc)
         return "unknown"
 
     async def _telegram_call_with_retry(
@@ -200,9 +207,9 @@ class TelegramListener:
         reply_markup=None,
         parse_mode: Optional[str] = None,
     ) -> bool:
-        msg = update.message or update.channel_post
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
         if msg is None:
-            logger.warning("reply_to failed: update has no message or channel_post")
+            logger.warning("reply_to failed: update has no effective message")
             return False
         try:
             for index, chunk in enumerate(split_telegram_message(text)):
@@ -217,6 +224,44 @@ class TelegramListener:
             logger.warning(f"reply_to failed: {e}")
             return False
 
+    async def _check_auth(self, update: Update) -> bool:
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
+        if not msg:
+            return False
+        if self.chat_id is None or msg.chat_id == self.chat_id or self._is_admin_chat(update):
+            return True
+        await self.reply_to("Unauthorized.", update)
+        return False
+
+    async def _check_admin_auth(self, update: Update) -> bool:
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
+        if not msg:
+            return False
+
+        if self.access_control:
+            is_admin = self.access_control.est_admin(msg.chat_id)
+        else:
+            is_admin = msg.chat_id in self.admin_chat_ids
+
+        if is_admin:
+            return True
+        await self.reply_to("Unauthorized.", update)
+        return False
+
+    async def _handle_error(self, update: object, context: object) -> None:
+        logger.exception("Telegram handler failed", exc_info=getattr(context, "error", None))
+        if update is not None:
+            await self.reply_to("Erreur interne. Consultez les logs.", update)
+
+    async def _reply_to_callback(self, update: Update, text: str, parse_mode: Optional[str] = None) -> bool:
+        query = update.callback_query
+        msg = getattr(query, "message", None)
+        if msg and hasattr(msg, "reply_text"):
+            kwargs = {"parse_mode": parse_mode} if parse_mode else {}
+            await self._telegram_call_with_retry(msg.reply_text, text, **kwargs)
+            return True
+        return await self.send_message(text, parse_mode=parse_mode)
+
     async def _lobstar_worker(self) -> None:
         while self._running:
             try:
@@ -230,6 +275,185 @@ class TelegramListener:
 
     async def _cmd_help(self, update: Update, _context) -> None:
         await self.reply_to(CMD_HELP, update)
+
+    async def _cmd_copy(self, update: Update, context) -> None:
+        if not self._copy_agent:
+            await self.reply_to("❌ Copy Trading not configured. Set COPY_WALLET in .env", update)
+            return
+
+        args = context.args if hasattr(context, 'args') else []
+        if not args:
+            stats = self._copy_agent.get_stats()
+            status = "🟢 Running" if self._copy_agent.is_running else "🔴 Stopped"
+            msg = (
+                f"🎯 *Copy Trading Status*\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"Target: `{stats['target_wallet'][:10]}...`\n"
+                f"Status: {status}\n"
+                f"Multiplier: {stats['multiplier']*100}%\n"
+                f"Buy Only: {'✅' if stats['buy_only_mode'] else '❌'}\n"
+                f"Trades Copied: {stats['trades_copied']}\n"
+                f"Session Notional: ${stats['session_notional']:.2f}\n\n"
+                "_Usage: /copy start|stop|set <wallet>_"
+            )
+            await self.reply_to(msg, update, parse_mode="Markdown")
+            return
+
+        cmd = args[0].lower()
+        if cmd == "start":
+            if self._copy_agent.is_running:
+                await self.reply_to("⚠️ Already monitoring", update)
+                return
+
+            async def on_copy_signal(signal):
+                await self.send_message(
+                    f"📋 *COPY TRADE*\n{signal['side']} ${signal['copy_size']:.2f} @ {signal['price']:.2f}\n"
+                    f"Market: {signal.get('market', 'N/A')}"
+                )
+            
+            asyncio.create_task(
+                self._copy_agent.start_monitoring(poll_interval=10.0, on_new_trade=on_copy_signal)
+            )
+            await self.reply_to("✅ Copy trading started", update)
+
+        elif cmd == "stop":
+            self._copy_agent.stop_monitoring()
+            await self.reply_to("🛑 Copy trading stopped", update)
+
+        elif cmd == "set" and len(args) > 1:
+            wallet = args[1]
+            if not wallet.startswith("0x") or len(wallet) != 42:
+                await self.reply_to("❌ Invalid wallet address", update)
+                return
+
+            from agents.copy_trading_agent import CopyConfig
+            current = self._copy_agent.config
+            self._copy_agent.update_config(
+                CopyConfig(
+                    target_wallet=wallet,
+                    copy_multiplier=current.copy_multiplier,
+                    max_copy_notional=current.max_copy_notional,
+                    min_copy_notional=current.min_copy_notional,
+                    buy_only=current.buy_only,
+                    slippage_tolerance=current.slippage_tolerance,
+                )
+            )
+            await self.reply_to(f"✅ Target wallet updated to `{wallet[:10]}...`", update, parse_mode="Markdown")
+        else:
+            await self.reply_to("Usage: /copy start|stop|set <wallet>", update)
+
+    async def _cmd_wallets(self, update: Update, _context) -> None:
+        if not self._is_authorized_private_message(update):
+            await self.reply_to("Unauthorized.", update)
+            return
+
+        from eth_account import Account
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from utils.credential_manager import CredentialManager
+
+        mgr = CredentialManager()
+        active_address = Account.from_key(mgr.get_or_generate_private_key()).address
+        wallets = mgr.list_wallets()
+
+        lines = ["🦞 *LOBSTAR WALLET MANAGER*", "━━━━━━━━━━━━━━━━━━━━"]
+        buttons = []
+        for wallet in wallets:
+            address = wallet.get("address", "")
+            if not address:
+                continue
+            is_active = address.lower() == active_address.lower()
+            label = (
+                f"🟢 {address[:6]}...{address[-4:]}"
+                if is_active
+                else f"Select {address[:6]}...{address[-4:]}"
+            )
+            lines.append(f"{'🟢' if is_active else '⚪'} `{address}`")
+            buttons.append([InlineKeyboardButton(label, callback_data=f"wallet_select:{address}")])
+
+        if not buttons:
+            lines.append("No configured wallets found.")
+
+        if update and getattr(update, "callback_query", None):
+            try:
+                await update.callback_query.edit_message_text(
+                    "\n".join(lines),
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+            except Exception:
+                pass
+
+        await self.reply_to(
+            "\n".join(lines),
+            update,
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+
+    async def _cmd_start(self, update: Update, _context) -> None:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        
+        wallet_addr = "UNKNOWN"
+        try:
+            from utils.credential_manager import CredentialManager
+            mgr = CredentialManager()
+            pk = mgr.get_or_generate_private_key()
+            if pk:
+                from eth_account import Account
+                wallet_addr = Account.from_key(pk).address
+        except Exception as exc:
+            logger.debug("Unable to resolve active wallet for /start: %s", exc)
+        
+        mode = self._get_mode()
+        uptime = self._fmt_uptime()
+        
+        from datetime import timezone
+        current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        regime = "N/A"
+        if self._hmm:
+            try:
+                from user_data.strategies.hmm_filter import REGIME_LABELS
+                import numpy as np
+                returns = np.random.randn(100) * 0.01
+                state = self._hmm.predict_regime(returns)
+                regime = REGIME_LABELS.get(state, "UNKNOWN")
+            except Exception:
+                pass
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📡 Status", callback_data="start_status"),
+                InlineKeyboardButton("⚡ Scan Markets", callback_data="scan"),
+            ],
+            [
+                InlineKeyboardButton("💳 Balance", callback_data="balance"),
+                InlineKeyboardButton("💼 Positions", callback_data="start_positions"),
+            ],
+            [
+                InlineKeyboardButton("📊 Risk", callback_data="risk"),
+                InlineKeyboardButton("🧪 Mode", callback_data="mode"),
+            ],
+            [
+                InlineKeyboardButton("🎯 Signal", callback_data="signal"),
+                InlineKeyboardButton("❓ Help", callback_data="help_page_1"),
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        welcome = "🦞 *LOBSTAR QUANT CONTROL PANEL*\n"
+        welcome += "━━━━━━━━━━━━━━━━━━━━\n"
+        welcome += "Welcome to the steering console of the Lobstar Agentic OS. "
+        welcome += "Use the control grid below to pilot your autonomous quant operations, "
+        welcome += "monitor portfolio metrics, or run diagnostic scans.\n\n"
+        welcome += f"⏰ *System Time*: `{current_time}`\n"
+        welcome += f"⏱️ *System Uptime*: `{uptime}`\n"
+        welcome += f"💬 *Active Wallet*: `{wallet_addr}`\n"
+        welcome += f"⚙️ *Execution Mode*: `{mode}`\n"
+        welcome += f"📊 *System Regime*: `{regime}`"
+        
+        await self.reply_to(welcome, update, reply_markup=reply_markup)
 
     async def _cmd_gen(self, update: Update, _context) -> None:
         if not self._is_authorized_private_message(update):
@@ -254,7 +478,8 @@ class TelegramListener:
                     w3 = Web3(Web3.HTTPProvider(rpc_url))
                     bal = w3.eth.get_balance(acc.address)
                     balance_text = f"Balance: `{w3.from_wei(bal, 'ether'):.4f} POL`"
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Unable to fetch wallet balance: %s", exc)
                     balance_text = "Balance: `Error fetching`"
             
             text = (
@@ -287,8 +512,8 @@ class TelegramListener:
             # Security: Try to delete the message containing the PK
             try:
                 await update.message.delete()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Could not delete Telegram private-key import message: %s", exc)
             
             text = (
                 "✅ *Wallet Imported Successfully*\n"
@@ -338,8 +563,8 @@ class TelegramListener:
         if self._ledger:
             try:
                 cap_summary = self._ledger.get_capital_summary()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Capital summary unavailable for status command: %s", exc)
         total = cap_summary.get("total_capital", "?")
         available = cap_summary.get("available_capital", "?")
         allocated = cap_summary.get("allocated_pct", "?")
@@ -347,8 +572,8 @@ class TelegramListener:
         if self._risk:
             try:
                 net_beta = f"{self._risk.net_beta_exposure_pct:.1f}%"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Risk exposure unavailable for status command: %s", exc)
         regime = "?"
         if self._hmm:
             try:
@@ -357,12 +582,36 @@ class TelegramListener:
                 returns = np.random.randn(100) * 0.01
                 state = self._hmm.predict_regime(returns)
                 regime = REGIME_LABELS.get(state, "UNKNOWN")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Regime unavailable for status command: %s", exc)
         from datetime import timezone
         now = datetime.now(timezone.utc)
         current_time = now.strftime("%Y-%m-%d %H:%M:%S UTC")
         
+        swarm_status = ""
+        try:
+            from core.swarm_supervisor import get_swarm_supervisor
+            sup = get_swarm_supervisor()
+            status = sup.get_status()
+            avg_brier = status["metrics"].get("avg_brier")
+            avg_brier_text = f"{avg_brier:.4f}" if avg_brier is not None else "N/A"
+            swarm_status = (
+                f"\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"🐙 *RUFLO SWARM*\n"
+                f"• State: `{status['state']}`\n"
+                f"• Paper Ticks: `{status['paper_ticks']}/{status['paper_ticks_required']}`\n"
+                f"• Production Ready: `{status['production_ready']}`\n"
+                f"• Avg Brier: `{avg_brier_text}`\n"
+            )
+            if status['data_gaps']:
+                gaps = [k for k, v in status['data_gaps'].items() if v]
+                if gaps:
+                    swarm_status += f"• ⚠️ Gaps: `{', '.join(gaps)}`\n"
+            if status.get('edge_override'):
+                swarm_status += f"• Edge Threshold: `{status['edge_override']:.1%}`\n"
+        except Exception as e:
+            swarm_status = f"\n• Swarm: Error ({e})"
+
         text = (
             f"🤖 *QUANT COCKPIT*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -372,6 +621,7 @@ class TelegramListener:
             f"• Cap: `${total:,.2f}`\n"
             f"• Risk: `{net_beta}` Beta\n"
             f"• Market: `{regime}`"
+            + swarm_status
         )
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -491,8 +741,8 @@ class TelegramListener:
         if self._risk:
             try:
                 net_beta = f"{self._risk.net_beta_exposure_pct:.1f}%"
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Risk exposure unavailable for portfolio command: %s", exc)
         if self._hmm:
             try:
                 import numpy as np
@@ -500,8 +750,8 @@ class TelegramListener:
                 returns = np.random.randn(100) * 0.01
                 state = self._hmm.predict_regime(returns)
                 regime = REGIME_LABELS.get(state, "UNKNOWN")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Regime unavailable for portfolio command: %s", exc)
         mode = self._get_mode()
         pos_count = 0
         if self._ledger:
@@ -510,8 +760,8 @@ class TelegramListener:
                     pos_count = len(self._ledger.get_paper_positions("OPEN"))
                 else:
                     pos_count = len(self._ledger.get_open_positions())
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Position count unavailable for portfolio command: %s", exc)
         cap = 0
         available = 0
         if self._ledger:
@@ -519,8 +769,8 @@ class TelegramListener:
                 summary = self._ledger.get_capital_summary()
                 cap = summary.get("total_capital", 0)
                 available = summary.get("available_capital", 0)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Capital summary unavailable for portfolio command: %s", exc)
         text = (
             f"*Portfolio Summary*\n"
             f"Mode: {mode}\n"
@@ -686,7 +936,7 @@ class TelegramListener:
         return msg.chat_id in self.private_chat_ids
 
     def _is_admin_chat(self, update: Update) -> bool:
-        msg = update.message or update.channel_post
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
         if not msg:
             return False
         return msg.chat_id in self.admin_chat_ids
@@ -715,7 +965,8 @@ class TelegramListener:
         try:
             import shutil
             shutil.copyfile(downloaded, latest_path)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Could not update latest photo alias: %s", exc)
             latest_path = str(downloaded)
 
         manifest = {
@@ -781,6 +1032,76 @@ class TelegramListener:
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
+        chat_id = query.message.chat_id
+        
+        if self.access_control:
+            is_admin = self.access_control.est_admin(chat_id)
+        else:
+            is_admin = chat_id in self.admin_chat_ids
+        
+        if query.data.startswith("help_page_") or query.data == "help_menu":
+            await query.answer()
+            from utils.help_manager import HelpManager
+            if query.data == "help_menu":
+                await HelpManager.send_menu(update, context, is_admin)
+            else:
+                page = int(query.data.split("_")[-1])
+                await HelpManager.send_page(update, context, page, is_admin)
+            return
+        
+        if not is_admin:
+            logger.warning(f"🚨 [SECURITY WARNING: Unauthorized Admin Query Attempt] Chat ID: {chat_id} (callback: {query.data})")
+            await query.answer("Unauthorized.", show_alert=True)
+            return
+
+        # Handle specific prefix queries first
+        if query.data.startswith("wallet_select:"):
+            addr = query.data.split(":")[-1]
+            await query.answer(f"Selecting wallet: {addr[:6]}...{addr[-4:]}")
+            from utils.credential_manager import CredentialManager
+            mgr = CredentialManager()
+            success = mgr.set_active_wallet(addr)
+            if success:
+                # Dynamically re-render the wallets manager message in-place
+                await self._cmd_wallets(update, context)
+            else:
+                await query.answer("Failed to select wallet.", show_alert=True)
+            return
+
+        elif query.data.startswith("horizon:"):
+            parts = query.data.split(":")
+            if len(parts) == 3:
+                asset, horizon = parts[1].upper(), parts[2]
+                await query.answer(f"Fetching sentiment for {asset} ({horizon})...")
+                from utils.crypto_horizon_sentiment import CryptoHorizonSentiment, format_horizon_sentiment
+                client = self._scanner.client if self._scanner else None
+                analyzer = CryptoHorizonSentiment(client=client)
+                sentiment = analyzer.analyze(asset, horizon)
+                
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                keyboard = []
+                row = []
+                for h in ("5", "15", "1h", "4h", "1d"):
+                    label_map = {"5": "5m", "15": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
+                    label = label_map[h]
+                    if h == horizon:
+                        label = f"🟢 {label}"
+                    row.append(InlineKeyboardButton(label, callback_data=f"horizon:{asset.lower()}:{h}"))
+                keyboard.append(row)
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                try:
+                    await query.edit_message_text(
+                        text=format_horizon_sentiment(sentiment, asset, horizon),
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except Exception as exc:
+                    logger.debug("Failed to edit message in horizon callback: %s", exc)
+            else:
+                await query.answer()
+            return
+
         await query.answer()
         
         if query.data == "scan":
@@ -791,7 +1112,7 @@ class TelegramListener:
                 text = format_scan_report(result)
                 await self.send_message(text, parse_mode=ParseMode.MARKDOWN)
             else:
-                await self.send_message("Scanner not available.", update=update)
+                await self._reply_to_callback(update, "Scanner not available.")
         elif query.data == "improve":
             # Trigger self-improvement agent
             from ai.agents.self_improvement_agent import SelfImprovementAgent
@@ -817,7 +1138,7 @@ class TelegramListener:
                 )
                 await self.send_message(msg, parse_mode=ParseMode.MARKDOWN)
             else:
-                await self.send_message("Wallet info not available.", update=update)
+                await self._reply_to_callback(update, "Wallet info not available.")
         elif query.data == "settings":
             mode = self._get_mode()
             msg = (
@@ -826,6 +1147,16 @@ class TelegramListener:
                 f"Use /mode to change."
             )
             await self.send_message(msg, parse_mode=ParseMode.MARKDOWN)
+        elif query.data == "start_status":
+            await self._cmd_status(update, context)
+        elif query.data == "start_positions":
+            await self._cmd_positions(update, context)
+        elif query.data == "risk":
+            await self._cmd_portfolio(update, context)
+        elif query.data == "mode":
+            await self._cmd_mode(update, context)
+        elif query.data == "signal":
+            await self.reply_to("📡 *Signal Interface*\n\nSend a trading signal in format:\n`BUY BTC 0.50`", update, parse_mode=ParseMode.MARKDOWN)
 
     async def start(self) -> None:
         self._running = True
@@ -864,6 +1195,8 @@ class TelegramListener:
 
             self.application.add_handler(CommandHandler("h", self._cmd_help))
             self.application.add_handler(CommandHandler("help", self._cmd_help))
+            self.application.add_handler(CommandHandler("copy", self._cmd_copy))
+            self.application.add_handler(CommandHandler("start", self._cmd_start))
             self.application.add_handler(CommandHandler("s", self._cmd_status))
             self.application.add_handler(CommandHandler("status", self._cmd_status))
             self.application.add_handler(CommandHandler("m", self._cmd_mode))
@@ -883,6 +1216,7 @@ class TelegramListener:
             self.application.add_handler(CommandHandler("gen", self._cmd_gen))
             self.application.add_handler(CommandHandler("generate_wallet", self._cmd_gen))
             self.application.add_handler(CommandHandler("import", self._cmd_import))
+            self.application.add_handler(CommandHandler("wallets", self._cmd_wallets))
         
             # Register new institutional command router
             router = CommandRouter(self)

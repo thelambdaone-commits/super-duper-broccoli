@@ -157,7 +157,15 @@ class TestLayer2SignalIngestion:
         assert parsed["price"] == 0.63
         assert parsed["source"] == "regex"
         assert elapsed_ms < 1.0, f"RegEx parsing took {elapsed_ms}ms, should be <1ms"
-        logger.info(f"✓ Layer 2: RegEx intercepted signal in {elapsed_ms:.4f}ms")
+        
+        # Test format without '@'
+        parsed_no_at = SignalParser.parse_deterministic("BUY BTC 0.63")
+        assert parsed_no_at is not None
+        assert parsed_no_at["action"] == "BUY"
+        assert parsed_no_at["asset"] == "BTC"
+        assert parsed_no_at["price"] == 0.63
+        
+        logger.info(f"✓ Layer 2: RegEx intercepted signal in {elapsed_ms:.4f}ms (with and without '@')")
     
     def test_regex_multiple_formats(self) -> None:
         """Verify RegEx handles multiple asset formats."""
@@ -165,6 +173,9 @@ class TestLayer2SignalIngestion:
             ("BUY SOL @ 150.5", "SOL", "BUY"),
             ("SELL ETH @ 2500.0", "ETH", "SELL"),
             ("LONG USDC @ 1.0", "USDC", "LONG"),
+            ("BUY SOL 150.5", "SOL", "BUY"),
+            ("SELL ETH 2500.0", "ETH", "SELL"),
+            ("LONG USDC 1.0", "USDC", "LONG"),
         ]
         
         for text, asset, action in test_cases:
@@ -199,6 +210,11 @@ class TestLayer3HMMRegimeFilter:
             logger.info("✓ Layer 3: Execution blocked during high-volatility regime")
         else:
             logger.info("✓ Layer 3: Current regime permits execution")
+
+    def test_hmm_blocks_invalid_returns(self, hmm_filter: HMMRegimeFilter) -> None:
+        allowed, reason = hmm_filter.is_trading_allowed(np.array([np.nan, np.inf]))
+        assert allowed is False
+        assert "invalid_or_empty_returns" in reason
 
 
 class TestLayer4ProbabilityCalibrator:

@@ -62,6 +62,37 @@ class TestPipelineInit:
 
 
 class TestTraining:
+    def test_training_set_uses_asof_features_without_future_leakage(self) -> None:
+        class AsOfStore:
+            def __init__(self) -> None:
+                self.data = {
+                    "SOL_mid_price": [
+                        {"timestamp": float(i), "value": 100.0 + i}
+                        for i in range(30)
+                    ],
+                    "SOL_leaky_feature": [
+                        {"timestamp": float(i) + 0.5, "value": float(i)}
+                        for i in range(30)
+                    ],
+                }
+
+            def get_feature_history(self, ticker: str, fname: str, limit: int = 1000):
+                return self.data[f"{ticker}_{fname}"][-limit:]
+
+        pipeline = TrainingPipeline(
+            store=AsOfStore(),
+            model_dir=tempfile.mkdtemp(),
+            min_train_samples=1,
+        )
+        data = pipeline._build_training_set(
+            "SOL", ["leaky_feature", "mid_price"], target_feature="mid_price"
+        )
+        assert data is not None
+        X, _, ts = data
+        assert ts[0] == pytest.approx(1.0)
+        assert X[0, 0] == pytest.approx(0.0)
+        assert X[1, 0] == pytest.approx(1.0)
+
     def test_train_success(self, pipeline: TrainingPipeline) -> None:
         pipeline.register_features("SOL", ["oi_5min", "tam_state", "spread_bps", "mid_price"], target_feature="mid_price")
         result = pipeline.train("SOL", hyperparams={"n_estimators": 10, "max_depth": 3})
@@ -103,6 +134,8 @@ class TestTraining:
         assert "prob_up" in pred
         assert "prob_down" in pred
         assert "signal" in pred
+        assert "dissimilarity_index" in pred
+        assert "ood_alert" in pred
         assert pred["signal"] in ("BUY", "SELL")
 
     def test_predict_without_train_returns_none(

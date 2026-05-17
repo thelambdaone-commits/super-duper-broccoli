@@ -19,6 +19,7 @@ class CommandRouter:
         self.order_manager = order_manager
         self.signal_generator = signal_generator
         self.market_reader = market_reader
+        self.access_control = getattr(listener, 'access_control', None)
 
     def register_all(self):
         # WALLET / BALANCE (NEW)
@@ -35,6 +36,10 @@ class CommandRouter:
         
         # MARKETS / DATA (NEW)
         self._add_cmd("markets", self._cmd_markets)
+        self._add_cmd("feed", self._cmd_feed)
+        self._add_cmd("crypto", self._cmd_all_crypto_markets)
+        self._add_cmd("updown", self._cmd_updown)
+        self._register_crypto_horizon_commands()
         
         # AI / AGENTS
         self._add_cmd("ai", self._cmd_ai)
@@ -64,11 +69,348 @@ class CommandRouter:
         self._add_cmd("unfreeze", self._cmd_unfreeze)
         self._add_cmd("liquidate", self._cmd_liquidate)
 
+        # MANUAL / HELP
+        self._add_cmd("man", self._cmd_manual)
+        self._add_cmd("help", self._cmd_manual)
+
+        # PAPER TRADING
+        self._add_cmd("paper", self._cmd_paper)
+
     def _add_cmd(self, name, func):
         self.app.add_handler(CommandHandler(name, func))
 
-    async def _cmd_ai(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _register_crypto_horizon_commands(self):
+        for asset in ("btc", "eth", "sol", "xrp"):
+            self._add_cmd(asset, self._cmd_crypto_markets)
+            for suffix in ("5", "15", "1h", "4h", "1d"):
+                self._add_cmd(f"{asset}{suffix}", self._cmd_crypto_horizon)
+
+    async def _cmd_crypto_horizon(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
+        command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+        match = None
+        import re
+        match = re.fullmatch(r"(btc|eth|sol|xrp)(5|15|1h|4h|1d)", command)
+        if not match:
+            await self.listener.reply_to("Usage: /btc5 /btc15 /btc1h, idem /eth /sol /xrp", update)
+            return
+
+        asset, horizon = match.group(1).upper(), match.group(2)
+        chat_id = getattr(update.effective_message, "chat_id", None)
+        logger.info("Crypto horizon command received: asset=%s horizon=%s chat_id=%s", asset, horizon, chat_id)
+        try:
+            from utils.crypto_horizon_sentiment import CryptoHorizonSentiment, format_horizon_sentiment
+            client = self.listener._scanner.client if self.listener._scanner else None
+            analyzer = CryptoHorizonSentiment(client=client)
+            sentiment = analyzer.analyze(asset, horizon)
+
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = []
+            row = []
+            for h in ("5", "15", "1h", "4h", "1d"):
+                label_map = {"5": "5m", "15": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
+                label = label_map[h]
+                if h == horizon:
+                    label = f"🟢 {label}"
+                row.append(InlineKeyboardButton(label, callback_data=f"horizon:{asset.lower()}:{h}"))
+            keyboard.append(row)
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            sent = await self.listener.reply_to(
+                format_horizon_sentiment(sentiment, asset, horizon),
+                update,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            logger.info(
+                "Crypto horizon command replied: asset=%s horizon=%s found=%s sent=%s",
+                asset,
+                horizon,
+                sentiment is not None,
+                sent,
+            )
+        except Exception as e:
+            logger.exception("Crypto horizon sentiment failed")
+            await self.listener.reply_to(f"Erreur sentiment {asset} {horizon}: {e}", update)
+
+    async def _cmd_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_auth(update): return
+        command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+        asset = command.upper()
+        
+        logger.info("Crypto markets search command received: asset=%s", asset)
+        
+        try:
+            client = self.listener._scanner.client if (self.listener and self.listener._scanner) else None
+            if not client:
+                from utils.polymarket_client import PolymarketClient
+                client = PolymarketClient()
+                
+            # Resolve user search ticker to full asset name for Polymarket API search
+            search_query = {
+                "BTC": "Bitcoin",
+                "ETH": "Ethereum",
+                "SOL": "Solana",
+                "XRP": "Ripple"
+            }.get(asset, asset)
+
+            # Search active markets for this asset (increased limit to scan more candidates)
+            markets = client.search_markets(search_query, limit=40)
+            
+            # Use market classifier to filter out unrelated fuzzy search results
+            from utils.crypto_market_intelligence import CryptoMarketIntelligence
+            classifier = CryptoMarketIntelligence()
+            
+            # Filter active, open, and strictly asset-matching markets
+            active_markets = [
+                m for m in markets 
+                if m.active and not m.closed and classifier._classify_asset(m) == asset
+            ]
+            
+            if not active_markets:
+                await self.listener.reply_to(f"🔍 Aucun marché actif trouvé pour {asset}.", update)
+                return
+                
+            lines = [
+                f"📡 *MARCHÉS ACTIFS POUR {asset}* 📡",
+                "────────────────────────",
+            ]
+            for i, m in enumerate(active_markets[:8], 1):
+                try:
+                    pct = m.probability_pct
+                    bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
+                    lines.extend([
+                        f"{i}. *{m.question[:80]}*",
+                        f"   {bar} `{pct:.0f}%` | `${m.yes_price:.3f}`",
+                        f"   Slug: `{m.slug}`",
+                        "",
+                    ])
+                except Exception:
+                    lines.extend([
+                        f"{i}. *{m.question[:80]}*",
+                        f"   Slug: `{m.slug}`",
+                        "",
+                    ])
+                    
+            lines.append("────────────────────────")
+            lines.append(f"Utilise `BUY <slug> <prix>` pour placer un ordre papier.")
+            
+            await self.listener.reply_to(
+                "\n".join(lines).strip(),
+                update,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"Error in crypto markets search handler: {e}")
+            await self.listener.reply_to(f"❌ Erreur lors de la recherche des marchés {asset}.", update)
+
+    async def _cmd_all_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_auth(update): return
+        
+        logger.info("All crypto markets search command received")
+        
+        try:
+            client = self.listener._scanner.client if (self.listener and self.listener._scanner) else None
+            if not client:
+                from utils.polymarket_client import PolymarketClient
+                client = PolymarketClient()
+                
+            # Fetch top 100 markets sorted by volume to get the best ones
+            markets = client.list_markets(limit=100, sort_by="volume")
+            
+            # Use market classifier to filter for crypto markets
+            from utils.crypto_market_intelligence import CryptoMarketIntelligence
+            classifier = CryptoMarketIntelligence()
+            
+            # Filter active, open, and strictly crypto-classified markets
+            active_crypto_markets = [
+                m for m in markets 
+                if m.active and not m.closed and classifier._classify_asset(m) != "OTHER"
+            ]
+            
+            if not active_crypto_markets:
+                await self.listener.reply_to("🔍 Aucun marché crypto actif trouvé parmi les tops volumes.", update)
+                return
+                
+            lines = [
+                "📡 *TOUS LES MARCHÉS CRYPTO ACTIFS* 📡",
+                "────────────────────────",
+            ]
+            for i, m in enumerate(active_crypto_markets[:10], 1):
+                asset_label = classifier._classify_asset(m)
+                try:
+                    pct = m.probability_pct
+                    bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
+                    lines.extend([
+                        f"{i}. *[{asset_label}] {m.question[:80]}*",
+                        f"   {bar} `{pct:.0f}%` | `${m.yes_price:.3f}`",
+                        f"   Slug: `{m.slug}`",
+                        "",
+                    ])
+                except Exception:
+                    lines.extend([
+                        f"{i}. *[{asset_label}] {m.question[:80]}*",
+                        f"   Slug: `{m.slug}`",
+                        "",
+                    ])
+                    
+            lines.append("────────────────────────")
+            lines.append(f"Utilise `BUY <slug> <prix>` pour placer un ordre papier.")
+            
+            await self.listener.reply_to(
+                "\n".join(lines).strip(),
+                update,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"Error in all crypto markets search handler: {e}")
+            await self.listener.reply_to("❌ Erreur lors de la recherche globale des marchés crypto.", update)
+
+    async def _cmd_updown(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_auth(update): return
+        
+        args = context.args
+        target_asset = args[0].upper().strip() if args else None
+        
+        logger.info("UpDown crypto markets search command received: target_asset=%s", target_asset)
+        
+        try:
+            client = self.listener._scanner.client if (self.listener and self.listener._scanner) else None
+            if not client:
+                from utils.polymarket_client import PolymarketClient
+                client = PolymarketClient()
+                
+            # Helper to resolve market prices resiliantly
+            def resolve_prices(m) -> tuple[float, float]:
+                yes = 0.0
+                no = 0.0
+                try:
+                    yes = float(m.yes_price)
+                    no = float(m.no_price)
+                except Exception:
+                    pass
+                if yes == 0.0 and no == 0.0:
+                    try:
+                        if len(m.outcome_prices) >= 2:
+                            yes = m.outcome_prices[0]
+                            no = m.outcome_prices[1]
+                    except Exception:
+                        pass
+                if yes == 0.0 and no == 0.0:
+                    try:
+                        yes_token = m.yes_token_id
+                        if yes_token:
+                            mid = client.get_midpoint(yes_token)
+                            if mid > 0.0:
+                                yes = mid
+                                no = 1.0 - mid
+                    except Exception:
+                        pass
+                return yes, no
+
+            # Fetch candidates from multiple sources to be absolutely exhaustive
+            all_markets = []
+            
+            try:
+                all_markets.extend(client.list_markets(limit=250, sort_by="volume"))
+            except Exception as e:
+                logger.error(f"Error fetching list_markets: {e}")
+                
+            # Always search for the most common target terms to guarantee complete market discoverability
+            search_terms = ["updown", "above", "below", "price-at", "price-by", "Bitcoin", "Ethereum", "Solana", "Ripple"]
+            
+            # If target_asset is explicitly provided, make sure we also search for its specific full name
+            if target_asset:
+                full_name = {
+                    "BTC": "Bitcoin",
+                    "ETH": "Ethereum",
+                    "SOL": "Solana",
+                    "XRP": "Ripple"
+                }.get(target_asset, target_asset)
+                if full_name not in search_terms:
+                    search_terms.append(full_name)
+                
+            for term in search_terms:
+                try:
+                    all_markets.extend(client.search_markets(term, limit=40))
+                except Exception as e:
+                    logger.error(f"Error searching {term}: {e}")
+                    
+            # Deduplicate by slug
+            unique_markets = {}
+            for m in all_markets:
+                if m.active and not m.closed:
+                    unique_markets[m.slug] = m
+                    
+            # Use market classifier to filter for crypto and up-down patterns
+            from utils.crypto_market_intelligence import CryptoMarketIntelligence
+            classifier = CryptoMarketIntelligence()
+            
+            updown_markets = []
+            for m in unique_markets.values():
+                asset_label = classifier._classify_asset(m)
+                if asset_label == "OTHER":
+                    continue
+                
+                # Check if it matches requested asset (if provided)
+                if target_asset and asset_label != target_asset:
+                    continue
+                    
+                # Up-down patterns filter
+                text = f"{m.slug} {m.question} {m.description}".lower()
+                updown_terms = (
+                    "updown", "up-down", "up-or-down", "above", "below", 
+                    "price-at-", "price-by-", "higher-than", "higher", "lower",
+                    "under", "over", "hit", "strike"
+                )
+                if any(term in text for term in updown_terms) or ("$" in m.question):
+                    updown_markets.append((asset_label, m))
+                    
+            # Sort the final list by volume so the most active ones are first
+            updown_markets.sort(key=lambda item: item[1].volume, reverse=True)
+            
+            if not updown_markets:
+                asset_suffix = f" pour {target_asset}" if target_asset else ""
+                await self.listener.reply_to(f"🔍 Aucun marché type UpDown actif trouvé{asset_suffix}.", update)
+                return
+                
+            header = f"📡 *MARCHÉS CRYPTO UPDOWN ACTIFS ({target_asset})* 📡" if target_asset else "📡 *TOUS LES MARCHÉS CRYPTO UPDOWN ACTIFS* 📡"
+            lines = [
+                header,
+                "────────────────────────",
+            ]
+            for i, (asset_label, m) in enumerate(updown_markets[:15], 1):
+                try:
+                    yes, no = resolve_prices(m)
+                    pct = max(yes, no) * 100
+                    bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
+                    lines.extend([
+                        f"{i}. *[{asset_label}] {m.question[:80]}*",
+                        f"   {bar} `{pct:.0f}%` | `YES: ${yes:.3f} | NO: ${no:.3f}`",
+                        f"   Slug: `{m.slug}`",
+                        "",
+                    ])
+                except Exception:
+                    lines.extend([
+                        f"{i}. *[{asset_label}] {m.question[:80]}*",
+                        f"   Slug: `{m.slug}`",
+                        "",
+                    ])
+                    
+            lines.append("────────────────────────")
+            lines.append(f"Utilise `BUY <slug> <prix>` pour placer un ordre papier.")
+            
+            await self.listener.reply_to(
+                "\n".join(lines).strip(),
+                update,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.error(f"Error in updown markets search handler: {e}")
+            await self.listener.reply_to("❌ Erreur lors de la recherche des marchés type UpDown.", update)
+
+    async def _cmd_ai(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update): return
         args = context.args
         sub = args[0] if args else "status"
         
@@ -93,7 +435,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown AI subcommand: {sub}", update)
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         if not self.listener._hmm:
             await self.listener.reply_to("HMM Filter not attached.", update)
             return
@@ -132,7 +474,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown model subcommand: {sub}", update)
 
     async def _cmd_risk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         if not self.listener._ledger:
             await self.listener.reply_to("Ledger not attached.", update)
             return
@@ -168,7 +510,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown risk subcommand: {sub}", update)
 
     async def _cmd_clob(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         args = context.args
         sub = args[0] if args else "arb"
 
@@ -186,7 +528,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown CLOB subcommand: {sub}", update)
 
     async def _cmd_whales(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         args = context.args
         sub = args[0] if args else "leaderboard"
 
@@ -222,7 +564,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown whales subcommand: {sub}. Use `leaderboard` or `analyze`.", update)
 
     async def _cmd_trade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         if not self.listener._ledger:
             await self.listener.reply_to("Ledger not attached.", update)
             return
@@ -259,7 +601,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown trade subcommand: {sub}", update)
 
     async def _cmd_mcp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         args = context.args
         sub = args[0] if args else "status"
 
@@ -281,7 +623,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown MCP subcommand: {sub}", update)
 
     async def _cmd_dev(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         args = context.args
         sub = args[0] if args else "metrics"
 
@@ -319,7 +661,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown dev subcommand: {sub}", update)
 
     async def _cmd_audit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         from utils.snapshot_manager import get_snapshot_manager
         sm = get_snapshot_manager()
         
@@ -342,7 +684,7 @@ class CommandRouter:
         await self._cmd_risk(update, context=context) # Alias to risk resume
 
     async def _cmd_liquidate(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         if not self.listener._executor:
             await self.listener.reply_to("Executor not attached.", update)
             return
@@ -358,19 +700,86 @@ class CommandRouter:
 
     async def _cmd_wallet(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
-        if not self.wallet_manager:
-            await self.listener.reply_to("💾 Wallet manager not attached.", update)
-            return
         
         args = context.args
         sub = args[0].lower() if args else "help"
         
         if sub == "balance":
+            if not self.wallet_manager:
+                await self.listener.reply_to("💾 Wallet manager not attached.", update)
+                return
             from telegram_scraper.handlers.wallet_handler import handle_wallet_balance
             await handle_wallet_balance(update, context, self.wallet_manager)
         elif sub == "health":
+            if not self.wallet_manager:
+                await self.listener.reply_to("💾 Wallet manager not attached.", update)
+                return
             from telegram_scraper.handlers.wallet_handler import handle_wallet_health
             await handle_wallet_health(update, context, self.wallet_manager)
+        elif sub == "add":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_add
+            await handle_wallet_add(update, context)
+            if self.access_control:
+                try:
+                    from utils.credential_manager import CredentialManager
+                    mgr = CredentialManager()
+                    chat_id = update.effective_chat.id
+                    if mgr.user_exists(chat_id):
+                        user_data = mgr.load_user(chat_id)
+                        self.access_control.assigner_wallet_a_chat(chat_id, user_data["address"])
+                        logger.info(f"Wallet {user_data['address']} assigned to chat_id {chat_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to assign wallet: {e}")
+        elif sub == "import":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_import
+            await handle_wallet_import(update, context)
+            if self.access_control:
+                try:
+                    from utils.credential_manager import CredentialManager
+                    mgr = CredentialManager()
+                    chat_id = update.effective_chat.id
+                    if mgr.user_exists(chat_id):
+                        user_data = mgr.load_user(chat_id)
+                        self.access_control.assigner_wallet_a_chat(chat_id, user_data["address"])
+                        logger.info(f"Wallet {user_data['address']} assigned to chat_id {chat_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to assign wallet: {e}")
+        elif sub == "set-proxy":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_set_proxy
+            await handle_wallet_set_proxy(update, context)
+        elif sub == "list":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_list
+            await handle_wallet_list(update, context)
+        elif sub == "show":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_show
+            await handle_wallet_show(update, context)
+        elif sub == "delete":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_delete
+            await handle_wallet_delete(update, context)
+        elif sub == "use":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_use
+            await handle_wallet_use(update, context)
+            if self.access_control:
+                try:
+                    from utils.credential_manager import CredentialManager
+                    mgr = CredentialManager()
+                    chat_id = update.effective_chat.id
+                    if mgr.user_has_any_wallet(chat_id):
+                        wallet_type = mgr.get_active_wallet_type(chat_id)
+                        user_data = mgr.load_user(chat_id, wallet_type)
+                        self.access_control.assigner_wallet_a_chat(chat_id, user_data["address"])
+                        logger.info(f"Active wallet {wallet_type} assigned to chat_id {chat_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to assign wallet: {e}")
+        elif sub == "status":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_status
+            await handle_wallet_status(update, context)
+        elif sub == "backup":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_backup
+            await handle_wallet_backup(update, context)
+        elif sub == "swap":
+            from telegram_scraper.handlers.wallet_handler import handle_wallet_swap
+            await handle_wallet_swap(update, context)
         elif sub == "help":
             from telegram_scraper.handlers.wallet_handler import handle_wallet_help
             await handle_wallet_help(update, context)
@@ -378,7 +787,7 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown wallet subcommand: {sub}. Use `/wallet help`", update)
 
     async def _cmd_transfer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         if not self.transfer_manager:
             await self.listener.reply_to("📤 Transfer manager not attached.", update)
             return
@@ -395,7 +804,7 @@ class CommandRouter:
             await handle_transfer(update, context, self.transfer_manager)
 
     async def _cmd_polymarket(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
+        if not await self.listener._check_admin_auth(update): return
         if not self.order_manager:
             await self.listener.reply_to("🎲 Polymarket order manager not attached.", update)
             return
@@ -416,44 +825,93 @@ class CommandRouter:
             await self.listener.reply_to(f"Unknown polymarket subcommand: {sub}. Use `/polymarket help`", update)
 
     async def _cmd_signals(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
-        if not self.signal_generator:
-            await self.listener.reply_to("📊 Signal generator not attached.", update)
-            return
+        if not await self.listener._check_admin_auth(update): return
         
         args = context.args
         sub = args[0].lower() if args else "help"
         
         if sub == "all":
+            if not self.signal_generator:
+                await self.listener.reply_to("📊 Signal generator not attached.", update)
+                return
             from telegram_scraper.handlers.signals_handler import handle_signals_all
             await handle_signals_all(update, context, self.signal_generator)
+        elif sub == "matrix":
+            ticker = args[1].upper() if len(args) > 1 else "BTC"
+            from telegram_scraper.handlers.signals_handler import handle_signals_matrix
+            await handle_signals_matrix(update, context, ticker)
         elif sub == "help":
             from telegram_scraper.handlers.signals_handler import handle_signals_help
             await handle_signals_help(update, context)
         else:
+            if not self.signal_generator:
+                await self.listener.reply_to("📊 Signal generator not attached.", update)
+                return
             from telegram_scraper.handlers.signals_handler import handle_signals
             await handle_signals(update, context, self.signal_generator)
 
     async def _cmd_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.listener._check_auth(update): return
-        if not self.market_reader:
-            await self.listener.reply_to("📈 Market reader not attached.", update)
-            return
+        if not await self.listener._check_admin_auth(update): return
         
         args = context.args
         sub = args[0].lower() if args else "help"
         
+        standalone_commands = {"discover", "opportunities", "contrarian", "vcp", "canslim", "help"}
+        
+        if sub not in standalone_commands and not self.market_reader:
+            await self.listener.reply_to("📈 Market reader not attached.", update)
+            return
+        
         if sub == "list":
             from telegram_scraper.handlers.markets_handler import handle_markets_list
             await handle_markets_list(update, context, self.market_reader)
+        elif sub == "feed":
+            from telegram_scraper.handlers.markets_handler import handle_markets_feed
+            await handle_markets_feed(update, context, self.market_reader)
         elif sub == "info":
             from telegram_scraper.handlers.markets_handler import handle_markets_info
             await handle_markets_info(update, context, self.market_reader)
         elif sub == "search":
             from telegram_scraper.handlers.markets_handler import handle_markets_search
             await handle_markets_search(update, context, self.market_reader)
+        elif sub == "discover":
+            from telegram_scraper.handlers.markets_handler import handle_markets_discover
+            await handle_markets_discover(update, context)
+        elif sub == "opportunities":
+            from telegram_scraper.handlers.markets_handler import handle_markets_opportunities
+            await handle_markets_opportunities(update, context)
+        elif sub == "contrarian":
+            from telegram_scraper.handlers.markets_handler import handle_markets_contrarian
+            await handle_markets_contrarian(update, context)
+        elif sub == "vcp":
+            from telegram_scraper.handlers.markets_handler import handle_markets_vcp
+            await handle_markets_vcp(update, context)
+        elif sub == "canslim":
+            from telegram_scraper.handlers.markets_handler import handle_markets_canslim
+            await handle_markets_canslim(update, context)
         elif sub == "help":
             from telegram_scraper.handlers.markets_handler import handle_markets_help
             await handle_markets_help(update, context)
         else:
             await self.listener.reply_to(f"Unknown markets subcommand: {sub}. Use `/markets help`", update)
+
+    async def _cmd_feed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update): return
+        if not self.market_reader:
+            await self.listener.reply_to("📈 Market reader not attached.", update)
+            return
+        from telegram_scraper.handlers.markets_handler import handle_markets_feed
+        await handle_markets_feed(update, context, self.market_reader)
+
+    async def _cmd_manual(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from utils.help_manager import HelpManager
+        chat_id = update.effective_chat.id
+        is_admin = self.access_control.est_admin(chat_id) if self.access_control else False
+        await HelpManager.send_menu(update, context, is_admin)
+
+    async def _cmd_paper(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.listener._check_admin_auth(update): return
+        args = context.args
+        ticker = args[0].upper() if args else "BTC"
+        from telegram_scraper.handlers.signals_handler import handle_paper_test
+        await handle_paper_test(update, context, ticker)

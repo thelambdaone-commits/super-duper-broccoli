@@ -1,0 +1,37 @@
+{
+  "id": "polymarket_market_making_skill",
+  "name": "Polymarket CLOB Market Making Skill",
+  "description": "Calculates dynamic double-sided spreads (bids/asks), order-book placement depths, and inventory-risk parameters on the Polymarket CLOB order-book interface.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "calculate_market_making_spreads",
+      "description": "Computes recommended bid and ask prices, spread widths, and inventory risk parameters based on order book depth.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mid_price": {
+            "type": "number",
+            "description": "Current fair mid price (e.g. 0.55)."
+          },
+          "volatility": {
+            "type": "number",
+            "description": "Current asset standard deviation/volatility (e.g. 0.05).",
+            "default": 0.02
+          },
+          "inventory": {
+            "type": "integer",
+            "description": "Current net position units (negative for short, positive for long).",
+            "default": 0
+          },
+          "target_inventory": {
+            "type": "integer",
+            "description": "Desired inventory units to maintain.",
+            "default": 0
+          }
+        },
+        "required": ["mid_price"]
+      }
+    }
+  ]
+}

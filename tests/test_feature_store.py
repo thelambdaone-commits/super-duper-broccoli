@@ -81,6 +81,15 @@ class TestFeatures:
         history = store.get_feature_history("SOL", "tam", limit=3)
         assert len(history) == 3
 
+    def test_feature_history_until_ts_excludes_future_rows(
+        self, store: FeatureStore
+    ) -> None:
+        store.record_feature("SOL", "oi", 0.1, timestamp=100.0)
+        store.record_feature("SOL", "oi", 0.2, timestamp=200.0)
+        store.record_feature("SOL", "oi", 0.3, timestamp=300.0)
+        history = store.get_feature_history("SOL", "oi", until_ts=200.0)
+        assert [row["value"] for row in history] == pytest.approx([0.1, 0.2])
+
 
 class TestSignals:
     def test_record_signal(self, store: FeatureStore) -> None:

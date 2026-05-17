@@ -164,6 +164,21 @@ class TestExecuteGuarded:
         assert not mock_freqai.clob_execute.called
         assert not mock_store.record_decision.called
 
+    @pytest.mark.asyncio
+    async def test_erratic_regime_skipped_before_paper_record(
+        self, ledger: Ledger, mock_freqai: AsyncMock, mock_store: MagicMock,
+    ) -> None:
+        result = await _execute_guarded(
+            ticker="SOL", side="BUY", price=0.50, size=100.0,
+            confidence=0.8, regime="ERRATIC_VOLATILITY", sizing={},
+            ledger=ledger, freqai=mock_freqai, risk=None, store=mock_store,
+            mode="PAPER", signal_source="regex",
+        )
+        assert result["status"] == "SKIPPED"
+        assert result["reason"] == "HMM_BLOCKED:ERRATIC_VOLATILITY"
+        assert not mock_freqai.clob_execute.called
+        assert ledger.get_paper_positions() == []
+
 
 class TestSignalExecutorModeRouting:
     @pytest.mark.asyncio

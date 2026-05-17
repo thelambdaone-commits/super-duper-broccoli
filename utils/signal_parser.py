@@ -3,7 +3,7 @@ from typing import Optional
 
 
 SIGNAL_REGEX = re.compile(
-    r"^(BUY|SELL|LONG|SHORT)\s+([A-Z0-9\-_]+)\s+@\s*(\d+\.?\d*)$",
+    r"^(BUY|SELL|LONG|SHORT)\s+([A-Z0-9\-_]+)\s+(?:@\s*)?(\d+\.?\d*)$",
     re.IGNORECASE,
 )
 

@@ -1,0 +1,23 @@
+{
+  "id": "market_scanner_skill",
+  "name": "Polymarket Scanner Capability",
+  "description": "Scans high-volume Polymarket prediction contracts for price discrepancies, sharp movements, and sentiment trends.",
+  "version": "1.1.0",
+  "tools": [
+    {
+      "name": "scan_polymarket",
+      "description": "Triggers a high-fidelity scan across trending prediction markets to calculate bullish sentiment percentage.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of markets to analyze.",
+            "default": 30
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

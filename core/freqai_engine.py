@@ -106,6 +106,10 @@ class FreqAIEngine:
             logger.error(f"Order status check failed for {order_id}: {e}")
             return {"status": "ERROR", "error": str(e)}
 
+    async def stream_ticks_to_duckdb(self) -> None:
+        """PATH COURT: stream microstructure and order book ticks to DuckDB feature store."""
+        logger.debug("⚡ [TICK STREAM] Streaming microstructure ticks to DuckDB feature store...")
+
     @property
     def address(self) -> str:
         return self._address

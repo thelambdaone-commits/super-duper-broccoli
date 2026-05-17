@@ -118,7 +118,7 @@ class PolymarketMonitor:
                 "maker_amount": str(decoded["makerAmount"]),
                 "maker": decoded["maker"],
                 "taker": decoded["taker"],
-                "timestamp": datetime.now(timezone.UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             logger.info(f"ONCHAIN SIGNAL: {signal['side']} {signal['token_id']} from {signal['maker'][:10]}...")
             self._message_count += 1
@@ -171,6 +171,10 @@ class PolymarketMonitor:
             except websockets.exceptions.ConnectionClosed:
                 logger.warning(f"PolymarketMonitor: connection lost, reconnecting in {reconnect_delay}s")
             except Exception as e:
+                if "401" in str(e) or "Unauthorized" in str(e):
+                    logger.error("PolymarketMonitor: unauthorized WS endpoint; disabling monitor until restart")
+                    self._running = False
+                    break
                 logger.error(f"PolymarketMonitor: error: {e}")
             if not self._running:
                 break

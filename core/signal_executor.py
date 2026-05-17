@@ -15,6 +15,7 @@ from utils.regime_utils import get_regime_label
 logger = logging.getLogger("SignalExecutor")
 
 SUCCESS_STATUSES = {"FILLED", "TAKER_FILLED", "MATCHED", "LIVE", "DELAYED"}
+BLOCKED_REGIMES = {"ERRATIC_VOLATILITY"}
 
 def _execution_succeeded(result: Optional[dict]) -> bool:
     if not result:
@@ -31,15 +32,44 @@ def _regex_confidence(price: float, decimals: int = 4) -> float:
     significant_decimals = len(decimal_part.rstrip("0"))
     return min(0.5 + significant_decimals * 0.1, 0.85)
 
+
+def _apply_cognitive_confidence(signal: dict, base_confidence: float) -> float:
+    cognitive_confidence = signal.get("cognitive_confidence")
+    if cognitive_confidence is None:
+        return base_confidence
+    try:
+        cognitive_value = max(0.0, min(0.99, float(cognitive_confidence)))
+    except (TypeError, ValueError):
+        return base_confidence
+
+    blended = (float(base_confidence) + cognitive_value) / 2.0
+    if signal.get("cognitive_action") == "FADE":
+        return max(0.0, min(blended, float(base_confidence) * 0.5))
+    return max(0.0, min(0.99, blended))
+
+
+def _risk_rejection_reason(size: float, regime: str, sizing: dict) -> Optional[str]:
+    if regime in BLOCKED_REGIMES:
+        return f"HMM_BLOCKED:{regime}"
+    sizing_reason = str(sizing.get("reason", ""))
+    if size <= 0 and sizing_reason:
+        return sizing_reason
+    return None
+
 async def _execute_guarded(
     ticker: str, side: str, price: float, size: float,
     confidence: float, regime: str, sizing: dict,
     ledger: Ledger, freqai: FreqAIEngine, risk: Optional[PortfolioRiskEngine],
     store: Optional[FeatureStore], mode: str, signal_source: str,
     executor: Optional[PassiveExecutor] = None,
+    tenant_wallet: Optional[str] = None,
 ) -> Dict[str, Any]:
-    if size <= 0:
-        return {"status": "SKIPPED", "reason": "Zero size"}
+    rejection_reason = _risk_rejection_reason(size, regime, sizing)
+    if rejection_reason or size <= 0:
+        return {"status": "SKIPPED", "reason": rejection_reason or "Zero size"}
+
+    if price <= 0:
+        return {"status": "SKIPPED", "reason": "Invalid price"}
 
     report_data = {
         "ticker": ticker, "side": side, "price": price,
@@ -55,17 +85,47 @@ async def _execute_guarded(
     if mode == "REPLAY":
         report_data["status"] = "SUCCESS"
         report_data["reason_1"] = "REPLAY_SKIP_EXECUTION"
+        if store:
+            try:
+                store.record_decision(
+                    mode=mode, ticker=ticker, side=side, price=price, sized=size,
+                    executed_size=0.0, kelly_pct=sizing.get("kelly_pct", 0.0),
+                    regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
+                    authorized=True, reason="REPLAY_SKIP_EXECUTION",
+                )
+            except Exception as e:
+                logger.error(f"Failed to record replay decision: {e}")
         return report_data
+
+    if store:
+        try:
+            store.record_signal(
+                source=signal_source, ticker=ticker, side=side, price=price,
+                size=size, confidence=confidence, regime_label=regime,
+            )
+        except Exception as e:
+            logger.error(f"Failed to record signal: {e}")
 
     if mode == "PAPER":
         ledger.record_paper_order(
             ticker=ticker, side=side, price=price, size=size,
             confidence=confidence, regime_label=regime, signal_source=signal_source,
+            tenant_wallet=tenant_wallet,
         )
         if risk: risk.book_exposure(ticker, size, side)
         report_data["status"] = "SUCCESS"
         report_data["executed_size"] = size
         report_data["trade_id"] = f"paper-{uuid.uuid4().hex[:8]}"
+        if store:
+            try:
+                store.record_decision(
+                    mode=mode, ticker=ticker, side=side, price=price, sized=size,
+                    executed_size=size, kelly_pct=sizing.get("kelly_pct", 0.0),
+                    regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
+                    authorized=True, reason="Paper order recorded",
+                )
+            except Exception as e:
+                logger.error(f"Failed to record paper decision: {e}")
         return report_data
 
     # PROD / SHADOW Logic
@@ -78,6 +138,16 @@ async def _execute_guarded(
     if not validation["authorized"]:
         report_data["status"] = "FAILED"
         report_data["reason_1"] = validation["reason"]
+        if store:
+            try:
+                store.record_decision(
+                    mode=mode, ticker=ticker, side=side, price=price, sized=size,
+                    executed_size=0.0, kelly_pct=sizing.get("kelly_pct", 0.0),
+                    regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
+                    authorized=False, reason=validation["reason"],
+                )
+            except Exception as e:
+                logger.error(f"Failed to record auth-failed decision: {e}")
         return report_data
 
     final_size = validation["size"]
@@ -93,7 +163,7 @@ async def _execute_guarded(
         exec_ok = exec_result.get("status") in SUCCESS_STATUSES
     else:
         try:
-            exec_result = await freqai.clob_execute(ticker, side, price, final_size)
+            exec_result = await freqai.clob_execute(ticker=ticker, side=side, price=price, size=final_size)
             exec_ok = _execution_succeeded(exec_result)
         except Exception as e:
             logger.error(f"Execution error: {e}")
@@ -107,6 +177,7 @@ async def _execute_guarded(
             side=side,
             price=price,
             size=executed_size,
+            tenant_wallet=tenant_wallet,
         )
         if risk: risk.book_exposure(ticker, executed_size, side)
         report_data["status"] = "SUCCESS"
@@ -114,7 +185,19 @@ async def _execute_guarded(
         report_data["trade_id"] = position_id
     else:
         report_data["status"] = "FAILED"
+
         report_data["reason_1"] = "Execution rejected by CLOB"
+
+    if store:
+        try:
+            store.record_decision(
+                mode=mode, ticker=ticker, side=side, price=price, sized=size,
+                executed_size=executed_size, kelly_pct=sizing.get("kelly_pct", 0.0),
+                regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
+                authorized=exec_ok, reason=report_data.get("reason_1", "Nominal execution"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to record final decision: {e}")
 
     return report_data
 
@@ -133,7 +216,7 @@ async def execute_regex_signal(
     
     mode = ledger.get_execution_mode()
     regime = get_regime_label(kwargs.get("hmm"), ticker)
-    confidence = _regex_confidence(price)
+    confidence = _apply_cognitive_confidence(signal, _regex_confidence(price))
     
     risk = kwargs.get("risk")
     sizing = risk.compute_position_size(
@@ -144,7 +227,8 @@ async def execute_regex_signal(
     return await _execute_guarded(
         ticker, side, price, sizing["size"], confidence, regime, sizing,
         ledger, freqai, risk, kwargs.get("store"),
-        mode, "regex", kwargs.get("executor")
+        mode, "regex", kwargs.get("executor"),
+        tenant_wallet=kwargs.get("tenant_wallet"),
     )
 
 async def execute_lobstar_signal(
@@ -158,7 +242,7 @@ async def execute_lobstar_signal(
     side = decision.get("side", "")
     price = decision.get("price_limite", 0.0)
     size = decision.get("size", 0.0)
-    confidence = decision.get("confidence", 0.0)
+    confidence = _apply_cognitive_confidence(signal, decision.get("confidence", 0.0))
 
     if not ticker or not side or not (0.01 <= price <= 0.99):
         logger.warning(f"LOBSTAR: Incomplete decision: {decision}")
@@ -189,5 +273,6 @@ async def execute_lobstar_signal(
     return await _execute_guarded(
         ticker, side, price, sizing["size"], confidence, regime, sizing,
         ledger, freqai, risk, kwargs.get("store"),
-        mode, "lobstar_llm", kwargs.get("executor")
+        mode, "lobstar_llm", kwargs.get("executor"),
+        tenant_wallet=kwargs.get("tenant_wallet"),
     )

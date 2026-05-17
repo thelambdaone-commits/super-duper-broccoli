@@ -1,0 +1,40 @@
+{
+  "id": "portfolio_risk_skill",
+  "name": "Portfolio Sizing & Risk Controls",
+  "description": "Applies rigorous Kelly criteria and HMM volatility multipliers to calculate optimal position sizes and manage concentration boundaries.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "calculate_kelly_size",
+      "description": "Computes recommended position sizing based on trade confidence, asset price, and current volatility regime.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "description": "Target ticker symbol, e.g. SOL, BTC, ETH."
+          },
+          "side": {
+            "type": "string",
+            "description": "Order direction: BUY or SELL."
+          },
+          "price": {
+            "type": "number",
+            "description": "Limit entry price (0.01 to 0.99)."
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Prediction probability/confidence (0.1 to 0.99).",
+            "default": 0.55
+          },
+          "regime": {
+            "type": "string",
+            "description": "Current HMM volatility regime label: LOW_VOLATILITY, HIGH_TREND_VOLATILITY, ERRATIC_VOLATILITY.",
+            "default": "LOW_VOLATILITY"
+          }
+        },
+        "required": ["ticker", "side", "price"]
+      }
+    }
+  ]
+}

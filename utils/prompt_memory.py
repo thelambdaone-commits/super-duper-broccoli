@@ -59,6 +59,33 @@ def _redact_secrets(value: str) -> str:
     redacted = value
     for pattern in SECRET_PATTERNS:
         redacted = pattern.sub("<redacted>", redacted)
+    
+    # Entropy-based security guardrail (moltbook-agent-guard pattern)
+    # Scan for high-entropy alphanumeric strings that could be private keys or API credentials
+    import math
+    from collections import Counter
+    
+    # Find candidate alphanumeric strings of length 30 to 128
+    candidates = re.findall(r"\b[A-Za-z0-9\-_]{30,128}\b", redacted)
+    for cand in set(candidates):
+        # Skip strings that are entirely digits to prevent over-redacting numbers
+        if cand.isdigit():
+            continue
+        # Skip standard long words if lowercase and moderately short
+        if cand.islower() and len(cand) < 40:
+            continue
+        # Shannon entropy
+        counts = Counter(cand)
+        cand_len = len(cand)
+        entropy = 0.0
+        for count in counts.values():
+            p = count / cand_len
+            entropy -= p * math.log2(p)
+        
+        # High entropy threshold (typically keys have entropy > 3.6)
+        if entropy > 3.6:
+            redacted = redacted.replace(cand, "<redacted_high_entropy_key>")
+            
     return redacted
 
 

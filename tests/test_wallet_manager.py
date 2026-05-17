@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from utils.wallet_manager import WalletManager, TokenBalance, WalletSnapshot
-from web3.exceptions import ValidationError
+from web3.exceptions import Web3ValidationError
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def test_wallet_manager_is_valid_address():
             
             # Invalid address
             with patch('utils.wallet_manager.Web3.to_checksum_address') as mock_checksum:
-                mock_checksum.side_effect = ValidationError("Invalid address")
+                mock_checksum.side_effect = Web3ValidationError("Invalid address")
                 assert not manager.is_valid_address("invalid_address")
 
 

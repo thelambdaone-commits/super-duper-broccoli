@@ -1,4 +1,6 @@
 import logging
+import os
+import pickle
 from typing import Any, Optional
 
 import numpy as np
@@ -132,3 +134,36 @@ class ProbabilityCalibrator:
         result[:, 1] = calibrated
         result[:, 0] = 1.0 - calibrated
         return result
+
+    def save(self, path: str) -> str:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            pickle.dump(
+                {
+                    "fusion_mode": self.fusion_mode,
+                    "platt_l1_ratio": self.platt_l1_ratio,
+                    "isotonic_out_of_bounds": self.isotonic_out_of_bounds,
+                    "platt": self._platt,
+                    "isotonic": self._isotonic,
+                    "fitted": self._fitted,
+                    "calibration_log": self.calibration_log,
+                },
+                fh,
+            )
+        logger.info("ProbabilityCalibrator saved to %s", path)
+        return path
+
+    def load(self, path: str) -> "ProbabilityCalibrator":
+        with open(path, "rb") as fh:
+            data = pickle.load(fh)
+        self.fusion_mode = data.get("fusion_mode", self.fusion_mode)
+        self.platt_l1_ratio = data.get("platt_l1_ratio", self.platt_l1_ratio)
+        self.isotonic_out_of_bounds = data.get(
+            "isotonic_out_of_bounds", self.isotonic_out_of_bounds
+        )
+        self._platt = data.get("platt")
+        self._isotonic = data.get("isotonic")
+        self._fitted = bool(data.get("fitted", False))
+        self.calibration_log = data.get("calibration_log", {})
+        logger.info("ProbabilityCalibrator loaded from %s", path)
+        return self

@@ -1,0 +1,23 @@
+{
+  "id": "crypto_arbitrage_skill",
+  "name": "Crypto & Polymarket Arbitrage Opportunity Finder",
+  "description": "Scans and evaluates prediction events to identify mathematical mispricings (e.g. YES/NO contract sum deviation) and cross-asset statistical arbitrage.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "find_arbitrage_opportunities",
+      "description": "Trigger an arbitrage scan across active prediction markets to identify riskless profit spreads.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "min_spread_pct": {
+            "type": "number",
+            "description": "Minimum mispricing threshold in percentage, e.g. 1.5",
+            "default": 1.0
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

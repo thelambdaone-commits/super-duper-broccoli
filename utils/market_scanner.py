@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+from utils.crypto_market_intelligence import CryptoMarketIntelligence, DEFAULT_CRYPTO_KEYWORDS
 from utils.polymarket_client import Market, PolymarketClient
 
 logger = logging.getLogger("MarketScanner")
@@ -78,25 +79,23 @@ class MarketScanner:
         return sentiment
 
     def _is_crypto_market(self, market: Market) -> bool:
-        # Check if market is about crypto
         text = (market.slug + " " + market.question + " " + (market.description or "")).lower()
-        crypto_keywords = [
-            "btc", "bitcoin", "eth", "ethereum", "sol", "solana", "crypto", "cryptocurrency", 
-            "coin", "token", "altcoin", "memecoin", "pepe", "doge", "shib", "nft", "blockchain",
-            "binance", "coinbase", "kraken", "sec", "etf", "halving", "mining", "staking", "dao",
-            "defi", "dex", "yield", "stablecoin", "usdc", "usdt", "polygon", "matic", "layer",
-            "airdrop", "ledger", "metamask", "vitalik", "satoshi", "saylor"
-        ]
-        
-        # 1. Check text content
-        if any(keyword in text for keyword in crypto_keywords):
+        crypto_keywords = {
+            keyword
+            for keywords in DEFAULT_CRYPTO_KEYWORDS.values()
+            for keyword in keywords
+        } | {
+            "xmr", "monero", "pepe", "shib", "nft", "defi", "dex", "usdc",
+            "usdt", "polygon", "matic", "staking", "airdrop", "satoshi",
+        }
+
+        if any(CryptoMarketIntelligence._contains_keyword(text, keyword) for keyword in crypto_keywords):
             return True
-            
-        # 2. Check tags
+
         market_tags = [t.lower() for t in market.tags]
-        if any(t in ["cryptocurrency", "crypto", "btc", "eth", "sol", "altcoins", "defi"] for t in market_tags):
+        if any(t in CRYPTO_TAGS or t in {"defi", "nft", "web3"} for t in market_tags):
             return True
-            
+
         return False
 
     def scan_markets(self) -> ScanResult:

@@ -16,7 +16,7 @@ DEFAULT_CRYPTO_KEYWORDS = {
     "SOL": ("sol", "solana"),
     "XRP": ("xrp", "ripple"),
     "DOGE": ("doge", "dogecoin"),
-    "CRYPTO": ("crypto", "cryptocurrency", "blockchain", "coinbase", "binance", "etf"),
+    "CRYPTO": ("crypto", "cryptocurrency", "blockchain", "coinbase", "binance"),
 }
 
 
@@ -131,37 +131,37 @@ class CryptoMarketIntelligence:
         spread = abs(market.yes_price - market.no_price)
 
         if market.volume >= self.min_volume:
-            rationale.append(f"volume ${market.volume:,.0f} above crypto intelligence threshold")
+            rationale.append(f"volume ${market.volume:,.0f} au-dessus du seuil crypto")
         if market.liquidity >= self.min_liquidity:
-            rationale.append(f"liquidity ${market.liquidity:,.0f} supports monitoring")
+            rationale.append(f"liquidite ${market.liquidity:,.0f} suffisante pour surveillance")
         if asset in self.watchlist:
-            rationale.append(f"{asset} is in configured watchlist")
+            rationale.append(f"{asset} est dans la watchlist")
 
         if market.liquidity < self.min_liquidity:
             signal_type = "thin_liquidity"
             direction = "AVOID"
             score = 0.35 + volume_score * 0.25
-            rationale.append("thin liquidity can distort quoted probabilities")
+            rationale.append("liquidite trop faible, probabilite potentiellement deformee")
         elif conviction >= 0.8:
             signal_type = "crowded_probability"
             direction = "WATCH_REVERSAL"
             score = 0.45 + conviction * 0.35 + volume_score * 0.2
-            rationale.append("probability is crowded near an extreme")
+            rationale.append("probabilite proche d'un extreme, risque de retournement")
         elif 0.35 <= probability <= 0.65 and market.volume >= self.min_volume:
             signal_type = "liquidity_focus"
             direction = "MONITOR"
             score = 0.45 + liquidity_score * 0.3 + volume_score * 0.25
-            rationale.append("balanced probability with tradable activity")
+            rationale.append("probabilite equilibree avec activite exploitable")
         elif spread > 0.15:
             signal_type = "mispricing"
             direction = "REVIEW_BOOK"
             score = 0.50 + min(spread, 0.5) * 0.5
-            rationale.append(f"wide YES/NO spread {spread:.2f} suggests book review")
+            rationale.append(f"spread YES/NO large {spread:.2f}, carnet a verifier")
         else:
             signal_type = "momentum"
             direction = "BULLISH" if probability > 0.5 else "BEARISH"
             score = 0.4 + conviction * 0.3 + volume_score * 0.2 + liquidity_score * 0.1
-            rationale.append("probability tilt plus market activity creates directional watch signal")
+            rationale.append("probabilite directionnelle avec activite suffisante")
 
         confidence = min(max(score, 0.0), 0.99)
         return IntelligenceSignal(
@@ -200,37 +200,98 @@ class CryptoMarketIntelligence:
 
 def format_intelligence_report(report: IntelligenceReport) -> str:
     data = report.to_dict()
+    summary = data["summary"]
+    avg_confidence = float(summary.get("avg_signal_confidence", 0.0))
+    bias = _report_bias(report)
+    
+    bias_emoji = {"BULLISH": "📈 BULLISH", "BEARISH": "📉 BEARISH", "NEUTRAL": "⚖️ NEUTRE", "NEUTRE": "⚖️ NEUTRE"}.get(bias, bias)
+    
     lines = [
-        "*Crypto Market Intelligence*",
-        f"Markets scanned: {data['market_count']} ({data['crypto_market_count']} crypto)",
-        f"Volume: ${data['summary']['total_crypto_volume']:,.0f}",
-        f"Liquidity: ${data['summary']['total_crypto_liquidity']:,.0f}",
+        "🤖 Lobstar Crypto Intelligence",
+        f"  Biais marché: {bias_emoji} | confiance moyenne {avg_confidence:.0%}",
+        f"  Couverture: {data['crypto_market_count']} crypto / {data['market_count']} marchés",
+        f"  Flux: ${summary['total_crypto_volume']:,.0f} volume | ${summary['total_crypto_liquidity']:,.0f} liquidité",
         "",
     ]
 
     if report.opportunities:
-        lines.append("*Opportunities / Watchlist*")
+        lines.append("  A surveiller")
         for signal in report.opportunities[:5]:
+            label = _direction_label(signal.direction)
+            reason = _signal_reason(signal)
             lines.append(
-                f"- {signal.asset} {signal.direction} `{signal.market_slug}` "
-                f"score={signal.score:.2f} yes={signal.yes_price:.2f}"
+                f"  - {signal.asset} {label} | YES {signal.yes_price:.0%} / NO {signal.no_price:.0%} | score {signal.score:.0%}\n"
+                f"    {signal.market_slug}\n"
+                f"    Lecture: {reason}"
             )
     else:
-        lines.append("*Opportunities / Watchlist*: none")
+        lines.append("  A surveiller: aucun signal liquide prioritaire")
 
     if report.risk_flags:
-        lines.extend(["", "*Risk Flags*"])
+        lines.extend(["", "  Risques"])
         for signal in report.risk_flags[:5]:
+            label = _risk_label(signal.signal_type)
+            reason = _signal_reason(signal)
             lines.append(
-                f"- {signal.asset} {signal.signal_type} `{signal.market_slug}` "
-                f"confidence={signal.confidence:.2f}"
+                f"  - {signal.asset} {label} | confiance {signal.confidence:.0%}\n"
+                f"    {signal.market_slug}\n"
+                f"    Lecture: {reason}"
             )
 
     lines.extend([
         "",
-        "Advisory only. Execution still requires parser, risk, ledger, and mode validation.",
+        "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h",
+        "  Avis consultatif. Pas d'exécution sans parser, risque, ledger et mode valide.",
     ])
     return "\n".join(lines)
+
+
+def _report_bias(report: IntelligenceReport) -> str:
+    directional = [
+        signal.direction
+        for signal in report.opportunities
+        if signal.direction in {"BULLISH", "BEARISH"}
+    ]
+    if not directional:
+        return "NEUTRE"
+    bullish = sum(1 for direction in directional if direction == "BULLISH")
+    bearish = len(directional) - bullish
+    if bullish > bearish:
+        return "BULLISH"
+    if bearish > bullish:
+        return "BEARISH"
+    return "NEUTRE"
+
+
+def _direction_label(direction: str) -> str:
+    return {
+        "BULLISH": "biais haussier 📈",
+        "BEARISH": "biais baissier 📉",
+        "MONITOR": "zone liquide 🔍",
+        "REVIEW_BOOK": "book à vérifier 📚",
+        "WATCH_REVERSAL": "surveiller retournement 🔄",
+        "AVOID": "éviter 🚫",
+    }.get(direction, direction.lower())
+
+
+def _risk_label(signal_type: str) -> str:
+    return {
+        "crowded_probability": "probabilité surchargée ⚠️",
+        "thin_liquidity": "liquidité faible 🚨",
+        "mispricing": "spread anormal ⚖️",
+        "liquidity_focus": "zone liquide 🔍",
+        "momentum": "momentum ⚡",
+    }.get(signal_type, signal_type.replace("_", " "))
+
+
+def _signal_reason(signal: IntelligenceSignal) -> str:
+    if signal.rationale:
+        return signal.rationale[-1].rstrip(".")
+    if signal.signal_type == "crowded_probability":
+        return "probabilite proche d'un extreme, attention au retournement"
+    if signal.signal_type == "thin_liquidity":
+        return "carnet trop fin pour une lecture robuste"
+    return "probabilite et liquidite surveillables"
 
 
 def report_to_json(report: IntelligenceReport) -> str:

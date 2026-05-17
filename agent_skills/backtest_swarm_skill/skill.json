@@ -1,0 +1,23 @@
+{
+  "id": "backtest_swarm_skill",
+  "name": "MiroFish Multi-Agent Backtest Swarm",
+  "description": "Orchestrates multi-agent research simulations using MiroFish cohorts and Ruflo coordination, checking dynamic HMM sizing and committing virtual results.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "run_swarm_backtest",
+      "description": "Trigger a complete 4-scenario simulation backtest for a target prediction contract.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Target contract ticker, e.g. SOL, BTC, ETH.",
+            "default": "SOL"
+          }
+        },
+        "required": []
+      }
+    }
+  ]
+}

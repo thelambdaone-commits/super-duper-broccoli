@@ -270,6 +270,18 @@ class TestComputePositionSize:
         expected_kelly_pct = (capped * 20_000.0) / 20_000.0 * 100
         assert result["kelly_pct"] == pytest.approx(expected_kelly_pct)
 
+    def test_aggressive_kelly_is_capped_to_single_position_notional(
+        self, engine: PortfolioRiskEngine
+    ) -> None:
+        result = engine.compute_position_size(
+            ticker="SOL", side="BUY", price=0.25,
+            confidence=1.0, win_prob=0.95, win_loss_ratio=5.0,
+            regime_label="LOW_VOLATILITY",
+        )
+        max_notional = 20_000.0 * engine.max_single_position_pct
+        assert result["capital_at_risk"] <= max_notional + 1e-9
+        assert result["single_position_cap_pct"] == pytest.approx(5.0)
+
 
 class TestHighVolMultiplierConsistency:
     def test_regime_sizing_multiplier_values(self) -> None:

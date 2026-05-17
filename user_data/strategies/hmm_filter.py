@@ -34,7 +34,9 @@ class HMMRegimeFilter:
         self._label_map: dict[int, str] = {}
 
     def fit(self, returns: np.ndarray) -> None:
-        X = returns.reshape(-1, 1)
+        X = self._prepare_returns(returns)
+        if len(X) < self.model.n_components:
+            raise ValueError("Not enough return observations to fit HMM")
         self.model.fit(X)
         self._fitted = True
 
@@ -43,23 +45,33 @@ class HMMRegimeFilter:
 
         means_flat = self.model.means_.flatten()
         sorted_idx = np.argsort(np.abs(means_flat))
+        labels = ["LOW_VOLATILITY", "HIGH_TREND_VOLATILITY", "ERRATIC_VOLATILITY"]
         self._label_map = {
-            int(sorted_idx[0]): "LOW_VOLATILITY",
-            int(sorted_idx[1]): "HIGH_TREND_VOLATILITY",
-            int(sorted_idx[2]): "ERRATIC_VOLATILITY",
+            int(state): labels[min(rank, len(labels) - 1)]
+            for rank, state in enumerate(sorted_idx)
         }
         stds = np.sqrt(self.model.covars_.flatten())
         max_std_idx = int(np.argmax(stds))
-        if max_std_idx != sorted_idx[2]:
+        if len(sorted_idx) >= 3 and max_std_idx != sorted_idx[2]:
             self._label_map[max_std_idx] = "ERRATIC_VOLATILITY"
             remaining = [s for s in range(3) if s != max_std_idx]
             self._label_map[remaining[0]] = "LOW_VOLATILITY"
             self._label_map[remaining[1]] = "HIGH_TREND_VOLATILITY"
 
+    @staticmethod
+    def _prepare_returns(returns: np.ndarray) -> np.ndarray:
+        arr = np.asarray(returns, dtype=np.float64).reshape(-1, 1)
+        if arr.size == 0:
+            return arr
+        return arr[np.isfinite(arr[:, 0])]
+
     def predict_regime(self, returns: np.ndarray) -> int:
         if not self._fitted:
             return 2
-        hidden = self.model.predict(returns.reshape(-1, 1))
+        X = self._prepare_returns(returns)
+        if len(X) == 0:
+            return 2
+        hidden = self.model.predict(X)
         return int(hidden[-1])
 
     def get_regime_label(self, state: int) -> str:
@@ -76,10 +88,11 @@ class HMMRegimeFilter:
     def compute_dissimilarity_index(
         self, returns: np.ndarray, window: int = 50
     ) -> float:
-        if len(returns) < window * 2:
+        clean = self._prepare_returns(returns).flatten()
+        if len(clean) < window * 2:
             return 0.0
-        ref = returns[-window * 2 : -window]
-        current = returns[-window:]
+        ref = clean[-window * 2 : -window]
+        current = clean[-window:]
         di = float(wasserstein_distance(ref.flatten(), current.flatten()))
         return di
 
@@ -98,6 +111,9 @@ class HMMRegimeFilter:
         di_threshold: float = 2.0,
         di_window: int = 50,
     ) -> Tuple[bool, str]:
+        clean = self._prepare_returns(returns)
+        if len(clean) == 0:
+            return False, "HMM_BLOCKED: invalid_or_empty_returns"
         _, label = self.predict_with_label(returns)
         if label in REGIME_BLOCKED:
             return False, f"HMM_BLOCKED: regime={label}"

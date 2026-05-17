@@ -3,6 +3,7 @@ from utils.crypto_market_intelligence import (
     format_intelligence_report,
     report_to_json,
 )
+from utils.market_scanner import MarketScanner
 from utils.polymarket_client import Market
 
 
@@ -104,6 +105,39 @@ def test_report_format_and_json_are_stable() -> None:
     text = format_intelligence_report(report)
     payload = report_to_json(report)
 
-    assert "Crypto Market Intelligence" in text
-    assert "Advisory only" in text
+    assert "Lobstar Crypto Intelligence" in text
+    assert "Biais marché:" in text
+    assert "Commandes rapides:" in text
+    assert "Avis consultatif" in text
+    assert "*" not in text
+    assert "`" not in text
     assert '"crypto_market_count": 1' in payload
+
+
+def test_market_scanner_crypto_filter_rejects_non_crypto_winners() -> None:
+    scanner = MarketScanner()
+
+    assert not scanner._is_crypto_market(
+        make_market(
+            "california-governor-election",
+            "Will Eleni Kounalakis win the California Governor Election?",
+            0.01,
+            0.99,
+        )
+    )
+    assert not scanner._is_crypto_market(
+        make_market(
+            "f1-drivers-champion",
+            "Will Arvid Lindblad be the 2026 F1 Drivers' Champion?",
+            0.01,
+            0.99,
+        )
+    )
+    assert scanner._is_crypto_market(
+        make_market(
+            "bitcoin-above-80k",
+            "Will Bitcoin trade above 80k?",
+            0.55,
+            0.45,
+        )
+    )

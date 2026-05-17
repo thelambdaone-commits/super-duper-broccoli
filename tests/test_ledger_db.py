@@ -2,6 +2,7 @@ import os
 import pytest
 import sqlite3
 from ledger.ledger_db import Ledger
+from utils.exceptions import QuantFatal
 
 @pytest.fixture
 def temp_ledger(tmp_path):
@@ -68,3 +69,28 @@ def test_record_order_updates_capital(temp_ledger):
     positions = temp_ledger.get_open_positions()
     assert len(positions) == 1
     assert positions[0]["ticker"] == "SOL"
+
+
+def test_record_order_rolls_back_on_mid_transaction_failure(temp_ledger):
+    cursor = temp_ledger.conn.cursor()
+    cursor.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) "
+        "VALUES (10000.0, 10000.0, 10.0)"
+    )
+    cursor.execute(
+        """
+        CREATE TRIGGER fail_transaction_insert
+        BEFORE INSERT ON transactions
+        BEGIN
+            SELECT RAISE(ABORT, 'forced transaction failure');
+        END;
+        """
+    )
+    temp_ledger.conn.commit()
+
+    with pytest.raises(QuantFatal):
+        temp_ledger.record_order("pos-fail", "SOL", "BUY", 0.5, 1000)
+
+    assert temp_ledger.get_capital_summary()["available_capital"] == 10000.0
+    tx_count = temp_ledger.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+    assert tx_count == 0
