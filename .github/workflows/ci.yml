@@ -27,7 +27,15 @@ jobs:
       - name: Type check with mypy
         run: |
           pip install mypy types-requests types-python-dateutil
-          mypy . --ignore-missing-imports --check-untyped-defs || true
+          mypy . --ignore-missing-imports --check-untyped-defs
+      - name: Audit Python dependencies
+        run: |
+          pip install pip-audit
+          pip-audit --local
+      - name: Scan secrets with gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Run tests
         run: |
           python -m pytest tests/ -v --tb=short --cov=. --cov-report=term-missing

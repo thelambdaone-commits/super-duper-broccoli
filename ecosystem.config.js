@@ -1,11 +1,18 @@
 module.exports = {
     apps: [{
+        // Core trading runtime. Keep a single forked process because the bot owns
+        // Telegram polling locks, DuckDB/ledger handles, and execution-mode state.
+        // Quick start: pm2 start ecosystem.config.js --only quant-agentic-core
+        // Logs:        pm2 logs quant-agentic-core
+        // Restart:     pm2 restart quant-agentic-core --update-env
         name: "quant-agentic-core",
         script: "main_agentic_clob.py",
         cwd: __dirname,
         interpreter: ".venv/bin/python",
         instances: 1,
         exec_mode: "fork",
+        // Restart policy favors long-lived PAPER operation while preventing tight
+        // crash loops from hiding repeated startup failures.
         max_restarts: 10000,
         min_uptime: "10s",
         restart_delay: 1000,
@@ -32,8 +39,15 @@ module.exports = {
             SECRET_SOURCE: process.env.SECRET_SOURCE || "auto",
             VAULT_ADDR: process.env.VAULT_ADDR || "false",
             VAULT_TOKEN: process.env.VAULT_TOKEN,
+            // PROD is intentionally not enabled here. main_agentic_clob.py requires
+            // an interactive confirmation plus LOBSTAR_PROD_CONFIRM_SECRET before
+            // any PROD startup can proceed.
         },
     }, {
+        // MCP/API integration server. This process is read/write API surface; keep
+        // a separate feature-store file to avoid unnecessary contention with the
+        // core runtime.
+        // Quick start: pm2 start ecosystem.config.js --only quant-agentic-api
         name: "quant-agentic-api",
         script: ".venv/bin/uvicorn",
         args: "api.api_server:app --host 0.0.0.0 --port 8000 --log-level info",
@@ -59,6 +73,9 @@ module.exports = {
             API_FEATURE_STORE_PATH: "data/api_feature_store.duckdb",
         },
     }, {
+        // Streamlit operations dashboard. It is isolated from the execution loop
+        // so dashboard restarts cannot interrupt trading or Telegram polling.
+        // Quick start: pm2 start ecosystem.config.js --only quant-agentic-dashboard
         name: "quant-agentic-dashboard",
         script: ".venv/bin/streamlit",
         args: "run api/dashboard.py --server.port 8501 --server.headless true",

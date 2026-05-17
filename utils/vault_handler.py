@@ -83,6 +83,7 @@ def _load_env_file() -> None:
 
 class VaultHandler:
     _env_loaded = False
+    _session_wallets: Dict[str, Dict[str, str]] = {}
 
     def __init__(self) -> None:
         if not VaultHandler._env_loaded:
@@ -333,6 +334,26 @@ class VaultHandler:
             if self._client:
                 self._client.logout()
                 self._client = None
+
+    def stocker_cle_session(self, chat_id: int | str, public_address: str, private_key: str) -> None:
+        """Store an imported wallet only in process memory for the current bot session."""
+        chat_key = str(chat_id)
+        VaultHandler._session_wallets[chat_key] = {
+            "POLYMARKET_WALLET_ADDRESS": public_address,
+            "CLOB_PRIVATE_KEY": private_key,
+        }
+        logger.info("Stored ephemeral session wallet for chat_id=%s address=%s...%s", chat_key, public_address[:6], public_address[-4:])
+
+    def obtenir_wallet_session(self, chat_id: int | str) -> Dict[str, str] | None:
+        """Return an in-memory session wallet without touching disk."""
+        return VaultHandler._session_wallets.get(str(chat_id))
+
+    def supprimer_wallet_session(self, chat_id: int | str) -> bool:
+        """Forget an in-memory session wallet."""
+        return VaultHandler._session_wallets.pop(str(chat_id), None) is not None
+
+    def compter_wallets_session(self) -> int:
+        return len(VaultHandler._session_wallets)
 
 
 def collect_optional_secrets_from_env(keys: Iterable[str] = OPTIONAL_SECRET_KEYS) -> Dict[str, str]:

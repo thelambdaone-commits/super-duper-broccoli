@@ -2,9 +2,7 @@ import os
 import re
 import json
 import time
-import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional, Tuple
 import numpy as np
 
@@ -15,7 +13,6 @@ from core.container import ServiceContainer
 logger = logging.getLogger("DataPipeline")
 
 class JSONLStorageEngine:
-    _executor = ThreadPoolExecutor(max_workers=4)
     _default_path = "data/archive_events.jsonl"
     _raw_stream_dir = "user_data/data/raw_stream"
 
@@ -48,9 +45,7 @@ class JSONLStorageEngine:
         # Let's ensure directories exist
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
-        # Offload file writing to thread pool to guarantee <1ms non-blocking path
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(cls._executor, cls._write_event_sync, target_path, event)
+        cls._write_event_sync(target_path, event)
 
     @classmethod
     def _write_event_sync(cls, path: str, event: dict) -> None:
@@ -67,7 +62,7 @@ class PredictiveOpinionEngine:
     providing structured context-aware trading insights with local FastMCP tool integration.
     """
     def __init__(self, api_key: Optional[str] = None, base_url: str = "https://openrouter.ai/api/v1") -> None:
-        self.api_key = api_key or resolve_openrouter_api_key()
+        self.api_key = resolve_openrouter_api_key() if api_key is None else api_key
         self.base_url = base_url
         self.model = "anthropic/claude-3.5-sonnet"
 

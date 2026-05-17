@@ -15,7 +15,9 @@ config_secrets.json
 .vault-token
 master.key
 *.duckdb
+*.duckdb.wal
 *.key
+*.enc
 
 # Local Databases (Ledger State Persistence)
 *.db

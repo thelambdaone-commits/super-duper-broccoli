@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, patch
 from utils.wallet_manager import WalletManager, TokenBalance, WalletSnapshot
 from web3.exceptions import Web3ValidationError
 

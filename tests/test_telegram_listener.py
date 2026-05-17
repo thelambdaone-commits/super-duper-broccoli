@@ -332,11 +332,12 @@ async def test_callback_without_ledger_replies_instead_of_crashing() -> None:
     )
     update = SimpleNamespace(callback_query=query, message=None, channel_post=None)
     listener = TelegramListener(bot_token="token", on_signal=lambda _: None, admin_chat_ids={123})
+    listener._cmd_wallet_cockpit = AsyncMock()
 
     await listener._handle_callback(update, None)
 
     query.answer.assert_awaited_once_with()
-    reply_text.assert_awaited_once_with("Wallet info not available.")
+    listener._cmd_wallet_cockpit.assert_awaited_once_with(update, None)
 
 
 @pytest.mark.asyncio
@@ -598,6 +599,5 @@ async def test_cmd_ai_status_errors_and_prompt(monkeypatch):
     mock_status_msg.edit_text.assert_called_once()
     final_text = mock_status_msg.edit_text.call_args[0][0]
     assert "OPENROUTER API KEY MISSING" in final_text or "LOBSTAR AI COUNCIL SYNTHESIS" in final_text
-
 
 

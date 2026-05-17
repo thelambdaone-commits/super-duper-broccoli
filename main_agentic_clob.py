@@ -2,8 +2,10 @@ import argparse
 import asyncio
 import contextlib
 import fcntl
+import getpass
 import logging
 import os
+import sys
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -58,6 +60,8 @@ from core.health_monitor import LobstarHealthMonitor
 logger = setup_logging()
 
 DEFAULT_TICKERS = ["SOL", "BTC", "ETH"]
+PROD_CONFIRMATION_TEXT = "I UNDERSTAND REAL CAPITAL IS AT RISK"
+PROD_SECOND_FACTOR_ENV = "LOBSTAR_PROD_CONFIRM_SECRET"
 
 
 @contextlib.contextmanager
@@ -84,6 +88,29 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def require_production_confirmation(execution_mode: str) -> None:
+    """Require an interactive confirmation and a second factor before PROD starts."""
+    if execution_mode.upper() != "PROD":
+        return
+
+    expected_secret = os.getenv(PROD_SECOND_FACTOR_ENV, "").strip()
+    if not expected_secret:
+        raise QuantFatal(f"{PROD_SECOND_FACTOR_ENV} is required before PROD mode can start.")
+
+    if not sys.stdin.isatty():
+        raise QuantFatal("PROD mode requires an interactive terminal confirmation.")
+
+    typed_confirmation = input(
+        f"Type '{PROD_CONFIRMATION_TEXT}' to start PROD mode: "
+    ).strip()
+    if typed_confirmation != PROD_CONFIRMATION_TEXT:
+        raise QuantFatal("PROD mode confirmation text did not match.")
+
+    typed_secret = getpass.getpass("Enter PROD second-factor secret: ").strip()
+    if typed_secret != expected_secret:
+        raise QuantFatal("PROD second-factor secret did not match.")
 
 
 def _derive_public_wallet(private_key: SecretStr | str | None) -> str | None:
@@ -139,11 +166,17 @@ def build_telegram_listener(
     token = secrets.get("TELEGRAM_BOT_TOKEN")
     if not token:
         raise QuantFatal("TELEGRAM_BOT_TOKEN is missing from Vault/Environment.")
+    private_chat_ids = parse_private_chat_ids(
+        secrets.get("TELEGRAM_PRIVATE_CHAT_IDS") or os.getenv("TELEGRAM_PRIVATE_CHAT_IDS", "")
+    )
+    allow_private_messages = private_chat_ids is not None
     return TelegramListener(
         bot_token=token,
         on_signal=on_signal,
         chat_id=chat_id,
         access_control=access_control,
+        private_chat_ids=private_chat_ids,
+        allow_private_messages=allow_private_messages,
     )
 
 
@@ -407,67 +440,72 @@ async def main(
     async def _health_check_loop():
         """Periodic model health, drift check, and self-improvement analysis."""
         while True:
-            await asyncio.sleep(3600) # Every hour
-            for ticker in DEFAULT_TICKERS:
-                report = await run_blocking(
-                    f"model health check {ticker}",
-                    model_validator.run_health_check,
-                    ticker,
-                    "default_v1",
+            try:
+                await asyncio.sleep(3600) # Every hour
+                for ticker in DEFAULT_TICKERS:
+                    report = await run_blocking(
+                        f"model health check {ticker}",
+                        model_validator.run_health_check,
+                        ticker,
+                        "default_v1",
+                        timeout=30.0,
+                    )
+                    if report.get("health") == "CRITICAL":
+                        msg = f"🚨 *DRIFT DETECTED: {ticker}*\n\nModel validation failed. Triggering autonomous retraining..."
+                        await listener.send_message(msg, parse_mode="Markdown")
+
+                        try:
+                            await run_blocking(
+                                f"training cycle {ticker}",
+                                training_pipeline.run_cycle,
+                                ticker,
+                                timeout=float(os.getenv("TRAINING_CYCLE_TIMEOUT_SECONDS", "300")),
+                            )
+                            await listener.send_message(
+                                f"✅ *RECALIBRATION COMPLETE: {ticker}*\n\nModel weights updated and redeployed.",
+                                parse_mode="Markdown",
+                            )
+                        except Exception as e:
+                            logger.exception("Retraining failed for %s", ticker)
+                            await listener.send_message(
+                                f"❌ *RECALIBRATION FAILED: {ticker}*\n\nError: {e}",
+                                parse_mode="Markdown",
+                            )
+
+                        self_improver.log_incident("MODEL_DRIFT", f"Drift detected for {ticker}", "Distribution shift", "Prediction accuracy degradation")
+
+                imp_report = await run_blocking(
+                    "self-improvement report",
+                    self_improver.generate_improvement_report,
                     timeout=30.0,
                 )
-                if report.get("health") == "CRITICAL":
-                    msg = f"🚨 *DRIFT DETECTED: {ticker}*\n\nModel validation failed. Triggering autonomous retraining..."
-                    await listener.send_message(msg, parse_mode="Markdown")
-                    
-                    try:
-                        await run_blocking(
-                            f"training cycle {ticker}",
-                            training_pipeline.run_cycle,
-                            ticker,
-                            timeout=float(os.getenv("TRAINING_CYCLE_TIMEOUT_SECONDS", "300")),
-                        )
-                        await listener.send_message(
-                            f"✅ *RECALIBRATION COMPLETE: {ticker}*\n\nModel weights updated and redeployed.",
-                            parse_mode="Markdown",
-                        )
-                    except Exception as e:
-                        logger.error(f"Retraining failed for {ticker}: {e}")
-                        await listener.send_message(
-                            f"❌ *RECALIBRATION FAILED: {ticker}*\n\nError: {e}",
-                            parse_mode="Markdown",
-                        )
-                    
-                    self_improver.log_incident("MODEL_DRIFT", f"Drift detected for {ticker}", "Distribution shift", "Prediction accuracy degradation")
-            
-            imp_report = await run_blocking(
-                "self-improvement report",
-                self_improver.generate_improvement_report,
-                timeout=30.0,
-            )
-            await listener.send_message(imp_report, parse_mode="Markdown")
+                await listener.send_message(imp_report, parse_mode="Markdown")
 
-            try:
-                from utils.data_archiver import DataArchiver
-                archiver = DataArchiver()
-                await run_blocking(
-                    "archive maintenance",
-                    archiver.run_maintenance_cycle,
-                    timeout=120.0,
-                )
-            except Exception as e:
-                logger.error(f"Maintenance cycle failed: {e}")
+                try:
+                    from utils.data_archiver import DataArchiver
+                    archiver = DataArchiver()
+                    await run_blocking(
+                        "archive maintenance",
+                        archiver.run_maintenance_cycle,
+                        timeout=120.0,
+                    )
+                except Exception:
+                    logger.exception("Maintenance cycle failed")
 
-            try:
-                from scripts.rl_feedback_loop import run_rl_feedback_loop
-                await run_blocking(
-                    "RL feedback loop",
-                    run_rl_feedback_loop,
-                    timeout=120.0,
-                )
-                logger.info("Dynamic ML reinforcement weights updated successfully via background maintenance.")
-            except Exception as e:
-                logger.error(f"Failed to execute dynamic ML feedback: {e}")
+                try:
+                    from scripts.rl_feedback_loop import run_rl_feedback_loop
+                    await run_blocking(
+                        "RL feedback loop",
+                        run_rl_feedback_loop,
+                        timeout=120.0,
+                    )
+                    logger.info("Dynamic ML reinforcement weights updated successfully via background maintenance.")
+                except Exception:
+                    logger.exception("Failed to execute dynamic ML feedback")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Health check loop iteration failed; continuing next cycle.")
 
     async def _market_scan_loop() -> None:
         from utils.market_scanner import SCAN_INTERVAL_SECONDS
@@ -687,6 +725,7 @@ if __name__ == "__main__":
         resolved_mode = args.mode
 
     try:
+        require_production_confirmation(resolved_mode)
         if args.resolve_chat:
             with telegram_single_instance_lock():
                 asyncio.run(resolve_chat())

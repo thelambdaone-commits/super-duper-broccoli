@@ -96,6 +96,7 @@ class TelegramListener:
         self._copy_agent = None
         self._start_time: Optional[datetime] = None
         self._trade_count = 0
+        self._wallet_vault = None
 
     def attach_components(
         self,
@@ -392,6 +393,124 @@ class TelegramListener:
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=ParseMode.MARKDOWN,
         )
+
+    def _get_wallet_vault(self):
+        if self._wallet_vault is None:
+            from utils.vault_handler import VaultHandler
+            self._wallet_vault = VaultHandler()
+        return self._wallet_vault
+
+    def _get_wallet_manager(self):
+        from core.wallet_manager import PolymarketWalletManager
+        polygon_rpc_url = os.getenv("POLYGON_RPC_URL") or os.getenv("RPC_URL") or ""
+        return PolymarketWalletManager(
+            vault_handler=self._get_wallet_vault(),
+            polygon_rpc_url=polygon_rpc_url,
+        )
+
+    async def _cmd_wallet_cockpit(self, update: Update, _context) -> None:
+        if not self._is_authorized_private_message(update) and not self._is_admin_chat(update):
+            await self.reply_to("Unauthorized.", update)
+            return
+
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+        chat_id = getattr(msg, "chat_id", None)
+        vault = self._get_wallet_vault()
+        session_wallet = vault.obtenir_wallet_session(chat_id) if chat_id is not None else None
+
+        wallet_name = "session"
+        wallet_address = ""
+        if session_wallet:
+            wallet_address = session_wallet.get("POLYMARKET_WALLET_ADDRESS", "")
+        else:
+            try:
+                from eth_account import Account
+                from utils.credential_manager import CredentialManager
+                mgr = CredentialManager()
+                wallet_address = Account.from_key(mgr.get_or_generate_private_key()).address
+                wallet_name = "default"
+            except Exception as exc:
+                logger.debug("Unable to resolve wallet cockpit address: %s", exc)
+
+        if not wallet_address:
+            await self.reply_to("Aucun wallet actif. Envoyez une cle privee ou seed phrase en DM.", update)
+            return
+
+        manager = self._get_wallet_manager()
+        soldes = await manager.recuperer_soldes_on_chain(wallet_address)
+        text, reply_markup = manager.generer_layout_telegram(
+            wallet_name=wallet_name,
+            wallet_address=wallet_address,
+            soldes=soldes,
+            total_connections=vault.compter_wallets_session(),
+        )
+
+        if getattr(update, "callback_query", None):
+            try:
+                await update.callback_query.edit_message_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+            except Exception as exc:
+                logger.debug("Wallet cockpit edit failed: %s", exc)
+
+        await self.reply_to(text, update, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+
+    async def _handle_wallet_secret_import(self, update: Update, context) -> bool:
+        msg = update.message
+        if not msg or not msg.text:
+            return False
+        if not self._is_authorized_private_message(update):
+            return False
+
+        manager = self._get_wallet_manager()
+        raw_text = msg.text.strip()
+        if not manager.looks_like_wallet_secret(raw_text):
+            return False
+
+        try:
+            await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
+        except Exception as exc:
+            logger.warning("Could not delete wallet secret import message: %s", exc)
+
+        try:
+            if manager.is_private_key(raw_text):
+                address, private_key = manager.importer_via_cle_privee(raw_text)
+            else:
+                address, private_key = manager.importer_via_seed_phrase(raw_text, account_index=0)
+            self._get_wallet_vault().stocker_cle_session(
+                chat_id=msg.chat_id,
+                public_address=address,
+                private_key=private_key,
+            )
+            soldes = await manager.recuperer_soldes_on_chain(address)
+            text, reply_markup = manager.generer_layout_telegram(
+                wallet_name="session",
+                wallet_address=address,
+                soldes=soldes,
+                total_connections=self._get_wallet_vault().compter_wallets_session(),
+            )
+            await context.bot.send_message(
+                chat_id=msg.chat_id,
+                text="✅ *Importation reussie* : wallet actif en RAM uniquement.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            await context.bot.send_message(
+                chat_id=msg.chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            logger.exception("Wallet secret import failed")
+            await context.bot.send_message(
+                chat_id=msg.chat_id,
+                text="❌ *Echec de l'importation* : donnees invalides.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        return True
 
     async def _cmd_start(self, update: Update, _context) -> None:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -997,6 +1116,8 @@ class TelegramListener:
         if not self._is_authorized_private_message(update):
             await self.reply_to("Private chat is not authorized for this bot.", update)
             return
+        if await self._handle_wallet_secret_import(update, _context):
+            return
         handled = await self._handle_message(update, _context)
         if not handled:
             await self.reply_to(CMD_HELP, update)
@@ -1052,6 +1173,41 @@ class TelegramListener:
                 page = int(query.data.split("_")[-1])
                 await HelpManager.send_page(update, context, page, is_admin)
             return
+
+        if query.data.startswith("wallet_") or query.data == "menu_main":
+            if query.data == "wallet_show_key":
+                await query.answer("La cle privee ne peut pas etre affichee.", show_alert=True)
+                return
+            if query.data == "wallet_disconnect":
+                self._get_wallet_vault().supprimer_wallet_session(chat_id)
+                await query.answer("Wallet de session oublie.")
+                await self._cmd_wallet_cockpit(update, context)
+                return
+            if query.data == "wallet_change":
+                await query.answer()
+                await self._reply_to_callback(
+                    update,
+                    "Envoyez la nouvelle cle privee ou seed phrase en DM. Le message sera supprime automatiquement.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+            if query.data == "menu_main":
+                await query.answer()
+                await self._cmd_start(update, context)
+                return
+            if query.data in {
+                "wallet_refresh",
+                "wallet_history",
+                "wallet_orders",
+                "wallet_positions",
+                "wallet_pnl",
+            }:
+                await query.answer()
+                if query.data == "wallet_refresh":
+                    await self._cmd_wallet_cockpit(update, context)
+                else:
+                    await self._reply_to_callback(update, "Module en lecture seule pour cette vue.", parse_mode=ParseMode.MARKDOWN)
+                return
         
         if not is_admin:
             logger.warning(f"🚨 [SECURITY WARNING: Unauthorized Admin Query Attempt] Chat ID: {chat_id} (callback: {query.data})")
@@ -1126,23 +1282,7 @@ class TelegramListener:
         elif query.data == "balance":
             await self._cmd_balance(update, context)
         elif query.data == "wallet":
-            if self._ledger:
-                # Get the wallet derived from private key
-                from utils.credential_manager import CredentialManager
-                from eth_account import Account
-                mgr = CredentialManager()
-                pk = mgr.get_or_generate_private_key()
-                acc = Account.from_key(pk)
-                addr = acc.address
-                msg = (
-                    f"💳 *INSTITUTIONAL WALLET*\n\n"
-                    f"Address: `{addr}`\n"
-                    f"Network: `Polygon / Ethereum`\n"
-                    f"[View on Polyscan](https://polygonscan.com/address/{addr})"
-                )
-                await self.send_message(msg, parse_mode=ParseMode.MARKDOWN)
-            else:
-                await self._reply_to_callback(update, "Wallet info not available.")
+            await self._cmd_wallet_cockpit(update, context)
         elif query.data == "settings":
             mode = self._get_mode()
             msg = (
@@ -1221,6 +1361,7 @@ class TelegramListener:
             self.application.add_handler(CommandHandler("generate_wallet", self._cmd_gen))
             self.application.add_handler(CommandHandler("import", self._cmd_import))
             self.application.add_handler(CommandHandler("wallets", self._cmd_wallets))
+            self.application.add_handler(CommandHandler("wallet", self._cmd_wallet_cockpit))
         
             # Register new institutional command router
             router = CommandRouter(self)

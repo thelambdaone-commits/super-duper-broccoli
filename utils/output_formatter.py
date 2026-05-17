@@ -9,7 +9,7 @@ class OutputFormatter:
     """
     Terminal/webhook formatter for web-first telemetry.
 
-    Outputs plain Markdown-compatible text without Telegram MarkdownV2 escaping,
+    Outputs plain Markdown-compatible text without Telegram-specific escaping,
     bot commands, inline buttons, or chat-specific layout assumptions.
     """
 
@@ -213,6 +213,31 @@ class OutputFormatter:
                 "wallet status          : show active execution wallet",
                 "mode paper|shadow|prod : switch execution mode",
             ]
+        )
+
+
+class TelegramOutputFormatterV1:
+    """Telegram Markdown V1 signal formatter."""
+
+    def formater_signal_alert(self, data: Dict[str, Any]) -> str:
+        action = "YES (BUY)" if data["side"] in ["BUY", "YES"] else "NO (SELL)"
+        return (
+            "🚨 *[LOBSTAR QUANT SIGNAL DETECTED]*\n"
+            "────────────────────────\n"
+            f"• *Asset* : `{data['ticker']}`\n"
+            f"• *Direction* : *{action}*\n"
+            f"• *Market Regime* : `{data['regime']}`\n"
+            "────────────────────────\n"
+            "📊 *PROBABILISTIC ANALYSIS*:\n"
+            f"• `Market Implied Prob : {data['p_market']:.1%}`\n"
+            f"• `Calibrated AI Prob  : {data['p_real']:.1%}`\n"
+            f"• `Absolute Alpha Edge : {data['edge']:+.1%}`\n"
+            "────────────────────────\n"
+            "🛡️ *RISK & ALLOCATION*:\n"
+            f"• `Target Size (Kelly) : {data['kelly']:.2%}`\n"
+            "• `Friction Buffer     : $0.005 / contract`\n"
+            "────────────────────────\n"
+            f"⏱️ _Generated at: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}_"
         )
 
 
