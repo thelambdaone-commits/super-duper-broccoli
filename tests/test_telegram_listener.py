@@ -540,7 +540,12 @@ async def test_cmd_updown_lists_short_term_price_bets() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cmd_ai_status_errors_and_prompt():
+async def test_cmd_ai_status_errors_and_prompt(monkeypatch):
+    # Mock environment and vault to ensure no live OpenRouter key is resolved during testing
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    from utils.vault_handler import VaultHandler
+    monkeypatch.setattr(VaultHandler, "fetch_quantum_secrets", lambda self: {})
+
     from telegram_scraper.command_router import CommandRouter
     # Setup TelegramListener and CommandRouter mocks
     listener = TelegramListener(bot_token="12345678:token", on_signal=lambda _: None)
