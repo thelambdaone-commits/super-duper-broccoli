@@ -233,7 +233,7 @@ subprocess.run(['vault', 'kv', 'patch', 'secret/quant-trade',
 |---|---|---|---|
 | `VAULT_ADDR` | No | `http://127.0.0.1:8200` | HashiCorp Vault address |
 | `VAULT_TOKEN` | Yes | — | Vault authentication token |
-| `CHAT_ID` | No | — | Telegram chat ID (numeric, e.g. `-1003714224501`) |
+| `CHAT_ID` | No | — | Telegram chat ID (numeric, e.g. `-1002222224501`) |
 | `TARGET_CHANNEL` | No | — | Telegram @channel username |
 | `TELEGRAM_PRIVATE_CHAT_IDS` | No | — | Comma-separated list of allowed private chat IDs (e.g. `123,-456`) |
 | `TELEGRAM_PRIVATE_ENABLED` | No | `1` | Set to `0` to disable private message handling entirely |
