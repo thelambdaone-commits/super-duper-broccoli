@@ -80,7 +80,7 @@ class CommandRouter:
         self.app.add_handler(CommandHandler(name, func))
 
     def _register_crypto_horizon_commands(self):
-        for asset in ("btc", "eth", "sol", "xrp"):
+        for asset in ("btc", "eth", "sol", "xrp", "hype", "doge", "bnb"):
             self._add_cmd(asset, self._cmd_crypto_markets)
             for suffix in ("5", "15", "1h", "4h", "1d"):
                 self._add_cmd(f"{asset}{suffix}", self._cmd_crypto_horizon)
@@ -90,9 +90,9 @@ class CommandRouter:
         command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
         match = None
         import re
-        match = re.fullmatch(r"(btc|eth|sol|xrp)(5|15|1h|4h|1d)", command)
+        match = re.fullmatch(r"(btc|eth|sol|xrp|hype|doge|bnb)(5|15|1h|4h|1d)", command)
         if not match:
-            await self.listener.reply_to("Usage: /btc5 /btc15 /btc1h, idem /eth /sol /xrp", update)
+            await self.listener.reply_to("Usage: /btc5 /btc15 /btc1h, idem /eth /sol /xrp /hype /doge /bnb", update)
             return
 
         asset, horizon = match.group(1).upper(), match.group(2)

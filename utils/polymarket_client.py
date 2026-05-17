@@ -205,10 +205,16 @@ class PolymarketClient:
         return [_parse_market(m) for m in data if _has_condition_id(m)]
 
     def search_markets(self, query: str, limit: int = 10) -> list[Market]:
-        data = self._gamma_get("/markets", params={"_q": query, "limit": limit})
-        if not isinstance(data, list):
+        data = self._gamma_get("/public-search", params={"q": query})
+        if not isinstance(data, dict):
             return []
-        return [_parse_market(m) for m in data if _has_condition_id(m)]
+        events = data.get("events", [])
+        markets = []
+        for event in events:
+            for m_data in event.get("markets", []):
+                if _has_condition_id(m_data):
+                    markets.append(_parse_market(m_data))
+        return markets[:limit]
 
     def get_tags(self) -> list[dict]:
         cache_key = "tags:all"

@@ -14,6 +14,9 @@ ASSET_ALIASES = {
     "ETH": ("eth", "ethereum", "ether"),
     "SOL": ("sol", "solana"),
     "XRP": ("xrp", "ripple"),
+    "HYPE": ("hype", "hyperliquid"),
+    "DOGE": ("doge", "dogecoin"),
+    "BNB": ("bnb", "binance coin"),
 }
 
 HORIZON_ALIASES = {

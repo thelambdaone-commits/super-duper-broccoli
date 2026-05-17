@@ -95,7 +95,7 @@ async def test_cmd_crypto_horizon_all_valid_command_variations() -> None:
     router = CommandRouter(listener)
 
     # Test distinct quick horizon commands
-    quick_commands = ["/btc15", "/btc1h", "/eth5", "/sol15", "/xrp1h"]
+    quick_commands = ["/btc15", "/btc1h", "/eth5", "/sol15", "/xrp1h", "/hype5", "/doge5", "/bnb1h"]
     
     for cmd in quick_commands:
         listener.reply_to.reset_mock()
@@ -156,7 +156,7 @@ async def test_cmd_crypto_markets_all_assets() -> None:
     router = CommandRouter(listener)
 
     # Test all base asset quick commands
-    for asset in ["btc", "eth", "sol", "xrp"]:
+    for asset in ["btc", "eth", "sol", "xrp", "hype", "doge", "bnb"]:
         listener.reply_to.reset_mock()
         message = MagicMock()
         message.text = f"/{asset}"

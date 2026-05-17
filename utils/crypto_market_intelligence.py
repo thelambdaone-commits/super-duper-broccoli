@@ -16,6 +16,8 @@ DEFAULT_CRYPTO_KEYWORDS = {
     "SOL": ("sol", "solana"),
     "XRP": ("xrp", "ripple"),
     "DOGE": ("doge", "dogecoin"),
+    "HYPE": ("hype", "hyperliquid"),
+    "BNB": ("bnb", "binance coin"),
     "CRYPTO": ("crypto", "cryptocurrency", "blockchain", "coinbase", "binance"),
 }
 
@@ -240,7 +242,7 @@ def format_intelligence_report(report: IntelligenceReport) -> str:
 
     lines.extend([
         "",
-        "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h",
+        "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5",
         "  Avis consultatif. Pas d'exécution sans parser, risque, ledger et mode valide.",
     ])
     return "\n".join(lines)

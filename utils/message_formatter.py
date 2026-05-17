@@ -261,7 +261,7 @@ def format_unified_feed_report(markets_general: list, intelligence_report) -> st
             
     parts.extend([
         "",
-        "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h",
+        "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5",
         "  Avis consultatif. Pas d'execution sans parser, risque, ledger et mode valide.",
     ])
     
