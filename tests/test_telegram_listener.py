@@ -539,3 +539,60 @@ async def test_cmd_updown_lists_short_term_price_bets() -> None:
     assert "btc-above-66k-may-17" in reply_text
 
 
+@pytest.mark.asyncio
+async def test_cmd_ai_status_errors_and_prompt():
+    from telegram_scraper.command_router import CommandRouter
+    # Setup TelegramListener and CommandRouter mocks
+    listener = TelegramListener(bot_token="12345678:token", on_signal=lambda _: None)
+    listener.reply_to = AsyncMock()
+    listener._check_admin_auth = AsyncMock(return_value=True)
+    router = CommandRouter(listener)
+
+    # 1. Test status routing
+    message_status = SimpleNamespace(text="/ai status")
+    update_status = SimpleNamespace(message=message_status, effective_message=message_status, channel_post=None)
+    context_status = SimpleNamespace(args=["status"])
+
+    await router._cmd_ai(update_status, context_status)
+    assert listener.reply_to.call_count == 1
+    reply_text = listener.reply_to.call_args[0][0]
+    assert "AI Agents Status" in reply_text
+
+    listener.reply_to.reset_mock()
+
+    # 2. Test errors routing
+    message_errors = SimpleNamespace(text="/ai errors")
+    update_errors = SimpleNamespace(message=message_errors, effective_message=message_errors, channel_post=None)
+    context_errors = SimpleNamespace(args=["errors"])
+
+    await router._cmd_ai(update_errors, context_errors)
+    assert listener.reply_to.call_count == 1
+    reply_text = listener.reply_to.call_args[0][0]
+    # Could be log contents or failing to read logs, both are correct behaviors
+    assert "Latest AI/System Errors" in reply_text or "Failed to read logs" in reply_text
+
+    listener.reply_to.reset_mock()
+
+    # 3. Test custom prompt routing
+    message_prompt = SimpleNamespace(text="/ai Will bitcoin hit $100k?")
+    update_prompt = SimpleNamespace(message=message_prompt, effective_message=message_prompt, channel_post=None)
+    context_prompt = SimpleNamespace(args=["Will", "bitcoin", "hit", "$100k?"])
+
+    # Mock the edit_text of the returned status message
+    mock_status_msg = AsyncMock()
+    listener.reply_to.return_value = mock_status_msg
+
+    await router._cmd_ai(update_prompt, context_prompt)
+    
+    # Assert initial status reply was sent
+    assert listener.reply_to.call_count == 1
+    initial_text = listener.reply_to.call_args[0][0]
+    assert "Lobstar AI Council is reflecting" in initial_text
+
+    # Assert edit_text was called with final (mock or live) response
+    mock_status_msg.edit_text.assert_called_once()
+    final_text = mock_status_msg.edit_text.call_args[0][0]
+    assert "OPENROUTER API KEY MISSING" in final_text or "LOBSTAR AI COUNCIL SYNTHESIS" in final_text
+
+
+

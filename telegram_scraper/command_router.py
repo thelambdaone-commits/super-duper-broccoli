@@ -411,10 +411,12 @@ class CommandRouter:
 
     async def _cmd_ai(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
-        args = context.args
-        sub = args[0] if args else "status"
         
-        if sub == "status":
+        full_text = update.effective_message.text or ""
+        parts = full_text.split(None, 1)
+        prompt = parts[1].strip() if len(parts) > 1 else ""
+        
+        if not prompt or prompt.lower() == "status":
             from utils.ai_specialists import list_ai_specialists
             specialists = list_ai_specialists()
             msg = "🧠 *AI Agents Status*\n\n"
@@ -422,7 +424,7 @@ class CommandRouter:
             msg += "• LLM Council: Active (OpenRouter)\n"
             msg += "• Memory: Persistent (SQLite/DuckDB)\n"
             await self.listener.reply_to(msg, update)
-        elif sub == "errors":
+        elif prompt.lower() == "errors":
             # Tail logs/pm2-error.log
             try:
                 with open("logs/pm2-error.log", "r") as f:
@@ -432,7 +434,72 @@ class CommandRouter:
             except Exception as e:
                 await self.listener.reply_to(f"Failed to read logs: {e}", update)
         else:
-            await self.listener.reply_to(f"Unknown AI subcommand: {sub}", update)
+            # Run the LLM Council
+            status_msg = None
+            try:
+                status_msg = await self.listener.reply_to(
+                    "🤔 *Lobstar AI Council is reflecting...*\n\n"
+                    "• Stage 1: Independent specialist opinions...\n"
+                    "• Stage 2: Anonymized cross-reviews...\n"
+                    "• Stage 3: Synthesis by Chairman...",
+                    update,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                logger.error(f"Failed to send initial AI council status msg: {e}")
+
+            try:
+                from utils.llm_council import LLMCouncil, resolve_openrouter_api_key
+                council = LLMCouncil()
+                api_key = resolve_openrouter_api_key(council.config)
+                
+                if not api_key:
+                    guardrail = council.config.get("safety", {}).get("trading_guardrail", "LLM Council output is advisory only.")
+                    mock_res = (
+                        "🚨 *OPENROUTER API KEY MISSING*\n"
+                        "To enable live multi-agent LLM Council synthesis, set `OPENROUTER_API_KEY` in your `.env` or Vault.\n\n"
+                        "💡 *Simulated Council Response:*\n"
+                        f"Analyzing prompt: `{prompt}`\n\n"
+                        "• *Market Sentiment (Mock)*: The multi-agent swarm detects strong bullish momentum under high volatility. BTC/USD orderbook imbalance favors makers, with short-term support established at key VWAP levels.\n"
+                        "• *Specialists Consensus*: ML models project a temporary range-bound consolidation before an upward breakout. Positions should be sized conservatively under the current PAPER mode capital preservation guidelines.\n\n"
+                        f"🛡️ _Advisory only: {guardrail}_"
+                    )
+                    if status_msg:
+                        try:
+                            await status_msg.edit_text(mock_res, parse_mode=ParseMode.MARKDOWN)
+                        except Exception:
+                            await self.listener.reply_to(mock_res, update, parse_mode=ParseMode.MARKDOWN)
+                    else:
+                        await self.listener.reply_to(mock_res, update, parse_mode=ParseMode.MARKDOWN)
+                    return
+
+                res = await council.ask(prompt)
+                guardrail = council.config.get("safety", {}).get("trading_guardrail", "LLM Council output is advisory only.")
+                final_msg = (
+                    "🧠 *LOBSTAR AI COUNCIL SYNTHESIS*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"*Question*: {prompt}\n\n"
+                    f"{res.final_answer}\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🛡️ _{guardrail}_"
+                )
+                if status_msg:
+                    try:
+                        await status_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
+                    except Exception:
+                        await self.listener.reply_to(final_msg, update, parse_mode=ParseMode.MARKDOWN)
+                else:
+                    await self.listener.reply_to(final_msg, update, parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                logger.error(f"Error executing AI council prompt: {e}")
+                err_msg = f"❌ *AI Council Error:* {str(e)}"
+                if status_msg:
+                    try:
+                        await status_msg.edit_text(err_msg, parse_mode=ParseMode.MARKDOWN)
+                    except Exception:
+                        await self.listener.reply_to(err_msg, update, parse_mode=ParseMode.MARKDOWN)
+                else:
+                    await self.listener.reply_to(err_msg, update, parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
