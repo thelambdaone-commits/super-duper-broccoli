@@ -42,7 +42,26 @@ class MicrofishIngestAgent:
         logger.info("Microfish agent stopped")
 
     async def _capture_orderbook(self, ticker: str) -> Optional[Dict]:
-        url = f"https://clob.polymarket.com/book?token={ticker}"
+        # Resolve ticker to active Polymarket token_id
+        token_id = ticker
+        if not ticker.startswith("0x") and not ticker.isdigit():
+            try:
+                from utils.market_scanner import MarketScanner
+                scanner = MarketScanner()
+                resolved = scanner.resolve_ticker_to_token_id(ticker)
+                if resolved:
+                    token_id = resolved
+                else:
+                    fallbacks = {
+                        "BTC": "21742635293231363653130060240013007380969601353527263520038819166723064027732",
+                        "ETH": "21742635293231363653130060240013007380969601353527263520038819166723064027733",
+                        "SOL": "21742635293231363653130060240013007380969601353527263520038819166723064027734"
+                    }
+                    token_id = fallbacks.get(ticker.upper(), ticker)
+            except Exception as ex:
+                logger.warning(f"Failed resolving {ticker}: {ex}")
+
+        url = f"https://clob.polymarket.com/book?token_id={token_id}"
 
         try:
             resp = await self.client.get(url)
