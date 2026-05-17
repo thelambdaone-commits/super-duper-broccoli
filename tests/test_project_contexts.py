@@ -18,7 +18,7 @@ def test_token_saving_project_contexts_are_registered() -> None:
 def test_graphify_context_exposes_install_and_guardrails() -> None:
     context = get_project_context("graphify")
 
-    assert context["package"] == "graphifyy"
+    assert context["package"] == "graphify"
     assert "graphify install --platform codex" in context["install"]
     assert "graphify update ." in context["install"]
     assert any(".graphifyignore" in guardrail for guardrail in context["required_guardrails"])

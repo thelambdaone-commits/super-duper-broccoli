@@ -10,8 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 from dotenv import load_dotenv
+from pydantic import SecretStr
 
 load_dotenv()
+
+# Establish secure logging filters BEFORE any other imports to protect all modules
+from utils.security_utils import setup_secure_logging
+setup_secure_logging()
 
 from core.container import ServiceContainer
 from core.lobstar_cognitive_brain import LobstarCognitiveBrain
@@ -45,8 +50,7 @@ from utils.telegram_helpers import parse_chat_ids, parse_private_chat_ids
 
 logger = setup_logging()
 
-from utils.security_utils import setup_secure_logging
-setup_secure_logging()
+DEFAULT_TICKERS = ["SOL", "BTC", "ETH"]
 
 @contextlib.contextmanager
 def telegram_single_instance_lock(lock_path: Path | None = None):
@@ -77,15 +81,16 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _derive_public_wallet(private_key: str | None) -> str | None:
+def _derive_public_wallet(private_key: SecretStr | str | None) -> str | None:
     if not private_key:
         return None
     try:
         from eth_account import Account
 
-        return Account.from_key(private_key).address
-    except Exception as exc:
-        logger.warning("Unable to derive public wallet address from configured key: %s", exc)
+        key_str = private_key.get_secret_value() if isinstance(private_key, SecretStr) else private_key
+        return Account.from_key(key_str).address
+    except Exception:
+        logger.warning("Unable to derive public wallet address from configured key.")
         return None
 
 
@@ -98,7 +103,10 @@ def build_access_control(secrets: dict, execution_mode: str) -> tuple[AccessCont
     access_control = AccessControlManager(admin_chat_ids=sorted(admin_chat_ids))
     raw_chat_id = os.getenv("CHAT_ID", "")
     chat_id = int(raw_chat_id) if raw_chat_id else None
-    tenant_wallet = _derive_public_wallet(secrets.get("CLOB_PRIVATE_KEY"))
+    
+    private_key_raw = secrets.get("CLOB_PRIVATE_KEY")
+    private_key_wrapped = SecretStr(private_key_raw) if private_key_raw else None
+    tenant_wallet = _derive_public_wallet(private_key_wrapped)
     if chat_id and tenant_wallet:
         access_control.assigner_wallet_a_chat(chat_id, tenant_wallet)
     return access_control, chat_id
@@ -143,7 +151,7 @@ def build_crypto_intelligence() -> CryptoMarketIntelligence:
     return CryptoMarketIntelligence(
         watchlist=[
             ticker.strip().upper()
-            for ticker in os.getenv("CRYPTO_INTELLIGENCE_WATCHLIST", "BTC,ETH,SOL").split(",")
+            for ticker in os.getenv("CRYPTO_INTELLIGENCE_WATCHLIST", ",".join(DEFAULT_TICKERS)).split(",")
             if ticker.strip()
         ],
         min_volume=float(os.getenv("CRYPTO_INTELLIGENCE_MIN_VOLUME", "10000")),
@@ -173,7 +181,7 @@ def build_broadcaster(container, training_pipeline: TrainingPipeline, market_sca
         notifier=container.notifier,
         training_pipeline=training_pipeline,
         market_client=market_scanner.client,
-        tickers=[t.strip().upper() for t in os.getenv("TELEGRAM_BROADCAST_TICKERS", "SOL,BTC,ETH").split(",") if t.strip()],
+        tickers=[t.strip().upper() for t in os.getenv("TELEGRAM_BROADCAST_TICKERS", ",".join(DEFAULT_TICKERS)).split(",") if t.strip()],
         edge_threshold=float(os.getenv("TELEGRAM_BROADCAST_EDGE_THRESHOLD", "0.07")),
         rate_limiter=TokenBucketRateLimiter(
             capacity=int(os.getenv("TELEGRAM_BROADCAST_MAX_PER_MINUTE", "3")),
@@ -190,10 +198,86 @@ async def run_blocking(label: str, func: Callable[..., Any], *args: Any, timeout
         raise TimeoutError(f"{label} timed out after {timeout}s") from None
 
 
+def _setup_ml_features(training_pipeline: TrainingPipeline) -> None:
+    """Registers features for autonomous retraining loop."""
+    DEFAULT_FEATURES = ["oi_5min", "tam_state", "spread_bps", "mid_price"]
+    for tkr in DEFAULT_TICKERS:
+        training_pipeline.register_features(tkr, DEFAULT_FEATURES, target_feature="mid_price")
+
+
+def _setup_quantum_runner(
+    runner: Any,
+    freqai: Any,
+    cognitive_brain: Any,
+    mlops_engine: Any,
+) -> None:
+    """Schedules cron/quantum runner background jobs."""
+    runner.enregistrer_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
+    if cognitive_brain.arbitrage_engine:
+        runner.enregistrer_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
+    runner.enregistrer_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
+
+
+def _dry_run_report(mode: str, circuit_breaker: CircuitBreaker, store: FeatureStore) -> None:
+    """Logs dry-run validation report."""
+    logger.info("=== DRY RUN MODE ===")
+    logger.info("Vault: OK (6 secrets loaded)")
+    logger.info("CLOB Engine: OK")
+    logger.info("Ledger: OK")
+    logger.info("HMMRegimeFilter: OK")
+    logger.info("PortfolioRiskEngine: OK")
+    logger.info("LobstarAgent: OK")
+    logger.info(f"CircuitBreaker: OK ({circuit_breaker.status_report})")
+    logger.info(f"FeatureStore: OK ({store.get_stats()})")
+    logger.info(f"Execution Mode: {mode}")
+    logger.info("Telegram Bot: SKIPPED (dry-run)")
+    logger.info("Pipeline validated successfully.")
+    logger.info(f"Active mode: {mode} — {'Virtual' if mode in ('REPLAY', 'PAPER') else 'Real capital at risk.'}")
+
+
+async def _run_services_loop(
+    listener: TelegramListener,
+    polymarket_monitor: Any,
+    runner: Any,
+    scan_coro: Any,
+    retrain_coro: Any,
+    runner_coro: Any,
+    mode: str,
+) -> None:
+    """Concurrently executes all platform services background loops."""
+    logger.info(f"Telegram bot listening — execution mode: {mode}")
+    scan_task = None
+    retrain_task = None
+    monitor_task = None
+    telegram_task = None
+    runner_task = None
+    try:
+        telegram_task = asyncio.create_task(listener.start())
+        scan_task = asyncio.create_task(scan_coro)
+        retrain_task = asyncio.create_task(retrain_coro)
+        monitor_task = asyncio.create_task(polymarket_monitor.start()) if polymarket_monitor else None
+        runner_task = asyncio.create_task(runner_coro)
+        tasks = [telegram_task, scan_task, retrain_task, runner_task] + ([monitor_task] if monitor_task else [])
+        await asyncio.gather(*tasks)
+    finally:
+        runner.stop()
+        if polymarket_monitor:
+            try:
+                await polymarket_monitor.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping monitor: {e}")
+        if scan_task:
+            scan_task.cancel()
+        if retrain_task:
+            retrain_task.cancel()
+
+
 async def main(
     dry_run: bool = False,
     execution_mode: str = "PAPER",
 ) -> None:
+    listener = None
+
     # Env-based mode override
     if os.getenv("REAL", "false").lower() == "true":
         execution_mode = "PROD"
@@ -204,12 +288,6 @@ async def main(
     notifier = container.notifier
     
     notifier.send(f"🚀 *System Started*\nMode: `{execution_mode}`\nEnvironment: `{os.uname().nodename}`")
-
-    from utils.api_key_notifier import get_api_key_notifier
-    api_check = get_api_key_notifier().check_all_keys()
-    if api_check["missing"]:
-        missing_msg = get_api_key_notifier().format_console_report(api_check)
-        logger.warning(missing_msg)
 
     # Rehydrate risk engine
     container.risk.rehydrate_from_ledger(container.ledger)
@@ -242,12 +320,12 @@ async def main(
         mode_str = new_mode.value
         logger.warning(f"⚠️ Swarm triggered mode change: {mode_str}")
         ledger.set_execution_mode(mode_str)
-        if listener:
+        if listener is not None:
             await listener.send_message(f"🔄 *Mode changed to:* `{mode_str}` (Swarm Supervisor)")
 
     async def on_circuit_breaker(reason, data):
         logger.critical(f"🚨 Swarm Circuit Breaker: {reason.value}")
-        if listener:
+        if listener is not None:
             await listener.send_message(
                 f"🚨 *CIRCUIT BREAKER*\nReason: `{reason.value}`\nData: `{data}`"
             )
@@ -264,13 +342,8 @@ async def main(
         validation_split=0.2,
     )
     # Register features for autonomous retraining
-    DEFAULT_FEATURES = ["oi_5min", "tam_state", "spread_bps", "mid_price"]
-    for tkr in ["SOL", "BTC", "ETH"]:
-        training_pipeline.register_features(tkr, DEFAULT_FEATURES, target_feature="mid_price")
+    _setup_ml_features(training_pipeline)
 
-    from ai.agents.self_improvement_agent import SelfImprovementAgent
-    from utils.model_validator import ModelValidator
-    from utils.snapshot_manager import get_snapshot_manager
     snapshot_mgr = get_snapshot_manager()
     model_validator = ModelValidator(snapshot_manager=snapshot_mgr)
     self_improver = SelfImprovementAgent()
@@ -281,19 +354,7 @@ async def main(
     mode = ledger.get_execution_mode()
 
     if dry_run:
-        logger.info("=== DRY RUN MODE ===")
-        logger.info(f"Vault: OK (6 secrets loaded)")
-        logger.info(f"CLOB Engine: OK")
-        logger.info(f"Ledger: OK")
-        logger.info(f"HMMRegimeFilter: OK")
-        logger.info(f"PortfolioRiskEngine: OK")
-        logger.info(f"LobstarAgent: OK")
-        logger.info(f"CircuitBreaker: OK ({circuit_breaker.status_report})")
-        logger.info(f"FeatureStore: OK ({store.get_stats()})")
-        logger.info(f"Execution Mode: {mode}")
-        logger.info(f"Telegram Bot: SKIPPED (dry-run)")
-        logger.info(f"Pipeline validated successfully.")
-        logger.info(f"Active mode: {mode} — {'Virtual' if mode in ('REPLAY', 'PAPER') else 'Real capital at risk.'}")
+        _dry_run_report(mode, circuit_breaker, store)
         return
 
     _pending_tasks: list[asyncio.Task] = []
@@ -553,10 +614,7 @@ async def main(
 
     from core.quantum_runner import LobstarQuantumRunner
     runner = LobstarQuantumRunner()
-    runner.enregistrer_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
-    if cognitive_brain.arbitrage_engine:
-        runner.enregistrer_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
-    runner.enregistrer_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
+    _setup_quantum_runner(runner, freqai, cognitive_brain, mlops_engine)
 
     listener.attach_components(
         ledger=ledger,
@@ -572,7 +630,7 @@ async def main(
         """Periodic model health, drift check, and self-improvement analysis."""
         while True:
             await asyncio.sleep(3600) # Every hour
-            for ticker in ["SOL", "BTC", "ETH"]:
+            for ticker in DEFAULT_TICKERS:
                 report = await run_blocking(
                     f"model health check {ticker}",
                     model_validator.run_health_check,
@@ -767,27 +825,22 @@ async def main(
     else:
         logger.info("Polymarket on-chain monitor: disabled (set WS_URL or vault WS_URL to enable)")
 
-    logger.info(f"Telegram bot listening — execution mode: {mode}")
-    try:
-        telegram_task = asyncio.create_task(listener.start())
-        scan_task = asyncio.create_task(_market_scan_loop())
-        retrain_task = asyncio.create_task(_health_check_loop())
-        monitor_task = asyncio.create_task(polymarket_monitor.start()) if polymarket_monitor else None
-        runner_task = asyncio.create_task(runner.start())
-        tasks = [telegram_task, scan_task, retrain_task, runner_task] + ([monitor_task] if monitor_task else [])
-        await asyncio.gather(*tasks)
-    finally:
-        runner.stop()
-        if polymarket_monitor:
-            await polymarket_monitor.stop()
-        scan_task.cancel()
-        retrain_task.cancel()
-        await _drain_pending_tasks()
+    await _run_services_loop(
+        listener=listener,
+        polymarket_monitor=polymarket_monitor,
+        runner=runner,
+        scan_coro=_market_scan_loop(),
+        retrain_coro=_health_check_loop(),
+        runner_coro=runner.start(),
+        mode=mode,
+    )
+    await _drain_pending_tasks()
 
 
 async def resolve_chat() -> None:
     from telegram import Update
     from telegram.ext import Application, MessageHandler, filters
+    from utils.vault_handler import VaultHandler
 
     vault = VaultHandler()
     secrets = vault.fetch_quantum_secrets()

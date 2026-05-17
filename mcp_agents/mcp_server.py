@@ -96,6 +96,59 @@ def _register_specialist_tools(mcp):
         tags = json.loads(tags_json or "[]")
         return {"entry": record_project_memory(component=component, summary=summary, kind=kind, tags=tags, details=details)}
 
+    # ── Dynamic Agent Skills Integration ──
+    @mcp.tool(name="scan_polymarket")
+    def scan_polymarket_tool(limit: int = 5) -> dict:
+        """Scans Polymarket predictive markets for sentiment analysis and activity levels."""
+        from agent_skills.registry import SkillsRegistry
+        return SkillsRegistry().dispatch_tool("market_scanner_skill", "scan_polymarket", {"limit": limit})
+
+    @mcp.tool(name="calculate_kelly_size")
+    def calculate_kelly_size_tool(ticker: str, side: str, price: float, confidence: float = 0.55, regime: str = "LOW_VOLATILITY") -> dict:
+        """Computes recommended position sizing based on trade confidence, asset price, and current volatility regime."""
+        from agent_skills.registry import SkillsRegistry
+        return SkillsRegistry().dispatch_tool("portfolio_risk_skill", "calculate_kelly_size", {
+            "ticker": ticker, "side": side, "price": price, "confidence": confidence, "regime": regime
+        })
+
+    @mcp.tool(name="run_swarm_backtest")
+    def run_swarm_backtest_tool(asset: str) -> dict:
+        """Orchestrates multi-agent backtesting scenarios on historical quantitative assets."""
+        from agent_skills.registry import SkillsRegistry
+        return SkillsRegistry().dispatch_tool("backtest_swarm_skill", "run_swarm_backtest", {"asset": asset})
+
+    @mcp.tool(name="find_arbitrage_opportunities")
+    def find_arbitrage_opportunities_tool(min_spread_pct: float = 1.5) -> dict:
+        """Finds crypto and prediction market arbitrage opportunities with high implied spreads."""
+        from agent_skills.registry import SkillsRegistry
+        return SkillsRegistry().dispatch_tool("crypto_arbitrage_skill", "find_arbitrage_opportunities", {"min_spread_pct": min_spread_pct})
+
+    @mcp.tool(name="calculate_market_making_spreads")
+    def calculate_market_making_spreads_tool(mid_price: float, volatility: float, inventory: float, target_inventory: float = 0.0) -> dict:
+        """Calculates skew-adjusted bid and ask quotes for prediction market order-books."""
+        from agent_skills.registry import SkillsRegistry
+        return SkillsRegistry().dispatch_tool("polymarket_market_making_skill", "calculate_market_making_spreads", {
+            "mid_price": mid_price, "volatility": volatility, "inventory": inventory, "target_inventory": target_inventory
+        })
+
+    @mcp.tool(name="search_brave_web")
+    def search_brave_web_tool(query: str, count: int = 5) -> dict:
+        """Executes external web search via Brave API to gather recent market consensus and context."""
+        from agent_skills.registry import SkillsRegistry
+        return SkillsRegistry().dispatch_tool("brave_search_skill", "search_brave_web", {"query": query, "count": count})
+
+    # ── Continuous Improvement Integration ──
+    @mcp.tool(name="get_continuous_improvement_report")
+    def get_continuous_improvement_report_tool() -> dict:
+        """Generates a consolidated code quality audit, test gap analysis, and self-improvement suggestions report."""
+        from continuous_improvement.agent import CIRegistry
+        ci = CIRegistry()
+        return {
+            "status": "SUCCESS",
+            "consolidated_report": ci.generate_consolidated_report(),
+            "untested_gaps": ci.find_test_gaps()
+        }
+
 
 def get_ledger_state() -> dict:
     if _ledger is None:

@@ -12,7 +12,7 @@
     {
       "name": "Graphify",
       "repo": "https://github.com/safishamsi/graphify",
-      "package": "graphifyy",
+      "package": "graphify",
       "purpose": "Builds a queryable project knowledge graph so agents can ask targeted architecture questions instead of reading large source dumps.",
       "status": "recommended_context_tool"
     },

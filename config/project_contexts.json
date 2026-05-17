@@ -174,7 +174,7 @@
       "repo": "https://github.com/safishamsi/graphify",
       "category": "knowledge_graph",
       "status": "recommended_context_tool",
-      "package": "graphifyy",
+      "package": "graphify",
       "token_strategy": "Build or update graphify-out first, then answer codebase questions with graph queries, GRAPH_REPORT.md highlights, and narrow file reads instead of dumping the repository.",
       "use_for": [
         "Queryable codebase knowledge graph",
@@ -193,7 +193,7 @@
         "graphify-out/graph.json"
       ],
       "install": [
-        "pip install graphifyy",
+        "pip install graphify",
         "graphify install --platform codex",
         "graphify update .",
         "graphify cluster-only . --no-viz"

@@ -36,13 +36,10 @@ cryptography
 yfinance
 ccxt
 
-# Token-efficient agent context tooling
-graphifyy
+# Token-efficient agent context tooling (referenced from graphify-out/)
+# graphify install --platform codex
 
-# Web scraping & AI agents (install from GH for latest)
-# pip install git+https://github.com/D4Vinci/Scrapling.git
-# pip install git+https://github.com/nousresearch/hermes-agent.git
-# pip install git+https://github.com/MervinPraison/PraisonAI.git
-git+https://github.com/D4Vinci/Scrapling.git
-git+https://github.com/nousresearch/hermes-agent.git
-git+https://github.com/MervinPraison/PraisonAI.git
+# Web scraping & AI agents (pinned to secure commit SHAs)
+git+https://github.com/D4Vinci/Scrapling.git@735af8f2210ed970c99737d4c8126fe4f2ae23a2
+git+https://github.com/nousresearch/hermes-agent.git@395e9dd9e298df682bbf77848636e9f61f713171
+git+https://github.com/MervinPraison/PraisonAI.git@92644518c068182a27e6cd4975920ae5119f276e
