@@ -137,3 +137,37 @@ def test_composite_proxy_fallback_when_no_candidates() -> None:
     assert sentiment.probability == 0.65
     assert sentiment.volume == 3000.0
     assert "Correlation composite hedge" in sentiment.rationale
+
+
+def test_market_with_up_down_outcomes() -> None:
+    # A market with outcomes other than Yes/No, e.g. Up/Down
+    m = Market(
+        condition_id="cond-updown",
+        slug="btc-updown-15m-12345",
+        question="Bitcoin Up or Down?",
+        description="",
+        outcomes=["Up", "Down"],
+        outcome_prices=[0.55, 0.45],
+        tokens=[
+            {"outcome": "Up", "token_id": "token-up"},
+            {"outcome": "Down", "token_id": "token-down"},
+        ],
+        active=True,
+        closed=False,
+        volume=10_000,
+        liquidity=5_000,
+    )
+    
+    # Verify generalized outcome_prices mappings on Market property methods
+    assert m.yes_price == 0.55
+    assert m.no_price == 0.45
+    assert m.yes_token_id == "token-up"
+    assert m.no_token_id == "token-down"
+    
+    # Also verify that the analyzer is able to analyze it properly
+    analyzer = CryptoHorizonSentiment(client=FakeClient([m]))
+    sentiment = analyzer.analyze("BTC", "15")
+    assert sentiment is not None
+    assert sentiment.sentiment == "NEUTRAL"  # 0.55 is < 0.62, so NEUTRAL
+    assert sentiment.yes_price == 0.55
+    assert sentiment.no_price == 0.45

@@ -50,9 +50,26 @@ class Market:
 
     def get_token_id(self, outcome: str) -> str:
         outcome_lower = outcome.lower()
+        # Direct match check
         for token in self.tokens:
             if token.get("outcome", "").lower() == outcome_lower:
                 return token["token_id"]
+        # Positive alias checks
+        if outcome_lower == "yes":
+            for alias in ("yes", "up", "above"):
+                for token in self.tokens:
+                    if token.get("outcome", "").lower() == alias:
+                        return token["token_id"]
+            if len(self.tokens) == 2:
+                return self.tokens[0]["token_id"]
+        # Negative alias checks
+        if outcome_lower == "no":
+            for alias in ("no", "down", "below"):
+                for token in self.tokens:
+                    if token.get("outcome", "").lower() == alias:
+                        return token["token_id"]
+            if len(self.tokens) == 2:
+                return self.tokens[1]["token_id"]
         raise ValueError(f"No token found for outcome {outcome!r}")
 
     @property
@@ -65,16 +82,36 @@ class Market:
 
     @property
     def yes_price(self) -> float:
-        for i, outcome in enumerate(self.outcomes):
-            if outcome.lower() == "yes":
-                return self.outcome_prices[i]
+        # Positive alias checks
+        for alias in ("yes", "up", "above"):
+            for i, outcome in enumerate(self.outcomes):
+                if outcome.lower() == alias:
+                    try:
+                        return self.outcome_prices[i]
+                    except IndexError:
+                        pass
+        if len(self.outcomes) == 2:
+            try:
+                return self.outcome_prices[0]
+            except IndexError:
+                pass
         return 0.0
 
     @property
     def no_price(self) -> float:
-        for i, outcome in enumerate(self.outcomes):
-            if outcome.lower() == "no":
-                return self.outcome_prices[i]
+        # Negative alias checks
+        for alias in ("no", "down", "below"):
+            for i, outcome in enumerate(self.outcomes):
+                if outcome.lower() == alias:
+                    try:
+                        return self.outcome_prices[i]
+                    except IndexError:
+                        pass
+        if len(self.outcomes) == 2:
+            try:
+                return self.outcome_prices[1]
+            except IndexError:
+                pass
         return 0.0
 
     @property
