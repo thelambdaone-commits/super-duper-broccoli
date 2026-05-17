@@ -9,7 +9,7 @@ from utils.derive_clob_creds import derive_clob_credentials
 logger = logging.getLogger("CredentialManager")
 
 DEFAULT_DATA_DIR = os.getenv("DATA_PATH", "data")
-DEFAULT_ENC_PATH = os.path.join(DEFAULT_DATA_DIR, "defaut.enc")
+DEFAULT_ENC_PATH = os.path.join(DEFAULT_DATA_DIR, "default.enc")
 WALLET_ENC_PATH = os.path.join(DEFAULT_DATA_DIR, "clob_wallet.enc")
 CONFIGURED_WALLETS_PATH = os.path.join(DEFAULT_DATA_DIR, "configured_wallets.enc")
 ACTIVE_WALLET_PATH = os.path.join(DEFAULT_DATA_DIR, "active_wallet.enc")
@@ -41,10 +41,22 @@ class CredentialManager:
         logger.info(f"Credentials encrypted and saved to {path}")
 
     def load_and_decrypt(self, path: str = DEFAULT_ENC_PATH) -> Dict[str, str]:
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Encrypted credentials not found at {path}")
+        resolved_path = path
+        if path == os.path.join(DEFAULT_DATA_DIR, "default.enc") and not os.path.exists(path):
+            legacy_path = os.path.join(DEFAULT_DATA_DIR, "defaut.enc")
+            if os.path.exists(legacy_path):
+                logger.info("Migrating legacy defaut.enc to default.enc")
+                try:
+                    os.rename(legacy_path, path)
+                    logger.info("Successfully renamed defaut.enc to default.enc")
+                except Exception as e:
+                    logger.warning(f"Could not rename legacy file: {e}")
+                    resolved_path = legacy_path
+
+        if not os.path.exists(resolved_path):
+            raise FileNotFoundError(f"Encrypted credentials not found at {resolved_path}")
         
-        with open(path, "rb") as f:
+        with open(resolved_path, "rb") as f:
             encrypted = f.read()
         
         decrypted = self.fernet.decrypt(encrypted)
@@ -188,25 +200,44 @@ class CredentialManager:
         self.save_private_key(target_wallet["private_key"])
         return True
 
-    def get_user_file_path(self, chat_id: int | str, wallet_type: str = "defaut") -> str:
+    def get_user_file_path(self, chat_id: int | str, wallet_type: str = "default") -> str:
         return os.path.join(DEFAULT_DATA_DIR, f"{wallet_type}{chat_id}.enc")
 
-    def user_exists(self, chat_id: int | str, wallet_type: str = "defaut") -> bool:
+    def user_exists(self, chat_id: int | str, wallet_type: str = "default") -> bool:
         path = self.get_user_file_path(chat_id, wallet_type)
-        return os.path.exists(path)
+        if os.path.exists(path):
+            return True
+        # Backward compatibility fallback
+        if wallet_type == "default":
+            legacy_path = self.get_user_file_path(chat_id, "defaut")
+            if os.path.exists(legacy_path):
+                return True
+        return False
 
     def user_has_any_wallet(self, chat_id: int | str) -> bool:
-        return self.user_exists(chat_id, "defaut") or self.user_exists(chat_id, "import")
+        return self.user_exists(chat_id, "default") or self.user_exists(chat_id, "import")
 
-    def load_user(self, chat_id: int | str, wallet_type: str = "defaut") -> Dict[str, str]:
+    def load_user(self, chat_id: int | str, wallet_type: str = "default") -> Dict[str, str]:
         path = self.get_user_file_path(chat_id, wallet_type)
+        if not os.path.exists(path) and wallet_type == "default":
+            legacy_path = self.get_user_file_path(chat_id, "defaut")
+            if os.path.exists(legacy_path):
+                logger.info(f"Migrating legacy wallet 'defaut' to 'default' for chat_id {chat_id}")
+                data = self.load_and_decrypt(legacy_path)
+                self.save_user(chat_id, data, "default")
+                try:
+                    os.remove(legacy_path)
+                    logger.info(f"Successfully deleted legacy wallet file: {legacy_path}")
+                except Exception as e:
+                    logger.warning(f"Could not delete legacy file {legacy_path}: {e}")
+                return data
         return self.load_and_decrypt(path)
 
-    def save_user(self, chat_id: int | str, data: Dict[str, str], wallet_type: str = "defaut") -> None:
+    def save_user(self, chat_id: int | str, data: Dict[str, str], wallet_type: str = "default") -> None:
         path = self.get_user_file_path(chat_id, wallet_type)
         self.encrypt_and_save(data, path)
 
-    def generate_user_wallet(self, chat_id: int | str, profile_name: str, wallet_type: str = "defaut") -> Dict[str, str]:
+    def generate_user_wallet(self, chat_id: int | str, profile_name: str, wallet_type: str = "default") -> Dict[str, str]:
         logger.info(f"Generating new wallet for user {chat_id} (profile: {profile_name}, type: {wallet_type})")
         
         new_acc = Account.create()
@@ -255,7 +286,7 @@ class CredentialManager:
         
         return user_data
 
-    def set_user_proxy(self, chat_id: int | str, proxy_wallet: str, wallet_type: str = "defaut") -> Dict[str, str]:
+    def set_user_proxy(self, chat_id: int | str, proxy_wallet: str, wallet_type: str = "default") -> Dict[str, str]:
         if not self.user_exists(chat_id, wallet_type):
             raise FileNotFoundError(f"User {chat_id} ({wallet_type}) not found")
         
@@ -266,10 +297,18 @@ class CredentialManager:
         
         return user_data
 
-    def delete_user(self, chat_id: int | str, wallet_type: str = "defaut") -> bool:
+    def delete_user(self, chat_id: int | str, wallet_type: str = "default") -> bool:
         path = self.get_user_file_path(chat_id, wallet_type)
         if not os.path.exists(path):
-            return False
+            # Try to see if legacy path exists to delete it
+            if wallet_type == "default":
+                legacy_path = self.get_user_file_path(chat_id, "defaut")
+                if os.path.exists(legacy_path):
+                    path = legacy_path
+                else:
+                    return False
+            else:
+                return False
         
         os.remove(path)
         logger.info(f"User wallet deleted: chat_id {chat_id} ({wallet_type})")
@@ -284,19 +323,24 @@ class CredentialManager:
         if not os.path.exists(DEFAULT_DATA_DIR):
             return users
         
-        for filename in os.listdir(DEFAULT_DATA_DIR):
-            if filename.startswith("defaut") and filename.endswith(".enc") and filename != "defaut.enc":
-                try:
-                    chat_id = filename.replace("defaut", "").replace(".enc", "")
-                    user_data = self.load_and_decrypt(os.path.join(DEFAULT_DATA_DIR, filename))
-                    users.append({
-                        "chat_id": chat_id,
-                        "address": user_data.get("address", ""),
-                        "proxy_wallet": user_data.get("proxy_wallet", ""),
-                        "profile_name": user_data.get("profile_name", ""),
-                    })
-                except Exception as e:
-                    logger.warning(f"Failed to load user {filename}: {e}")
+        seen_chat_ids = set()
+        for prefix in ["default", "defaut"]:
+            for filename in os.listdir(DEFAULT_DATA_DIR):
+                if filename.startswith(prefix) and filename.endswith(".enc") and filename != f"{prefix}.enc":
+                    try:
+                        chat_id = filename.replace(prefix, "").replace(".enc", "")
+                        if chat_id in seen_chat_ids:
+                            continue
+                        seen_chat_ids.add(chat_id)
+                        user_data = self.load_and_decrypt(os.path.join(DEFAULT_DATA_DIR, filename))
+                        users.append({
+                            "chat_id": chat_id,
+                            "address": user_data.get("address", ""),
+                            "proxy_wallet": user_data.get("proxy_wallet", ""),
+                            "profile_name": user_data.get("profile_name", ""),
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to load user {filename}: {e}")
         
         return users
 
@@ -304,7 +348,7 @@ class CredentialManager:
         wallet_type = self.get_active_wallet_type(chat_id)
         return self.get_user_credentials_for_type(chat_id, wallet_type)
 
-    def get_user_credentials_for_type(self, chat_id: int | str, wallet_type: str = "defaut") -> Dict[str, str]:
+    def get_user_credentials_for_type(self, chat_id: int | str, wallet_type: str = "default") -> Dict[str, str]:
         user_data = self.load_user(chat_id, wallet_type)
 
         required_keys = [
@@ -347,14 +391,19 @@ class CredentialManager:
     def get_active_wallet_type(self, chat_id: int | str) -> str:
         chat_id_str = str(chat_id)
         wallets = self._load_active_wallets()
-        wallet_type = wallets.get(chat_id_str, "defaut")
+        wallet_type = wallets.get(chat_id_str, "default")
         
+        if wallet_type == "defaut":
+            wallet_type = "default"
+            wallets[chat_id_str] = "default"
+            self._save_active_wallets(wallets)
+
         if not self.user_exists(chat_id, wallet_type):
-            if self.user_exists(chat_id, "defaut"):
-                return "defaut"
+            if self.user_exists(chat_id, "default"):
+                return "default"
             elif self.user_exists(chat_id, "import"):
                 return "import"
-            return "defaut"
+            return "default"
         return wallet_type
 
     def set_active_wallet_type(self, chat_id: int | str, wallet_type: str) -> bool:
@@ -385,10 +434,10 @@ class CredentialManager:
             "active_wallet_type": wallet_type,
         }
         
-        if self.user_exists(chat_id, "defaut"):
+        if self.user_exists(chat_id, "default"):
             try:
-                data = self.load_user(chat_id, "defaut")
-                info["defaut"] = {
+                data = self.load_user(chat_id, "default")
+                info["default"] = {
                     "address": data.get("address", ""),
                     "proxy_wallet": data.get("proxy_wallet", ""),
                     "profile_name": data.get("profile_name", ""),
@@ -412,7 +461,7 @@ class CredentialManager:
     def list_all_user_wallets(self, chat_id: int | str) -> List[Dict[str, str]]:
         wallets = []
         
-        for wt in ["defaut", "import"]:
+        for wt in ["default", "import"]:
             if self.user_exists(chat_id, wt):
                 try:
                     data = self.load_user(chat_id, wt)

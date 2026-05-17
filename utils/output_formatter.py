@@ -108,10 +108,10 @@ class OutputFormatter:
         )
 
     def format_wallet_info(self, user_info: Dict[str, Any], chat_id: str = "") -> str:
-        active_type = str(user_info.get("active_wallet_type", "defaut")).upper()
+        active_type = str(user_info.get("active_wallet_type", "default")).upper()
         subject = f"tenant {chat_id}" if chat_id else "active tenant"
         lines = [self._bar(f"wallet status for {subject}"), f"active_wallet : {active_type}", ""]
-        for wallet_type in ["defaut", "import"]:
+        for wallet_type in ["default", "import"]:
             if wallet_type not in user_info:
                 continue
             data = user_info[wallet_type]

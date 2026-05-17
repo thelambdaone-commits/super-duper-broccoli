@@ -11,13 +11,13 @@ class HelpManager:
             "icon": "💼",
             "content": """💼 *WALLET — Gestion des portefeuille*
 ─────────────────────────────────────────
-• `/wallet add` ↳ Créer wallet généré (defaut)
+• `/wallet add` ↳ Créer wallet généré (default)
 • `/wallet import` ↳ Importer wallet existant
-• `/wallet use [defaut|import]` ↳ Choisir wallet actif
+• `/wallet use [default|import]` ↳ Choisir wallet actif
 • `/wallet swap` ↳ Permuter wallet actif
 • `/wallet backup` ↳ Sauvegarder wallet actif
 • `/wallet status` ↳ Status wallet actif
-• `/wallet delete [defaut|import]` ↳ Supprimer wallet
+• `/wallet delete [default|import]` ↳ Supprimer wallet
 
 • `/transfer [adresse] [montant]` ↳ Transférer USDC
 • `/polymarket [id] [montant]` ↳ Parier sur marché

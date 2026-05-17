@@ -7,7 +7,7 @@ from eth_account import Account
 from hvac.exceptions import VaultError
 
 from utils.exceptions import QuantFatal
-from utils.credential_manager import CredentialManager, DEFAULT_ENC_PATH
+from utils.credential_manager import CredentialManager, DEFAULT_ENC_PATH, DEFAULT_DATA_DIR
 
 logger = logging.getLogger("VaultHandler")
 
@@ -89,7 +89,7 @@ class VaultHandler:
             _load_env_file()
             VaultHandler._env_loaded = True
         
-        self.vault_addr: str = os.getenv("VAULT_ADDR", os.getenv("VALT_ADDR", "http://127.0.0.1:8200"))
+        self.vault_addr: str = os.getenv("VAULT_ADDR", "http://127.0.0.1:8200")
         self.vault_token: str | None = os.getenv("VAULT_TOKEN")
         self._client: hvac.Client | None = None
         self.secret_source = _normalize_secret_source(os.getenv("SECRET_SOURCE"))
@@ -124,7 +124,7 @@ class VaultHandler:
             mgr = CredentialManager()
             
             user_creds = {}
-            wallet_type = "defaut"
+            wallet_type = "default"
             
             if active_chat_id and mgr.user_has_any_wallet(str(active_chat_id)):
                 try:
@@ -135,12 +135,12 @@ class VaultHandler:
                     logger.warning(f"Could not load user credentials: {e}")
             
             enc_secrets = {}
-            if os.path.exists(DEFAULT_ENC_PATH) and not user_creds:
+            if (os.path.exists(DEFAULT_ENC_PATH) or os.path.exists(os.path.join(DEFAULT_DATA_DIR, "defaut.enc"))) and not user_creds:
                 try:
                     enc_secrets = mgr.load_and_decrypt(DEFAULT_ENC_PATH)
-                    logger.info("Loaded wallet profile secrets from defaut.enc")
+                    logger.info("Loaded wallet profile secrets from default.enc")
                 except Exception as e:
-                    logger.warning(f"Could not load defaut.enc: {e}")
+                    logger.warning(f"Could not load default.enc: {e}")
             
             for key in REQUIRED_SECRET_KEYS:
                 val = None
@@ -161,7 +161,7 @@ class VaultHandler:
                     elif prefer_env_file:
                         val = os.getenv("CLOB_PRIVATE_KEY")
                     if not val:
-                        val = mgr.get_or_generate_private_key()
+                        raise QuantFatal("CLOB_PRIVATE_KEY is missing from environment, user credentials, and encrypted vault.")
                 
                 if not val and key in ["CLOB_API_KEY", "CLOB_API_SECRET", "CLOB_API_PASSPHRASE"]:
                     pk = None
@@ -171,7 +171,7 @@ class VaultHandler:
                         pk = user_creds.get("CLOB_PRIVATE_KEY")
                     
                     if not pk:
-                        pk = mgr.get_or_generate_private_key()
+                        raise QuantFatal("CLOB_PRIVATE_KEY is missing. Cannot derive API credentials.")
                     
                     if pk:
                         if user_creds and not prefer_env_file:

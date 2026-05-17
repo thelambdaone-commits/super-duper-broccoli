@@ -103,9 +103,9 @@ async def handle_wallet_help(update: Update, context: ContextTypes.DEFAULT_TYPE)
 🏦 **Wallet Commands**
 
 *User Wallet Management:*
-• `/wallet add <profile>` — Generate new ETH/POL wallet (defaut)
+• `/wallet add <profile>` — Generate new ETH/POL wallet (default)
 • `/wallet import <profile> <private_key>` — Import existing wallet (import)
-• `/wallet use defaut` — Activate generated wallet
+• `/wallet use default` — Activate generated wallet
 • `/wallet use import` — Activate imported wallet
 • `/wallet set-proxy <address>` — Set Polymarket proxy wallet
 • `/wallet list` — List your wallets
@@ -147,17 +147,17 @@ async def handle_wallet_add(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         profile_name = args[0]
         mgr = CredentialManager()
         
-        if mgr.user_exists(chat_id, "defaut"):
+        if mgr.user_exists(chat_id, "default"):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="⚠️ You already have a defaut wallet. Use `/wallet delete` first to create a new one, or use `/wallet use import` to switch to your imported wallet.",
+                text="⚠️ You already have a default wallet. Use `/wallet delete` first to create a new one, or use `/wallet use import` to switch to your imported wallet.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
         
-        user_data = mgr.generate_user_wallet(chat_id, profile_name, wallet_type="defaut")
+        user_data = mgr.generate_user_wallet(chat_id, profile_name, wallet_type="default")
         
-        mgr.set_active_wallet_type(chat_id, "defaut")
+        mgr.set_active_wallet_type(chat_id, "default")
         
         msg = f"""
 ✅ **Wallet Created Successfully**
@@ -169,7 +169,7 @@ async def handle_wallet_add(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 1. Set your Polymarket proxy wallet:
    `/wallet set-proxy <proxy_address>`
 
-Your wallet is encrypted and stored in `defaut{chat_id}.enc`
+Your wallet is encrypted and stored in `default{chat_id}.enc`
 """
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -369,7 +369,7 @@ async def handle_wallet_show(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 *ETH/POL:* `{user_data.get('address', 'N/A')}`{proxy_display}
 
-Your private key is encrypted in `defaut{chat_id}.enc`
+Your private key is encrypted in `default{chat_id}.enc`
 """
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -423,7 +423,7 @@ async def handle_wallet_delete(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /wallet use defaut|import command."""
+    """Handle /wallet use default|import command."""
     try:
         chat_id = get_chat_id(update)
         args = context.args
@@ -431,16 +431,16 @@ async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/wallet use defaut` or `/wallet use import`",
+                text="Usage: `/wallet use default` or `/wallet use import`",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
         
         wallet_type = args[0].lower()
-        if wallet_type not in ["defaut", "import"]:
+        if wallet_type not in ["default", "import"]:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ Invalid wallet type. Use `defaut` or `import`.",
+                text="❌ Invalid wallet type. Use `default` or `import`.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -450,7 +450,7 @@ async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not mgr.user_exists(chat_id, wallet_type):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ Wallet type `{wallet_type}` not found. Create it first with `/wallet {'add' if wallet_type == 'defaut' else 'import'}`.",
+                text=f"❌ Wallet type `{wallet_type}` not found. Create it first with `/wallet {'add' if wallet_type == 'default' else 'import'}`.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -573,18 +573,18 @@ async def handle_wallet_backup(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def handle_wallet_swap(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /wallet swap command - swap between defaut and import."""
+    """Handle /wallet swap command - swap between default and import."""
     try:
         chat_id = get_chat_id(update)
         mgr = CredentialManager()
         
         current_type = mgr.get_active_wallet_type(chat_id)
-        other_type = "import" if current_type == "defaut" else "defaut"
+        other_type = "import" if current_type == "default" else "default"
         
         if not mgr.user_exists(chat_id, other_type):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ No {other_type} wallet found. Create one first with `/wallet {'add' if other_type == 'defaut' else 'import'}`.",
+                text=f"❌ No {other_type} wallet found. Create one first with `/wallet {'add' if other_type == 'default' else 'import'}`.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return

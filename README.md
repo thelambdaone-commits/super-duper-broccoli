@@ -237,7 +237,7 @@ subprocess.run(['vault', 'kv', 'patch', 'secret/quant-trade',
 | `TARGET_CHANNEL` | No | — | Telegram @channel username |
 | `TELEGRAM_PRIVATE_CHAT_IDS` | No | — | Comma-separated list of allowed private chat IDs (e.g. `123,-456`) |
 | `TELEGRAM_PRIVATE_ENABLED` | No | `1` | Set to `0` to disable private message handling entirely |
-| `ENCRYPTION_KEY` | No | — | Fernet key for `data/defaut.enc` (auto-generated if missing) |
+| `ENCRYPTION_KEY` | No | — | Fernet key for `data/default.enc` (auto-generated if missing) |
 
 ### Telegram Private Chat Configuration
 

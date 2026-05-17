@@ -25,7 +25,7 @@ def main():
     print("\nSUCCESS: Institutional wallet and CLOB credentials generated and encrypted.")
     print(f"Files created in: {os.getenv('DATA_PATH', './data')}/")
     print(" - clob_wallet.enc (Private Key)")
-    print(" - defaut.enc (CLOB API Access)")
+    print(" - default.enc (CLOB API Access)")
     print("\nIMPORTANT: Keep your ENCRYPTION_KEY safe. These files cannot be decrypted without it.")
 
 if __name__ == "__main__":

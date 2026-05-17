@@ -205,7 +205,7 @@ class TelegramListener:
         text: str,
         update: Update,
         reply_markup=None,
-        parse_mode: Optional[str] = None,
+        parse_mode: Optional[str] = "Markdown",
     ) -> bool:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
         if msg is None:

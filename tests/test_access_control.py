@@ -96,7 +96,7 @@ async def test_telegram_listener_admin_command_intercept():
     
     # Assert intercept blocks and replies Unauthorized
     assert await listener._check_admin_auth(update_unauth) is False
-    msg_unauth.reply_text.assert_awaited_once_with("Unauthorized.")
+    msg_unauth.reply_text.assert_awaited_once_with("Unauthorized.", parse_mode="Markdown")
     
     # Test authorized call
     msg_auth = SimpleNamespace(chat_id=123, chat=SimpleNamespace(type="private"), reply_text=AsyncMock())

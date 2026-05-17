@@ -104,7 +104,7 @@ async def test_reply_to_message_update() -> None:
     listener = TelegramListener(bot_token="token", on_signal=lambda _: None)
 
     assert await listener.reply_to("ok", update) is True
-    message.reply_text.assert_awaited_once_with("ok")
+    message.reply_text.assert_awaited_once_with("ok", parse_mode="Markdown")
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,7 @@ async def test_reply_to_channel_post_update() -> None:
     listener = TelegramListener(bot_token="token", on_signal=lambda _: None)
 
     assert await listener.reply_to("ok", update) is True
-    channel_post.reply_text.assert_awaited_once_with("ok")
+    channel_post.reply_text.assert_awaited_once_with("ok", parse_mode="Markdown")
 
 
 def test_safe_signal_for_log_drops_update_object() -> None:
@@ -204,7 +204,7 @@ async def test_private_message_rejects_unauthorized_chat() -> None:
 
     await listener._handle_private_message(update, None)
 
-    message.reply_text.assert_awaited_once_with("Private chat is not authorized for this bot.")
+    message.reply_text.assert_awaited_once_with("Private chat is not authorized for this bot.", parse_mode="Markdown")
 
 
 @pytest.mark.asyncio
@@ -232,7 +232,7 @@ async def test_check_auth_rejects_unknown_chat() -> None:
     listener = TelegramListener(bot_token="token", on_signal=lambda _: None, chat_id=-100)
 
     assert await listener._check_auth(update) is False
-    message.reply_text.assert_awaited_once_with("Unauthorized.")
+    message.reply_text.assert_awaited_once_with("Unauthorized.", parse_mode="Markdown")
 
 
 @pytest.mark.asyncio
@@ -286,7 +286,7 @@ async def test_cmd_copy_start_starts_monitoring() -> None:
     await asyncio.sleep(0)
 
     assert copy_agent.started is True
-    message.reply_text.assert_awaited_once_with("✅ Copy trading started")
+    message.reply_text.assert_awaited_once_with("✅ Copy trading started", parse_mode="Markdown")
 
 
 @pytest.mark.asyncio
@@ -302,7 +302,7 @@ async def test_cmd_copy_stop_stops_monitoring() -> None:
     await listener._cmd_copy(update, context)
 
     assert copy_agent.stopped is True
-    message.reply_text.assert_awaited_once_with("🛑 Copy trading stopped")
+    message.reply_text.assert_awaited_once_with("🛑 Copy trading stopped", parse_mode="Markdown")
 
 
 @pytest.mark.asyncio

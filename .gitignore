@@ -61,3 +61,6 @@ project_dump.txt
 # Node / PM2
 node_modules/
 pm2-*.json
+
+# Graphify context-compression outputs
+graphify-out/
