@@ -9,11 +9,11 @@
   },
   "council_models": [
     "openai/gpt-4o-mini",
-    "google/gemini-flash-latest",
+    "google/gemini-2.5-flash",
     "meta-llama/llama-3.3-70b-instruct",
     "deepseek/deepseek-chat"
   ],
-  "chairman_model": "google/gemini-pro-latest",
+  "chairman_model": "google/gemini-2.5-pro",
   "max_models_per_query": 4,
   "temperature": 0.2,
   "max_tokens": 1600,
