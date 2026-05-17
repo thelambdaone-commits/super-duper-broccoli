@@ -39,6 +39,7 @@ from utils.model_validator import ModelValidator
 from ai.agents.self_improvement_agent import SelfImprovementAgent
 from utils.snapshot_manager import get_snapshot_manager
 from scrapers.telegram_broadcaster import TelegramBroadcaster
+from utils.notifier import TelegramNotifier
 from utils.message_formatter import (
     format_scan_report,
     format_market_report,
@@ -139,7 +140,7 @@ def build_telegram_listener(
     if not token:
         raise QuantFatal("TELEGRAM_BOT_TOKEN is missing from Vault/Environment.")
     return TelegramListener(
-        token=token,
+        bot_token=token,
         on_signal=on_signal,
         chat_id=chat_id,
         access_control=access_control,
@@ -147,20 +148,24 @@ def build_telegram_listener(
 
 
 def build_broadcaster(container: ServiceContainer, pipeline: TrainingPipeline, scanner: MarketScanner) -> TelegramBroadcaster:
-    token = container.secrets.get("TELEGRAM_BOT_TOKEN")
-    broadcaster_channel = os.getenv("TELEGRAM_BROADCASTER_CHANNEL_ID", "")
+    broadcaster_channel = os.getenv("TELEGRAM_BROADCASTER_CHANNEL_ID", "") or os.getenv("CHAT_ID")
+    broadcaster_notifier = TelegramNotifier(
+        bot_token=container.secrets.get("TELEGRAM_BOT_TOKEN"),
+        chat_id=broadcaster_channel,
+    )
     return TelegramBroadcaster(
-        bot_token=token,
-        channel_id=broadcaster_channel,
-        pipeline=pipeline,
-        scanner=scanner,
+        notifier=broadcaster_notifier,
+        training_pipeline=pipeline,
+        market_client=scanner.client,
+        tickers=["SOL", "BTC", "ETH"],
+        edge_threshold=float(os.getenv("TELEGRAM_BROADCAST_EDGE_THRESHOLD", "0.07")),
     )
 
 
 def build_cognitive_brain(store: FeatureStore, scanner: MarketScanner, pipeline: TrainingPipeline) -> LobstarCognitiveBrain:
-    from core.arbitrage_matrix import build_arbitrage_engine
+    from core.arbitrage_feedback_loop import LobstarArbitrageEngine
     
-    arb_engine = build_arbitrage_engine()
+    arb_engine = LobstarArbitrageEngine(trigger_threshold=0.015)
     return LobstarCognitiveBrain(
         store=store,
         scanner=scanner,
