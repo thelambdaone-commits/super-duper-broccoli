@@ -26,7 +26,14 @@ class FeatureStore:
     def _connect(self) -> None:
         try:
             import duckdb
-            self._conn = duckdb.connect(self.db_path)
+            try:
+                self._conn = duckdb.connect(self.db_path)
+            except duckdb.IOException as e:
+                if "lock" in str(e).lower():
+                    logger.warning(f"⚠️ DuckDB lock conflict on {self.db_path}. Falling back to in-memory database (:memory:) to prevent crashes...")
+                    self._conn = duckdb.connect(":memory:")
+                else:
+                    raise
             logger.info(f"FeatureStore connected: {self.db_path}")
         except ImportError:
             raise QuantFatal("duckdb not installed. Install with: pip install duckdb")

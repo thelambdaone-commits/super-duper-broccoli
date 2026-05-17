@@ -4,11 +4,11 @@ import contextlib
 import fcntl
 import logging
 import os
-import re
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 from dotenv import load_dotenv
 from pydantic import SecretStr
 
@@ -18,11 +18,13 @@ load_dotenv()
 from utils.security_utils import setup_secure_logging
 setup_secure_logging()
 
+# Apply quantitative hook backward-compatible aliases early
+from utils.localization_sync import apply_backward_compatible_aliases
+apply_backward_compatible_aliases()
+
 from core.container import ServiceContainer
 from core.lobstar_cognitive_brain import LobstarCognitiveBrain
-from core.signal_executor import execute_lobstar_signal, execute_regex_signal
 from core.training_pipeline import TrainingPipeline
-from models.predictive_engine import PolymarketPredictiveEngine
 from mcp_agents.lobstar_agent import LobstarAgent
 from monitors.polymarket_monitor import PolymarketMonitor
 from agents.copy_trading_agent import CopyTradingAgent, CopyConfig
@@ -31,26 +33,31 @@ from utils.circuit_breaker import CircuitBreaker
 from utils.access_control import AccessControlManager
 from utils.crypto_market_intelligence import CryptoMarketIntelligence, format_intelligence_report
 from utils.exceptions import QuantFatal
-from ledger.ledger_db import Ledger
-from user_data.strategies.hmm_filter import HMMRegimeFilter
 from utils.feature_store import FeatureStore
 from utils.market_scanner import MarketScanner
 from utils.model_validator import ModelValidator
 from ai.agents.self_improvement_agent import SelfImprovementAgent
 from utils.snapshot_manager import get_snapshot_manager
-from scrapers.telegram_broadcaster import TelegramBroadcaster, TokenBucketRateLimiter
+from scrapers.telegram_broadcaster import TelegramBroadcaster
 from utils.message_formatter import (
     format_scan_report,
     format_market_report,
     format_winning_bets_alert,
 )
-
 from utils.logging_setup import setup_logging
 from utils.telegram_helpers import parse_chat_ids, parse_private_chat_ids
+from core.swarm_supervisor import initialize_swarm_supervisor
+from core.mlops_feedback_loop import LobstarMLOpsEngine
+from core.quantum_runner import LobstarQuantumRunner
+from utils.api_key_notifier import get_api_key_notifier
+from telegram.constants import ParseMode
+from core.orchestrator import LobstarOrchestrator
+from core.health_monitor import LobstarHealthMonitor
 
 logger = setup_logging()
 
 DEFAULT_TICKERS = ["SOL", "BTC", "ETH"]
+
 
 @contextlib.contextmanager
 def telegram_single_instance_lock(lock_path: Path | None = None):
@@ -69,9 +76,6 @@ def telegram_single_instance_lock(lock_path: Path | None = None):
             yield
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-def _safe_signal_for_log(signal: dict) -> dict:
-    return {key: value for key, value in signal.items() if key != "update"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -122,73 +126,51 @@ def build_copy_trading_agent() -> CopyTradingAgent | None:
         max_copy_notional=float(os.getenv("COPY_MAX_NOTIONAL", "100.0")),
         buy_only=os.getenv("COPY_BUY_ONLY", "true").lower() == "true",
     )
-    agent = CopyTradingAgent(copy_config)
-    logger.info("🎯 Copy Trading configured: %s... multiplier=%s", copy_wallet[:10], copy_config.copy_multiplier)
-    return agent
+    return CopyTradingAgent(copy_config)
 
 
 def build_telegram_listener(
-    *,
     secrets: dict,
     on_signal: Callable[[dict], None],
     chat_id: int | None,
     access_control: AccessControlManager,
 ) -> TelegramListener:
+    token = secrets.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise QuantFatal("TELEGRAM_BOT_TOKEN is missing from Vault/Environment.")
     return TelegramListener(
-        bot_token=secrets["TELEGRAM_BOT_TOKEN"],
+        token=token,
         on_signal=on_signal,
-        channel_username=os.getenv("TARGET_CHANNEL", ""),
         chat_id=chat_id,
-        private_chat_ids=parse_private_chat_ids(os.getenv("TELEGRAM_PRIVATE_CHAT_IDS", "")),
-        admin_chat_ids=parse_chat_ids(os.getenv("TELEGRAM_ADMIN_CHAT_IDS", "")),
-        allow_private_messages=os.getenv("TELEGRAM_PRIVATE_ENABLED", "1") != "0",
-        proxy_url=os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY") or None,
         access_control=access_control,
     )
 
 
-def build_crypto_intelligence() -> CryptoMarketIntelligence:
-    return CryptoMarketIntelligence(
-        watchlist=[
-            ticker.strip().upper()
-            for ticker in os.getenv("CRYPTO_INTELLIGENCE_WATCHLIST", ",".join(DEFAULT_TICKERS)).split(",")
-            if ticker.strip()
-        ],
-        min_volume=float(os.getenv("CRYPTO_INTELLIGENCE_MIN_VOLUME", "10000")),
-        min_liquidity=float(os.getenv("CRYPTO_INTELLIGENCE_MIN_LIQUIDITY", "1000")),
+def build_broadcaster(container: ServiceContainer, pipeline: TrainingPipeline, scanner: MarketScanner) -> TelegramBroadcaster:
+    token = container.secrets.get("TELEGRAM_BOT_TOKEN")
+    broadcaster_channel = os.getenv("TELEGRAM_BROADCASTER_CHANNEL_ID", "")
+    return TelegramBroadcaster(
+        bot_token=token,
+        channel_id=broadcaster_channel,
+        pipeline=pipeline,
+        scanner=scanner,
     )
 
 
-def build_cognitive_brain(store, market_scanner: MarketScanner, training_pipeline: TrainingPipeline) -> LobstarCognitiveBrain:
-    from core.arbitrage_feedback_loop import LobstarArbitrageEngine
-    arb_engine = LobstarArbitrageEngine(
-        execution_mode=os.getenv("MODE", "PAPER"),
-        slippage_tolerance=float(os.getenv("SLIPPAGE_TOLERANCE", "0.002")),
-        trigger_threshold=float(os.getenv("ARBITRAGE_TRIGGER_THRESHOLD", "0.015")),
-    )
+def build_cognitive_brain(store: FeatureStore, scanner: MarketScanner, pipeline: TrainingPipeline) -> LobstarCognitiveBrain:
+    from core.arbitrage_matrix import build_arbitrage_engine
+    
+    arb_engine = build_arbitrage_engine()
     return LobstarCognitiveBrain(
         store=store,
-        scanner=market_scanner,
-        training_pipeline=training_pipeline,
+        scanner=scanner,
+        training_pipeline=pipeline,
         arbitrage_engine=arb_engine,
-        oi_lookback_seconds=int(os.getenv("LOBSTAR_BRAIN_OI_LOOKBACK_SECONDS", "1800")),
-        time_decay_half_life_seconds=int(os.getenv("LOBSTAR_BRAIN_TIME_DECAY_HALF_LIFE_SECONDS", "3600")),
     )
 
 
-def build_broadcaster(container, training_pipeline: TrainingPipeline, market_scanner: MarketScanner) -> TelegramBroadcaster:
-    return TelegramBroadcaster(
-        notifier=container.notifier,
-        training_pipeline=training_pipeline,
-        market_client=market_scanner.client,
-        tickers=[t.strip().upper() for t in os.getenv("TELEGRAM_BROADCAST_TICKERS", ",".join(DEFAULT_TICKERS)).split(",") if t.strip()],
-        edge_threshold=float(os.getenv("TELEGRAM_BROADCAST_EDGE_THRESHOLD", "0.07")),
-        rate_limiter=TokenBucketRateLimiter(
-            capacity=int(os.getenv("TELEGRAM_BROADCAST_MAX_PER_MINUTE", "3")),
-            refill_period_seconds=60.0,
-        ),
-        enabled=os.getenv("TELEGRAM_BROADCAST_ENABLED", "1") != "0",
-    )
+def build_crypto_intelligence() -> CryptoMarketIntelligence:
+    return CryptoMarketIntelligence()
 
 
 async def run_blocking(label: str, func: Callable[..., Any], *args: Any, timeout: float = 30.0, **kwargs: Any) -> Any:
@@ -206,16 +188,16 @@ def _setup_ml_features(training_pipeline: TrainingPipeline) -> None:
 
 
 def _setup_quantum_runner(
-    runner: Any,
+    runner: LobstarQuantumRunner,
     freqai: Any,
-    cognitive_brain: Any,
-    mlops_engine: Any,
+    cognitive_brain: LobstarCognitiveBrain,
+    mlops_engine: LobstarMLOpsEngine,
 ) -> None:
-    """Schedules cron/quantum runner background jobs."""
-    runner.enregistrer_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
+    """Schedules cron/quantum runner background jobs using English hook register_job."""
+    runner.register_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
     if cognitive_brain.arbitrage_engine:
-        runner.enregistrer_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
-    runner.enregistrer_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
+        runner.register_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
+    runner.register_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
 
 
 def _dry_run_report(mode: str, circuit_breaker: CircuitBreaker, store: FeatureStore) -> None:
@@ -238,7 +220,9 @@ def _dry_run_report(mode: str, circuit_breaker: CircuitBreaker, store: FeatureSt
 async def _run_services_loop(
     listener: TelegramListener,
     polymarket_monitor: Any,
-    runner: Any,
+    runner: LobstarQuantumRunner,
+    orchestrator: LobstarOrchestrator,
+    health_monitor: LobstarHealthMonitor,
     scan_coro: Any,
     retrain_coro: Any,
     runner_coro: Any,
@@ -252,15 +236,22 @@ async def _run_services_loop(
     telegram_task = None
     runner_task = None
     try:
+        # Start core components
+        orchestrator.start()
+        health_monitor.start()
+
         telegram_task = asyncio.create_task(listener.start())
         scan_task = asyncio.create_task(scan_coro)
         retrain_task = asyncio.create_task(retrain_coro)
         monitor_task = asyncio.create_task(polymarket_monitor.start()) if polymarket_monitor else None
         runner_task = asyncio.create_task(runner_coro)
+        
         tasks = [telegram_task, scan_task, retrain_task, runner_task] + ([monitor_task] if monitor_task else [])
         await asyncio.gather(*tasks)
     finally:
         runner.stop()
+        await orchestrator.stop()
+        await health_monitor.stop()
         if polymarket_monitor:
             try:
                 await polymarket_monitor.stop()
@@ -278,12 +269,6 @@ async def main(
 ) -> None:
     listener = None
 
-    # Env-based mode override
-    if os.getenv("REAL", "false").lower() == "true":
-        execution_mode = "PROD"
-    elif os.getenv("PAPER", "true").lower() == "true":
-        execution_mode = "PAPER"
-
     container = ServiceContainer.get_instance()
     notifier = container.notifier
     
@@ -297,7 +282,6 @@ async def main(
 
     ledger = container.ledger
     freqai = container.freqai
-
     hmm = container.hmm
     risk = container.risk
     store = container.store
@@ -308,11 +292,10 @@ async def main(
     else:
         logger.warning("GROQ_API_KEY missing. Semantic signal parsing (LOBSTAR) disabled.")
         lobstar = None
+    
     circuit_breaker = CircuitBreaker(name="CLOB_Execution")
 
-    from core.swarm_supervisor import initialize_swarm_supervisor, get_swarm_supervisor
     swarm_supervisor = await initialize_swarm_supervisor(mode=execution_mode)
-
     data_diag = swarm_supervisor.check_data_gaps()
     logger.info(f"📊 Data Gap Check: {data_diag}")
 
@@ -341,7 +324,6 @@ async def main(
         min_train_samples=50,
         validation_split=0.2,
     )
-    # Register features for autonomous retraining
     _setup_ml_features(training_pipeline)
 
     snapshot_mgr = get_snapshot_manager()
@@ -357,264 +339,55 @@ async def main(
         _dry_run_report(mode, circuit_breaker, store)
         return
 
-    _pending_tasks: list[asyncio.Task] = []
-    _TASK_SLOTS = 200
-
-    async def _confirm_and_cleanup(
-        task: asyncio.Task,
-        signal: dict,
-        listener: TelegramListener,
-    ) -> None:
-        try:
-            result = await task
-            if not result or not isinstance(result, dict):
-                return
-
-            if result.get("status") == "SUCCESS":
-                logger.info(f"Signal executed successfully: {result.get('trade_id', 'N/A')}")
-                notifier.send(
-                    f"✅ *Trade Executed*\n"
-                    f"Ticker: `{result.get('ticker', 'Unknown')}`\n"
-                    f"Side: `{result.get('side', 'Unknown')}`\n"
-                    f"Size: `{result.get('executed_size', 0.0):.2f}` @ `{result.get('price', 0.0):.4f}`\n"
-                    f"Mode: `{execution_mode}`"
-                )
-                circuit_breaker.record_success()
-            else:
-                reason = result.get("reason_1") or result.get("reason") or "Unknown error"
-                logger.warning(f"Signal execution failed: {reason}")
-                notifier.send(f"⚠️ *Execution Failed*\nTicker: `{result.get('ticker', 'Unknown')}`\nReason: `{reason}`")
-                circuit_breaker.record_failure(reason)
-
-            from utils.message_formatter import InstitutionalMessageFormatter
-            confirmation = InstitutionalMessageFormatter.format_trade_execution_html(result)
-            
-            chat_id = signal.get("chat_id")
-            update = signal.get("update")
-            
-            if update is not None and update.message:
-                await listener.reply_to(confirmation, update, parse_mode="HTML")
-            elif chat_id:
-                await listener.send_message(confirmation, chat_id=chat_id, parse_mode="HTML")
-        except Exception as e:
-            logger.error(f"Signal execution failed: {e}")
-            circuit_breaker.record_failure(str(e))
-
-    def _cleanup_tasks() -> None:
-        for t in _pending_tasks:
-            if t.done():
-                try:
-                    exc = t.exception()
-                    if exc:
-                        logger.warning(f"Task exception: {exc}")
-                except asyncio.CancelledError:
-                    pass
-        _pending_tasks[:] = [t for t in _pending_tasks if not t.done()]
-
-    async def _drain_pending_tasks(timeout: float = 10.0) -> None:
-        _cleanup_tasks()
-        if not _pending_tasks:
-            return
-        done, pending = await asyncio.wait(_pending_tasks, timeout=timeout)
-        for task in done:
-            try:
-                exc = task.exception()
-                if exc:
-                    logger.warning(f"Task exception during shutdown: {exc}")
-            except asyncio.CancelledError:
-                pass
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-
-    async def _execute_signal_with_cognitive_brain(signal: dict) -> dict | None:
-        # Predictive Engine Check - Validate signal has sufficient edge
-        market_features = signal.get("market_features")
-        if market_features is not None or _env_bool("ALLOW_SIMULATED_PREDICTIVE_GATE"):
-            try:
-                from models.predictive_engine import create_predictive_engine
-                import pandas as pd
-                import time
-
-                predictive_engine = create_predictive_engine(min_edge_threshold=0.07)
-                price = signal.get("price", 0.5)
-                ts_res = signal.get("timestamp_resolution", time.time() + 3600)
-                if market_features is None:
-                    logger.warning("Using simulated predictive-gate features because ALLOW_SIMULATED_PREDICTIVE_GATE is enabled.")
-                    market_features = {'price': [0.5], 'volume': [100], 'bid_depth': [50], 'ask_depth': [50]}
-                mock_df = pd.DataFrame(market_features)
-
-                prediction = predictive_engine.predire_pari_gagnant(
-                    df_market_ticks=mock_df,
-                    clob_price_yes=price,
-                    timestamp_resolution=ts_res
-                )
-
-                if not prediction.get("pari_approuve"):
-                    logger.info(f"💤 [PREDICTIVE ENGINE] Signal rejected: Edge {prediction.get('absolute_edge', 0):.1%} < 7%")
-                    return None
-
-                signal["predictive_probability"] = prediction.get("probability_win")
-                signal["predictive_edge"] = prediction.get("absolute_edge")
-                logger.info(f"🔮 [PREDICTIVE ENGINE] Signal validated: P(win)={prediction.get('probability_win'):.1%}, Edge={prediction.get('absolute_edge'):+.1%}")
-
-            except Exception as e:
-                logger.warning(f"Predictive engine check failed, continuing: {e}")
-        else:
-            logger.debug("Predictive gate skipped: no real market_features on signal.")
-        
-        try:
-            cognitive_decision = await cognitive_brain.synthetiser_decision_cognitive(signal)
-            signal = cognitive_brain.enrich_signal(signal, cognitive_decision)
-            logger.info("LOBSTAR cognitive decision: %s", cognitive_decision.reason)
-        except Exception as exc:
-            logger.warning("LOBSTAR cognitive brain failed, continuing with raw signal: %s", exc)
-
-        source = signal.get("source", "")
-        
-        # Arbitrage Netting: If an arbitrage anomaly is identified -> Route directly to instant sum-of-outcomes netting for risk-free profit.
-        if source == "arbitrage" or signal.get("arb_type") is not None:
-            logger.info("⚡ ARBITRAGE SIGNAL DETECTED. Executing instant sum-of-outcomes netting...")
-            return await execute_regex_signal(
-                signal, ledger, freqai,
-                risk=risk, hmm=hmm, store=store, executor=None,
-                scanner=market_scanner,
-            )
-
-        # Volatility Regime Adaptive Routing:
-        # If LOW_VOLATILITY with thin spreads -> Force PassiveExecutor (Maker mode).
-        # Otherwise, route directly to CLOB Taker mode for instantaneous execution.
-        returns = signal.get("returns")
-        if returns is None and _env_bool("ALLOW_SIMULATED_REGIME_INPUTS"):
-            import numpy as np
-
-            logger.warning("Using simulated zero returns because ALLOW_SIMULATED_REGIME_INPUTS is enabled.")
-            returns = np.zeros(100, dtype=np.float32)
-        try:
-            state, label = hmm.predict_with_label(returns) if returns is not None else (None, "UNKNOWN")
-        except Exception as exc:
-            logger.warning("Regime prediction failed, using UNKNOWN: %s", exc)
-            label = "UNKNOWN"
-
-        current_executor = passive_executor
-        if label == "LOW_VOLATILITY":
-            logger.info("Regime is LOW_VOLATILITY: Forcing PassiveExecutor (Maker Mode)")
-            current_executor = passive_executor
-        else:
-            logger.info(f"Regime is {label}: Routing directly to CLOB (Taker Mode)")
-            current_executor = None
-
-        chat_id = signal.get("chat_id")
-        tenant_wallet = access_control.obtenir_wallet_associe(chat_id) if chat_id else None
-
-        if source == "lobstar_llm":
-            if not lobstar:
-                logger.warning("Lobstar signal received but agent is disabled.")
-                return None
-            return await execute_lobstar_signal(
-                signal, ledger, freqai, lobstar,
-                risk=risk, hmm=hmm, store=store, executor=current_executor,
-                scanner=market_scanner, tenant_wallet=tenant_wallet,
-            )
-        if source == "polymarket_onchain":
-            await _handle_onchain_signal(
-                signal, ledger, hmm, store,
-            )
-            return None
-        return await execute_regex_signal(
-            signal, ledger, freqai,
-            risk=risk, hmm=hmm, store=store, executor=current_executor,
-            scanner=market_scanner, tenant_wallet=tenant_wallet,
-        )
-
-
-
-    def on_signal(signal: dict) -> None:
-        logger.info("Signal received: %s", _safe_signal_for_log(signal))
-        
-        if not circuit_breaker.is_allowed():
-            logger.error("CIRCUIT BREAKER OPEN. Skipping signal.")
-            notifier.send("🛑 *CIRCUIT BREAKER OPEN*\nTrading paused due to consecutive failures.")
-            return
-
-        if len(_pending_tasks) >= _TASK_SLOTS:
-            _cleanup_tasks()
-        if len(_pending_tasks) >= _TASK_SLOTS:
-            logger.warning("Task queue full, dropping signal")
-            return
-        raw_task = asyncio.create_task(_execute_signal_with_cognitive_brain(signal))
-        task = asyncio.create_task(
-            _confirm_and_cleanup(raw_task, signal, listener)
-        )
-        _pending_tasks.append(task)
-
-        # Capture signal snapshot
-        snapshot_mgr.capture(
-            category="TRADING",
-            component="SIGNAL",
-            data=signal,
-            tags=["signal", signal.get("source", "unknown")]
-        )
-
-    async def _handle_onchain_signal(
-        sig: dict,
-        lgr: Ledger,
-        hm: HMMRegimeFilter,
-        st: FeatureStore,
-    ) -> None:
-        token_id = sig.get("token_id", "")
-        side = sig.get("side", "BUY")
-        maker_amount = sig.get("maker_amount", "0")
-        logger.info(
-            f"[ONCHAIN] Copy-trade candidate: {side} {token_id} "
-            f"amount={maker_amount}"
-        )
-        if st:
-            st.record_signal(
-                source="polymarket_onchain",
-                ticker=token_id,
-                side=side,
-                price=0.0,
-                size=float(maker_amount) if maker_amount else 0.0,
-                confidence=0.7,
-                regime_label="UNKNOWN",
-            )
-
-    listener = build_telegram_listener(
-        secrets=secrets,
-        on_signal=on_signal,
-        chat_id=chat_id,
-        access_control=access_control,
-    )
-
-    from utils.api_key_notifier import get_api_key_notifier
-    api_check = get_api_key_notifier().check_all_keys(runtime_secrets=secrets)
-    logger.info(f"🔑 API Key Check: {api_check['total_missing']} missing, {len(api_check['critical'])} critical, {len(api_check['loaded_from_vault'])} from Vault")
-    if api_check["missing"]:
-        from telegram.constants import ParseMode
-        alert = get_api_key_notifier().format_telegram_alert(api_check)
-        logger.info(f"📨 Sending API key alert to chat_id={chat_id}")
-        try:
-            if chat_id:
-                await listener.send_message(alert, chat_id=chat_id, parse_mode=ParseMode.MARKDOWN)
-                logger.info("✅ API key alert sent to Telegram")
-            else:
-                logger.warning(f"⚠️ chat_id is None, cannot send Telegram alert")
-        except Exception as e:
-            logger.error(f"❌ Failed to send API key alert: {e}")
-
     market_scanner = MarketScanner()
     crypto_intelligence = build_crypto_intelligence()
     cognitive_brain = build_cognitive_brain(store, market_scanner, training_pipeline)
     broadcaster = build_broadcaster(container, training_pipeline, market_scanner)
 
-    from core.mlops_feedback_loop import LobstarMLOpsEngine
     mlops_engine = LobstarMLOpsEngine()
-
-    from core.quantum_runner import LobstarQuantumRunner
     runner = LobstarQuantumRunner()
     _setup_quantum_runner(runner, freqai, cognitive_brain, mlops_engine)
+
+    # Instantiate the new LobstarOrchestrator
+    orchestrator = LobstarOrchestrator(
+        container=container,
+        secrets=secrets,
+        execution_mode=execution_mode,
+        listener=None, # will attach below
+        circuit_breaker=circuit_breaker,
+        snapshot_mgr=snapshot_mgr,
+        cognitive_brain=cognitive_brain,
+        copy_trading_agent=copy_trading_agent,
+        market_scanner=market_scanner,
+        lobstar_agent=lobstar,
+        access_control=access_control,
+    )
+
+    listener = build_telegram_listener(
+        secrets=secrets,
+        on_signal=orchestrator.on_signal,
+        chat_id=chat_id,
+        access_control=access_control,
+    )
+
+    # Attach listener reference to orchestrator
+    orchestrator.listener = listener
+
+    health_monitor = LobstarHealthMonitor(
+        orchestrator=orchestrator,
+        runner=runner,
+        port=8080,
+    )
+
+    api_check = get_api_key_notifier().check_all_keys(runtime_secrets=secrets)
+    logger.info(f"🔑 API Key Check: {api_check['total_missing']} missing, {len(api_check['critical'])} critical")
+    if api_check["missing"]:
+        alert = get_api_key_notifier().format_telegram_alert(api_check)
+        try:
+            if chat_id:
+                await listener.send_message(alert, chat_id=chat_id, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.error(f"❌ Failed to send API key alert: {e}")
 
     listener.attach_components(
         ledger=ledger,
@@ -642,7 +415,6 @@ async def main(
                     msg = f"🚨 *DRIFT DETECTED: {ticker}*\n\nModel validation failed. Triggering autonomous retraining..."
                     await listener.send_message(msg, parse_mode="Markdown")
                     
-                    # Trigger retraining
                     try:
                         await run_blocking(
                             f"training cycle {ticker}",
@@ -663,7 +435,6 @@ async def main(
                     
                     self_improver.log_incident("MODEL_DRIFT", f"Drift detected for {ticker}", "Distribution shift", "Prediction accuracy degradation")
             
-            # Continuous Improvement Report
             imp_report = await run_blocking(
                 "self-improvement report",
                 self_improver.generate_improvement_report,
@@ -693,11 +464,9 @@ async def main(
             except Exception as e:
                 logger.error(f"Failed to execute dynamic ML feedback: {e}")
 
-
     async def _market_scan_loop() -> None:
         from utils.market_scanner import SCAN_INTERVAL_SECONDS
         
-        # Wait for Telegram bot to be ready
         for _ in range(30):
             if listener.application:
                 break
@@ -719,8 +488,7 @@ async def main(
                     logger.info(
                         f"Scan: {result.total_markets_scanned} markets, "
                         f"{len(result.winning_bets)} winning, "
-                        f"{len(result.trending_markets)} trending, "
-                        f"{len(result.competitive_markets)} competitive"
+                        f"{len(result.trending_markets)} trending"
                     )
                     if first_scan:
                         signals = (
@@ -741,7 +509,6 @@ async def main(
                             report = format_market_report(fallback_markets)
                         await listener.send_message(report, parse_mode="Markdown")
                         
-                        # Capture periodic snapshot
                         snapshot_mgr.capture(
                             category="SYSTEM",
                             component="MARKET_REPORT",
@@ -761,7 +528,6 @@ async def main(
                         )
                         last_sentiment = sentiment
                     
-                    # Persist features for training
                     await run_blocking(
                         "record scanner features",
                         market_scanner.record_features,
@@ -816,25 +582,26 @@ async def main(
     if ws_url:
         target_wallet = os.getenv("TARGET_WALLET", "")
         polymarket_monitor = PolymarketMonitor(
-            on_signal=on_signal,
+            on_signal=orchestrator.on_signal,
             target_wallet=target_wallet or None,
             ws_url=ws_url,
             rpc_url=polygon_rpc,
         )
         logger.info(f"Polymarket on-chain monitor: {'enabled (target=' + target_wallet + ')' if target_wallet else 'enabled (ALL wallets)'}")
     else:
-        logger.info("Polymarket on-chain monitor: disabled (set WS_URL or vault WS_URL to enable)")
+        logger.info("Polymarket on-chain monitor: disabled (set WS_URL to enable)")
 
     await _run_services_loop(
         listener=listener,
         polymarket_monitor=polymarket_monitor,
         runner=runner,
+        orchestrator=orchestrator,
+        health_monitor=health_monitor,
         scan_coro=_market_scan_loop(),
         retrain_coro=_health_check_loop(),
         runner_coro=runner.start(),
         mode=mode,
     )
-    await _drain_pending_tasks()
 
 
 async def resolve_chat() -> None:
@@ -889,12 +656,31 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true", help="Validate pipeline components")
     parser.add_argument("--resolve-chat", action="store_true", help="Detect chat ID from incoming messages")
     parser.add_argument(
-        "--mode", type=str, default="PAPER",
+        "--mode", type=str, default=None,
         choices=["REPLAY", "PAPER", "SHADOW", "PROD"],
         help="Execution mode: REPLAY (backtest), PAPER (simulated), SHADOW (mini-size), PROD (real capital)",
     )
     parser.add_argument("--maintenance", action="store_true", help="Run archive maintenance cycle and exit")
     args = parser.parse_args()
+    
+    # 1. Deterministic Execution Mode Conflict Checking
+    real_env = os.getenv("REAL", "false").lower() == "true"
+    paper_env = os.getenv("PAPER", "false").lower() == "true"
+
+    if real_env and paper_env:
+        logger.critical("🚨 CONFLICT: Both REAL=true and PAPER=true are defined in the environment!")
+        raise QuantFatal("Conflicting environment variables: Both REAL=true and PAPER=true are defined!")
+
+    # Exclusive Priority: CLI Argument > Environment Variable
+    resolved_mode = "PAPER"
+    if real_env:
+        resolved_mode = "PROD"
+    elif paper_env:
+        resolved_mode = "PAPER"
+
+    if args.mode is not None:
+        resolved_mode = args.mode
+
     try:
         if args.resolve_chat:
             with telegram_single_instance_lock():
@@ -903,10 +689,10 @@ if __name__ == "__main__":
             asyncio.run(archive_maintenance())
         else:
             if args.dry_run:
-                asyncio.run(main(dry_run=args.dry_run, execution_mode=args.mode))
+                asyncio.run(main(dry_run=args.dry_run, execution_mode=resolved_mode))
             else:
                 with telegram_single_instance_lock():
-                    asyncio.run(main(dry_run=args.dry_run, execution_mode=args.mode))
+                    asyncio.run(main(dry_run=args.dry_run, execution_mode=resolved_mode))
     except QuantFatal as e:
         logger.critical(f"FATAL: {e}")
         raise SystemExit(1)

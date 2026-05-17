@@ -266,7 +266,9 @@ class TelegramListener:
         while self._running:
             try:
                 signal = await asyncio.wait_for(self.queue.get(), timeout=1.0)
-                self.on_signal(signal)
+                res = self.on_signal(signal)
+                if asyncio.iscoroutine(res):
+                    await res
                 self.queue.task_done()
             except asyncio.TimeoutError:
                 continue
@@ -1013,7 +1015,9 @@ class TelegramListener:
             signal["chat_id"] = msg.chat_id
             signal["update"] = update
             logger.info("REGEX SIGNAL: %s", _safe_signal_for_log(signal))
-            self.on_signal(signal)
+            res = self.on_signal(signal)
+            if asyncio.iscoroutine(res):
+                await res
             return True
 
         semantic = SignalParser.parse_semantic(text)

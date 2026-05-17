@@ -101,7 +101,7 @@ class PolymarketPredictiveEngine:
             logger.warning("Calibrator exposes calibrate() only; skipping inference-time recalibration")
         return raw_score
 
-    def predire_pari_gagnant(
+    def predict_winning_bet(
         self,
         df_market_ticks: pd.DataFrame,
         clob_price_yes: float,

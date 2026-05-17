@@ -28,7 +28,7 @@ class LobstarQuantumRunner:
         self._is_running = False
         self.montre_interne_tick_rate = 0.01  # Résolution de la montre : 10 millisecondes
 
-    def enregistrer_job(self, name: str, callback: Callable[[], Coroutine[Any, Any, None]], interval_sec: float) -> None:
+    def register_job(self, name: str, callback: Callable[[], Coroutine[Any, Any, None]], interval_sec: float) -> None:
         """Ajoute une tâche récurrente dans le calendrier de la montre interne."""
         self.jobs.append(QuantumJob(name, callback, interval_sec))
         logger.info(f"⏱️ [MONTRE INTERNE] Job enregistré : [{name}] programmé toutes les {interval_sec}s.")

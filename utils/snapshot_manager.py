@@ -15,7 +15,14 @@ class SnapshotManager:
     def __init__(self, db_path: str = SNAPSHOT_DB_PATH) -> None:
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.conn = duckdb.connect(db_path)
+        try:
+            self.conn = duckdb.connect(db_path)
+        except duckdb.IOException as e:
+            if "lock" in str(e).lower():
+                logger.warning(f"⚠️ DuckDB lock conflict on {db_path}. Falling back to in-memory database (:memory:) to prevent crashes...")
+                self.conn = duckdb.connect(":memory:")
+            else:
+                raise
         self._init_db()
 
     def _init_db(self):

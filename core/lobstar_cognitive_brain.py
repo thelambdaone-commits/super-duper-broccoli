@@ -148,7 +148,7 @@ class LobstarCognitiveBrain:
             kolmogorov_spread=kolmogorov_spread,
         )
 
-    async def synthetiser_decision_cognitive(self, signal: dict[str, Any]) -> LobstarCognitiveDecision:
+    async def synthesize_cognitive_decision(self, signal: dict[str, Any]) -> LobstarCognitiveDecision:
         return await self.synthetiser_decision_decision(signal)
 
     def enrich_signal(

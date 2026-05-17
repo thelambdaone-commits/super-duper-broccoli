@@ -1,34 +1,33 @@
-freqtrade>=2024.1
-hvac>=2.1.0
-torch>=2.2.0
-xgboost>=2.0.3
-lightgbm>=4.3.0
-hmmlearn>=0.3.2
-scikit-learn>=1.4.0
-pandas>=2.2.0
-numpy>=1.26.4
-scipy>=1.12.0
-aiofiles>=23.2.1
-python-dotenv>=1.0.1
-tqdm>=4.66.0
-scrapling[fetchers]>=0.4.1
-praisonaiagents
-mcp>=1.0.0
-openai>=1.0.0
-py-clob-client>=0.34.0
-python-telegram-bot>=22.0
-fastapi>=0.110.0
-uvicorn>=0.27.0
-pydantic>=2.5.0
-streamlit>=1.35.0
-tenacity>=8.2.3
-web3>=6.15.0
-websockets>=12.0
-eth-abi>=5.0.0
-httpx>=0.27.0
-eth-account>=0.11.0
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
+freqtrade==2024.1
+hvac==2.1.0
+torch==2.2.1
+xgboost==2.0.3
+lightgbm==4.3.0
+hmmlearn==0.3.2
+scikit-learn==1.4.0
+pandas==2.2.0
+numpy==1.26.4
+scipy==1.12.0
+aiofiles==23.2.1
+python-dotenv==1.0.1
+tqdm==4.66.0
+scrapling==0.4.1
+mcp==1.0.0
+openai==1.0.0
+py-clob-client==0.34.2
+python-telegram-bot==22.0
+fastapi==0.110.0
+uvicorn==0.27.0
+pydantic==2.5.0
+streamlit==1.35.0
+tenacity==8.2.3
+web3==6.15.1
+websockets==12.0
+eth-abi==5.0.0
+httpx==0.27.0
+eth-account==0.11.0
+pytest==8.0.0
+pytest-asyncio==0.23.0
 psutil
 transformers
 duckdb
@@ -39,7 +38,7 @@ ccxt
 # Token-efficient agent context tooling (referenced from graphify-out/)
 # graphify install --platform codex
 
-# Web scraping & AI agents (pinned to secure commit SHAs)
+# Web scraping & AI agents (pinned to secure commit SHAs / releases)
 git+https://github.com/D4Vinci/Scrapling.git@735af8f2210ed970c99737d4c8126fe4f2ae23a2
 git+https://github.com/nousresearch/hermes-agent.git@395e9dd9e298df682bbf77848636e9f61f713171
-git+https://github.com/MervinPraison/PraisonAI.git@92644518c068182a27e6cd4975920ae5119f276e
+git+https://github.com/MindsDB/praisonAI.git@v0.0.42#egg=praisonaiagents
