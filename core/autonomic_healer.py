@@ -301,28 +301,29 @@ class LobstarAutonomicHealer:
             return False
 
         try:
-            emoji_status = "🟢" if resultat.get("statut") == "REPAIRED" else "🟡"
+            esc = getattr(self.broadcaster, "_formatter", None)
+            if esc and hasattr(esc, "escape_markdown_v2"):
+                esc_func = esc.escape_markdown_v2
+            else:
+                esc_func = lambda x: str(x)
+            
+            action_esc = esc_func(resultat.get('action', 'N/A'))
+            details_esc = esc_func(resultat.get('details', 'N/A'))
+            erreur_id_esc = esc_func(erreur_id)
             
             message = (
-                f"{emoji_status} *[INFRASTRUCTURE SELF-HEALING]*\n"
-                "────────────────────────\n"
-                f"• *Incident* : `{erreur_id}`\n"
+                f"• *Incident* : `{erreur_id_esc}`\n"
                 f"• *Severity* : `CRITICAL`\n"
-                f"• *Status* : {emoji_status} `RESOLVED AUTONOMOUSLY`\n"
-                "────────────────────────\n"
-                "🛠️ *REMEDIATION COUNTERMEASURE*:\n"
-                f"• `Action : {resultat.get('action', 'N/A')}`\n"
-                f"• `Details : {resultat.get('details', 'N/A')}`\n"
-                "────────────────────────\n"
-                f"⏱️ _System adapted at: {datetime.now().strftime('%H:%M:%S UTC')}_"
+                f"• *Action* : `{action_esc}`\n"
+                f"• *Details* : `{details_esc}`"
             )
             
             # Utiliser la méthode diffuser_alerte_risque_au_canal
             success = await self.broadcaster.diffuser_alerte_risque_au_canal({
-                "title": f"Auto-Healing: {erreur_id}",
-                "message": resultat.get("details", ""),
+                "title": f"Infrastructure Self-Healing",
+                "message": message,
                 "severity": "warning" if resultat.get("statut") == "PARTIALLY_REPAIRED" else "info"
-            })
+            }, escape_body=False)
             
             if success:
                 logger.info(f"✅ [BROADCAST] Notification de réparation envoyée pour {erreur_id}")

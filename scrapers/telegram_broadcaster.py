@@ -265,10 +265,25 @@ class TelegramBroadcaster:
             f"Edge condition met: <code>{edge_pct:+.2f}%</code> vs market price."
         )
 
-    async def diffuser_alerte_risque_au_canal(self, alert_data: dict[str, Any]) -> bool:
+    async def diffuser_alerte_risque_au_canal(self, alert_data: dict[str, Any], escape_body: bool = True) -> bool:
         if not self.enabled:
             return False
-        text = self._formatter.format_risk_alert(alert_data)
+        if not escape_body:
+            title = self._formatter.escape_markdown_v2(alert_data.get("title", "Alert"))
+            body = alert_data.get("message", "")
+            severity = str(alert_data.get("severity", "info")).upper()
+            emoji = "⚠️" if severity == "WARNING" else "🔴" if severity == "CRITICAL" else "ℹ️"
+            generated_at = self._formatter.escape_markdown_v2(alert_data.get("timestamp") or datetime.now(timezone.utc).strftime("%H:%M:%S UTC"))
+            text = (
+                f"{emoji} *LOBSTAR RISK ALERT*\n"
+                "────────────────────────\n"
+                f"*{title}*\n"
+                f"{body}\n"
+                "────────────────────────\n"
+                f"⏱️ _At: {generated_at}_"
+            )
+        else:
+            text = self._formatter.format_risk_alert(alert_data)
         return await self._send(text, parse_mode="MarkdownV2")
 
     async def _send(self, text: str, parse_mode: str = "MARKDOWN") -> bool:
