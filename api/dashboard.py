@@ -89,6 +89,39 @@ with col4:
         st.metric("Feature Store", "N/A")
 
 
+st.subheader("📈 Performance Summary")
+perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
+try:
+    summary = ledger.get_performance_summary(mode=mode)
+    if summary and summary.get("total_trades", 0) > 0:
+        with perf_col1:
+            st.metric("Total Trades", summary["total_trades"])
+            st.metric("Win Rate", f"{summary['win_rate'] * 100:.1f}%")
+        with perf_col2:
+            st.metric("Net PnL", f"${summary['total_net_pnl']:.2f}")
+            st.metric("Profit Factor", f"{summary['profit_factor']:.2f}")
+        with perf_col3:
+            st.metric("Avg Win", f"${summary['avg_win']:.2f}")
+            st.metric("Avg Loss", f"${summary['avg_loss']:.2f}")
+        with perf_col4:
+            st.metric("Wins", summary["winning_trades"])
+            st.metric("Losses", summary["losing_trades"])
+    else:
+        st.info("No performance data yet. Close some paper trades to see metrics.")
+except Exception as e:
+    st.warning(f"Performance data unavailable: {e}")
+
+st.subheader("📋 Closed Positions")
+try:
+    closed = ledger.get_paper_positions(status="CLOSED")[:20]
+    if closed:
+        df_closed = pd.DataFrame(closed)
+        st.dataframe(df_closed, use_container_width=True)
+    else:
+        st.info("No closed positions yet")
+except Exception as e:
+    st.warning(f"Cannot load closed positions: {e}")
+
 st.subheader("Open Positions")
 positions = ledger.get_open_positions()
 if positions:

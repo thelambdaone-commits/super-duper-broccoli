@@ -7,10 +7,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = PROJECT_ROOT / "project_dump.txt"
 
 INCLUDE_DIRS = [
+    "api",
+    "continuous_improvement",
     "core",
     "execution",
     "ledger",
     "mcp_agents",
+    "models",
+    "monitors",
+    "scrapers",
     "telegram_scraper",
     "user_data/freqaimodels",
     "user_data/strategies",
@@ -23,8 +28,8 @@ INCLUDE_FILES = [
     "README.md",
     "requirements.txt",
     "main_agentic_clob.py",
-    "api_server.py",
-    "dashboard.py",
+    "api/api_server.py",
+    "api/dashboard.py",
     "ecosystem.config.js",
     "pytest.ini",
 ]

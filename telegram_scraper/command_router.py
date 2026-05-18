@@ -655,14 +655,18 @@ class CommandRouter:
             else:
                 await self.listener.reply_to(f"Usage: `/trade {sub} on`", update)
         elif sub == "pnl":
-            # Basic PnL summary
-            cap = self.listener._ledger.get_capital_summary()
-            total = cap.get("total_capital", 10000)
-            avail = cap.get("available_capital", 10000)
-            pnl = total - 10000 # Mocking initial capital
-            msg = "💰 *PnL Report*\n\n"
-            msg += f"• Net PnL: `${pnl:,.2f}`\n"
-            msg += f"• Current Value: `${total:,.2f}`\n"
+            perf = self.listener._ledger.get_performance_summary(mode=self.listener._ledger.get_execution_mode())
+            if perf and perf.get("total_trades", 0) > 0:
+                wr = perf["win_rate"] * 100
+                msg = "💰 *PnL Report*\n\n"
+                msg += f"• Net PnL: `${perf['total_net_pnl']:,.2f}`\n"
+                msg += f"• Win Rate: `{wr:.1f}%`\n"
+                msg += f"• Trades: `{perf['total_trades']}`\n"
+                msg += f"• Profit Factor: `{perf['profit_factor']:.2f}`\n"
+                msg += f"• Avg Win: `${perf['avg_win']:.2f}`\n"
+                msg += f"• Avg Loss: `${perf['avg_loss']:.2f}`\n"
+            else:
+                msg = "💰 *PnL Report*\n\nNo closed trades yet. Use paper trading to generate PnL data."
             await self.listener.reply_to(msg, update)
         else:
             await self.listener.reply_to(f"Unknown trade subcommand: {sub}", update)

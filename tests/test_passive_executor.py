@@ -149,6 +149,23 @@ class TestTakerOnly:
         assert result["status"] == "TAKER_FAILED"
         assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_taker_returns_executed_price(
+        self, executor: PassiveExecutor, mock_freqai: AsyncMock,
+    ) -> None:
+        mock_freqai.post_order.return_value = {
+            "status": "POST_ONLY_REJECTED",
+            "error": "would match",
+        }
+        mock_freqai.create_order.return_value = {"status": "FILLED", "orderID": "ord-taker"}
+
+        result = await executor.execute("SOL", "BUY", 100.0, 1.0)
+
+        assert result["status"] == "TAKER_FILLED"
+        assert result["price"] != 100.0
+        assert result["price"] > 100.0
+        assert result["target_price"] == 100.0
+
 
 class TestMetricsAndQueue:
     def test_initial_metrics(self, executor: PassiveExecutor) -> None:

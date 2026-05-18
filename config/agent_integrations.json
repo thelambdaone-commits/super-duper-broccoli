@@ -32,7 +32,25 @@
       "local_entrypoints": [
         "utils/crypto_market_intelligence.py",
         "scripts/crypto_market_intelligence.py",
-        "api_server.py#/v1/market-intelligence/crypto"
+        "api/api_server.py#/v1/market-intelligence/crypto"
+      ]
+    },
+    {
+      "name": "OpenBB",
+      "repo": "https://github.com/OpenBB-finance/OpenBB",
+      "purpose": "Financial data platform reference for market data aggregation, research workflows, and agent tooling. Use as an external context reference or bounded adapter target only.",
+      "status": "external_reference",
+      "license": "AGPL-3.0",
+      "local_entrypoints": [
+        "config/project_contexts.json",
+        "utils/market_data_reader.py",
+        "utils/market_discovery.py",
+        "utils/crypto_market_intelligence.py"
+      ],
+      "required_guardrails": [
+        "No vendoring without license review",
+        "Research-only until locally validated",
+        "Do not bypass parser, risk, ledger, or execution-mode checks"
       ]
     }
   ],
@@ -47,7 +65,25 @@
       "name": "Superpowers",
       "repo": "https://github.com/obra/superpowers",
       "purpose": "Spec-first, TDD-oriented agentic development methodology for reducing rework and keeping task context focused.",
-      "status": "external_reference"
+      "status": "local_methodology_adapter",
+      "local_entrypoints": [
+        "config/superpowers.json",
+        "core/services/superpowers_workflow.py",
+        "docs/superpowers_workflow.md",
+        "tests/services/test_superpowers_workflow.py"
+      ]
+    },
+    {
+      "name": "GSD / get-shit-done",
+      "repo": "https://github.com/gsd-build/get-shit-done",
+      "purpose": "Context-engineered, spec-driven development workflow adapted locally through phase gates, compact task packets, and verification reports.",
+      "status": "local_spec_driven_adapter",
+      "local_entrypoints": [
+        "config/gsd_operating_system.json",
+        "core/services/gsd_workflow.py",
+        ".agents/gsd_execution_skill.md",
+        "docs/gsd_workflow.md"
+      ]
     },
     {
       "name": "Ruflo",

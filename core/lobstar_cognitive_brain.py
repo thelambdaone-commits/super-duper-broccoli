@@ -26,6 +26,12 @@ class LobstarCognitiveDecision:
     arbitrage_edge: float = 0.0
     legging_risk_score: float = 0.0
     kolmogorov_spread: float = 0.0
+    microstructure_regime: str = "UNKNOWN"
+    take_profit_bias: float = 0.0
+    stop_loss_bias: float = 0.0
+    spread_bps: float = 0.0
+    order_imbalance: float = 0.0
+    observed_liquidity_score: float = 0.0
 
 
 class LobstarCognitiveBrain:
@@ -58,6 +64,9 @@ class LobstarCognitiveBrain:
         past_oi = self._past_order_imbalance_avg(ticker)
         present_imbalance = self._present_orderbook_imbalance(ticker, side)
         future_prob = self._future_time_decay_probability(ticker, signal)
+        microstructure = self._extract_microstructure_context(signal)
+        microstructure_bias = self._microstructure_bias(side, microstructure)
+        liquidity_score = self._compute_observed_liquidity_score(microstructure)
 
         # Fused Arbitrage Logic
         arb_edge = 0.0
@@ -114,9 +123,18 @@ class LobstarCognitiveBrain:
         # Apply legging risk penalty
         if legging_risk > 0.0:
             fused_score -= 0.5 * legging_risk
+        fused_score += 0.15 * microstructure_bias["score_bias"]
 
         fused_score = self._clip(fused_score)
-        confidence = max(0.0, min(0.99, 0.5 + abs(fused_score) / 2.0))
+        confidence = max(
+            0.0,
+            min(
+                0.99,
+                0.5
+                + abs(fused_score) / 2.0
+                + 0.05 * abs(microstructure_bias["score_bias"]),
+            ),
+        )
 
         if legging_risk >= 0.8:
             action = "FADE"
@@ -131,6 +149,12 @@ class LobstarCognitiveBrain:
             reason += f"arb_edge={arb_edge:+.4f}; "
         if legging_risk > 0.0:
             reason += f"legging_risk={legging_risk:.2f}; "
+        if microstructure_bias["regime"] != "UNKNOWN":
+            reason += (
+                f"microstructure={microstructure_bias['regime']}; "
+                f"spread_bps={microstructure_bias['spread_bps']:.2f}; "
+                f"obi={microstructure_bias['order_imbalance']:+.4f}; "
+            )
         reason += f"fused={fused_score:+.4f}"
 
         return LobstarCognitiveDecision(
@@ -146,6 +170,12 @@ class LobstarCognitiveBrain:
             arbitrage_edge=arb_edge,
             legging_risk_score=legging_risk,
             kolmogorov_spread=kolmogorov_spread,
+            microstructure_regime=microstructure_bias["regime"],
+            take_profit_bias=microstructure_bias["take_profit_bias"],
+            stop_loss_bias=microstructure_bias["stop_loss_bias"],
+            spread_bps=microstructure_bias["spread_bps"],
+            order_imbalance=microstructure_bias["order_imbalance"],
+            observed_liquidity_score=liquidity_score,
         )
 
     async def synthesize_cognitive_decision(self, signal: dict[str, Any]) -> LobstarCognitiveDecision:
@@ -163,6 +193,12 @@ class LobstarCognitiveBrain:
         enriched["calibrated_prob_time_decay"] = decision.future_time_decay_probability
         enriched["cognitive_fused_score"] = decision.fused_score
         enriched["cognitive_action"] = decision.action
+        enriched["microstructure_regime"] = decision.microstructure_regime
+        enriched["take_profit_bias"] = decision.take_profit_bias
+        enriched["stop_loss_bias"] = decision.stop_loss_bias
+        enriched["spread_bps"] = decision.spread_bps
+        enriched["order_imbalance"] = decision.order_imbalance
+        enriched["observed_liquidity_score"] = decision.observed_liquidity_score
         return enriched
 
     def _extract_ticker(self, signal: dict[str, Any]) -> str:
@@ -265,6 +301,92 @@ class LobstarCognitiveBrain:
             return float(value)
         except (TypeError, ValueError):
             return time.time()
+
+    def _extract_microstructure_context(self, signal: dict[str, Any]) -> dict[str, float | str]:
+        raw = signal.get("microstructure_context") or signal.get("order_book_metrics") or {}
+        if not isinstance(raw, dict):
+            return {}
+        spread = raw.get("spread_bps", raw.get("spread", 0.0))
+        imbalance = raw.get("order_imbalance", raw.get("obi", 0.0))
+        liquidity = raw.get("liquidity_score", raw.get("volume_score", raw.get("market_liquidity", 0.0)))
+        regime = str(raw.get("regime") or raw.get("liquidity_regime") or "UNKNOWN").upper()
+        try:
+            return {
+                "spread_bps": float(spread or 0.0),
+                "order_imbalance": float(imbalance or 0.0),
+                "liquidity_score": float(liquidity or 0.0),
+                "regime": regime,
+            }
+        except (TypeError, ValueError):
+            return {"regime": regime}
+
+    def _compute_observed_liquidity_score(self, microstructure: dict[str, Any]) -> float:
+        spread_bps = float(microstructure.get("spread_bps") or 0.0)
+        order_imbalance = float(microstructure.get("order_imbalance") or 0.0)
+        liquidity_score = float(microstructure.get("liquidity_score") or 0.0)
+        score = liquidity_score
+        if spread_bps > 0.0:
+            score += max(0.0, 1.0 - min(spread_bps / 100.0, 1.0))
+        score += 0.5 * (1.0 - abs(order_imbalance))
+        return max(0.0, min(1.0, score / 3.0))
+
+    def _microstructure_bias(self, side: str, microstructure: dict[str, Any]) -> dict[str, float | str]:
+        spread_bps = float(microstructure.get("spread_bps") or 0.0)
+        order_imbalance = float(microstructure.get("order_imbalance") or 0.0)
+        liquidity_score = float(microstructure.get("liquidity_score") or 0.0)
+        regime = str(microstructure.get("regime") or "UNKNOWN").upper()
+
+        side_sign = 1.0 if side in {"BUY", "YES", "LONG"} else -1.0
+        directional_imbalance = side_sign * order_imbalance
+
+        score_bias = 0.0
+        take_profit_bias = 0.0
+        stop_loss_bias = 0.0
+
+        if regime == "LIQUID":
+            score_bias += 0.15
+            take_profit_bias += 0.10
+            stop_loss_bias -= 0.05
+        elif regime == "THIN":
+            score_bias -= 0.20
+            take_profit_bias -= 0.10
+            stop_loss_bias += 0.15
+        elif regime == "IMBALANCED":
+            score_bias += 0.10 * directional_imbalance
+            take_profit_bias += 0.05 * directional_imbalance
+            stop_loss_bias += 0.10 * (1.0 - directional_imbalance)
+
+        if spread_bps > 0.0:
+            if spread_bps >= 50.0:
+                score_bias -= 0.15
+                stop_loss_bias += 0.15
+                take_profit_bias -= 0.05
+            elif spread_bps >= 20.0:
+                score_bias -= 0.05
+                stop_loss_bias += 0.05
+
+        if directional_imbalance > 0.25:
+            score_bias += 0.10
+            take_profit_bias += 0.05
+        elif directional_imbalance < -0.25:
+            score_bias -= 0.10
+            stop_loss_bias += 0.05
+
+        if liquidity_score > 0.75:
+            score_bias += 0.05
+            take_profit_bias += 0.05
+        elif liquidity_score < 0.30:
+            score_bias -= 0.10
+            stop_loss_bias += 0.10
+
+        return {
+            "regime": regime,
+            "score_bias": score_bias,
+            "take_profit_bias": take_profit_bias,
+            "stop_loss_bias": stop_loss_bias,
+            "spread_bps": spread_bps,
+            "order_imbalance": order_imbalance,
+        }
 
     def _clip(self, value: float) -> float:
         return max(-1.0, min(1.0, float(value)))

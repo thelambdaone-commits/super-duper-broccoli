@@ -35,7 +35,21 @@ class TestImprover:
                 tested.add(f.replace("test_", "").replace(".py", ""))
 
         untested = []
-        search_dirs = ["core", "execution", "user_data/strategies", "utils", "ledger", "mcp_agents", "telegram_scraper"]
+        search_dirs = [
+            "api",
+            "continuous_improvement",
+            "core",
+            "execution",
+            "ledger",
+            "mcp_agents",
+            "models",
+            "monitors",
+            "scrapers",
+            "telegram_scraper",
+            "user_data/freqaimodels",
+            "user_data/strategies",
+            "utils",
+        ]
         for sd in search_dirs:
             full = os.path.join(self.root, sd)
             if not os.path.exists(full):

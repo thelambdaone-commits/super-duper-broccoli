@@ -384,6 +384,184 @@ class FeatureStore:
             """, (ticker, feature_name, since_ts, float(until_ts), limit)).fetchall()
         return [{"timestamp": r[0], "value": r[1]} for r in rows]
 
+    def get_multi_market_feature_frame(
+        self,
+        target_ticker: str,
+        base_feature_names: list[str],
+        binance_symbol: Optional[str] = None,
+        since_ts: float = 0.0,
+        limit: int = 5000,
+        window_seconds: int = 300,
+    ) -> list[dict]:
+        """
+        Build a point-in-time aligned feature frame from target_ticker features
+        and optional Binance-derived live features.
+
+        The alignment uses as-of semantics by taking the last Binance feature
+        observation at or before each target timestamp, then augments that row
+        with rolling Binance summaries computed from web_events_raw.
+        """
+        target_rows = {
+            name: self.get_feature_history(target_ticker, name, since_ts=since_ts, limit=limit)
+            for name in base_feature_names
+        }
+        if not target_rows:
+            return []
+
+        timestamps = sorted(
+            {
+                float(row["timestamp"])
+                for rows in target_rows.values()
+                for row in rows
+                if row and row.get("timestamp") is not None
+            }
+        )
+        if not timestamps:
+            return []
+
+        binance_symbol = (binance_symbol or target_ticker).upper()
+        binance_rows = self._conn.execute("""
+            SELECT timestamp, raw_json
+            FROM web_events_raw
+            WHERE source = 'binance_ws'
+              AND market_slug = ?
+              AND timestamp >= ?
+            ORDER BY timestamp ASC
+            LIMIT ?
+        """, (binance_symbol, since_ts, limit)).fetchall()
+
+        parsed_binance = []
+        for ts, raw_json in binance_rows:
+            try:
+                payload = json.loads(raw_json)
+            except Exception:
+                continue
+            parsed_binance.append((float(ts), payload))
+
+        out: list[dict] = []
+        for ts in timestamps:
+            row = {"timestamp": ts, "ticker": target_ticker}
+            complete = True
+            for name, history in target_rows.items():
+                value = self._asof_value(history, ts)
+                if value is None:
+                    complete = False
+                    break
+                row[name] = value
+            if not complete:
+                continue
+
+            if parsed_binance:
+                row.update(
+                    self._compute_binance_window_features(
+                        parsed_binance,
+                        ts,
+                        window_seconds=window_seconds,
+                    )
+                )
+            out.append(row)
+        return out
+
+    def prune_before(self, cutoff_ts: float, tables: Optional[list[str]] = None) -> dict[str, int]:
+        """
+        Delete rows older than cutoff_ts from append-only tables and checkpoint.
+
+        This keeps high-frequency storage bounded while preserving recent raw
+        ticks for live inference.
+        """
+        tables = tables or [
+            "market_microstructure",
+            "features_computed",
+            "signals_ingested",
+            "decisions_log",
+            "web_events_raw",
+        ]
+        removed: dict[str, int] = {}
+        for table in tables:
+            before = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            self._conn.execute(f"DELETE FROM {table} WHERE timestamp < ?", (float(cutoff_ts),))
+            after = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            removed[table] = int(before - after)
+        self._conn.commit()
+        try:
+            self._conn.execute("CHECKPOINT")
+        except Exception:
+            pass
+        return removed
+
+    def vacuum(self) -> None:
+        try:
+            self._conn.execute("VACUUM")
+            self._conn.execute("CHECKPOINT")
+        except Exception as exc:
+            logger.debug("DuckDB vacuum skipped: %s", exc)
+
+    @staticmethod
+    def _asof_value(history: list[dict], ts: float) -> Optional[float]:
+        last_value: Optional[float] = None
+        for row in history:
+            try:
+                row_ts = float(row["timestamp"])
+                value = float(row["value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if row_ts <= ts:
+                last_value = value
+            else:
+                break
+        return last_value
+
+    @staticmethod
+    def _compute_binance_window_features(
+        parsed_binance: list[tuple[float, dict]],
+        ts: float,
+        window_seconds: int = 300,
+    ) -> dict[str, float]:
+        window_start = ts - float(window_seconds)
+        window = [payload for event_ts, payload in parsed_binance if window_start <= event_ts <= ts]
+        if not window:
+            return {
+                "binance_return_1m": 0.0,
+                "binance_return_5m": 0.0,
+                "binance_order_imbalance": 0.5,
+                "binance_spread_bps": 0.0,
+                "polymarket_spread_premium": 0.0,
+            }
+
+        mids = []
+        spreads = []
+        imbalances = []
+        for payload in window:
+            mid = float(payload.get("mid_price", 0.0) or 0.0)
+            spread_bps = float(payload.get("spread_bps", 0.0) or 0.0)
+            obi = float(payload.get("order_imbalance", 0.5) or 0.5)
+            if mid > 0:
+                mids.append(mid)
+            spreads.append(spread_bps)
+            imbalances.append(obi)
+
+        if len(mids) >= 2:
+            ret_1m = (mids[-1] - mids[0]) / mids[0] if mids[0] else 0.0
+        else:
+            ret_1m = 0.0
+
+        if len(mids) >= 5:
+            ret_5m = (mids[-1] - mids[0]) / mids[0] if mids[0] else 0.0
+        else:
+            ret_5m = ret_1m
+
+        avg_spread_bps = sum(spreads) / len(spreads) if spreads else 0.0
+        avg_obi = sum(imbalances) / len(imbalances) if imbalances else 0.5
+        premium = abs(mids[-1] - mids[0]) / mids[0] if len(mids) >= 2 and mids[0] else 0.0
+
+        return {
+            "binance_return_1m": float(ret_1m),
+            "binance_return_5m": float(ret_5m),
+            "binance_order_imbalance": float(avg_obi),
+            "binance_spread_bps": float(avg_spread_bps),
+            "polymarket_spread_premium": float(premium),
+        }
+
     def purge_before(self, cutoff_ts: float) -> int:
         total = 0
         for table in ["market_microstructure", "features_computed", "signals_ingested", "decisions_log", "web_events_raw"]:
@@ -415,6 +593,22 @@ class FeatureStore:
             row = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
             stats[table] = row[0]
         return stats
+
+    def get_latest_timestamp(self, table: str) -> Optional[float]:
+        allowed_tables = {
+            "market_microstructure",
+            "features_computed",
+            "signals_ingested",
+            "decisions_log",
+            "web_events_raw",
+        }
+        if table not in allowed_tables:
+            raise ValueError(f"Unsupported table for latest timestamp lookup: {table}")
+
+        row = self._conn.execute(f"SELECT MAX(timestamp) FROM {table}").fetchone()
+        if not row or row[0] is None:
+            return None
+        return float(row[0])
 
     def close(self) -> None:
         if self._conn:

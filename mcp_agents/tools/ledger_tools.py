@@ -52,3 +52,35 @@ def get_ledger_tools(mcp, ledger: Optional[Ledger]):
         return {
             "paper_positions": ledger.get_paper_positions(status="OPEN"),
         }
+
+    @mcp.tool(
+        name="get_performance_summary",
+        description="Returns aggregated PnL metrics (win rate, profit factor, avg win/loss) for a given execution mode.",
+    )
+    def get_performance_summary_tool(mode: str = "PAPER") -> dict:
+        if ledger is None:
+            return {"error": "Ledger not initialized"}
+        summary = ledger.get_performance_summary(mode=mode)
+        if not summary:
+            return {"execution_mode": mode, "total_trades": 0}
+        return summary
+
+    @mcp.tool(
+        name="get_pnl_history",
+        description="Returns historical closed trade performance data with PnL details.",
+    )
+    def get_pnl_history_tool(limit: int = 50) -> dict:
+        if ledger is None:
+            return {"error": "Ledger not initialized"}
+        history = ledger.get_historical_performance(limit=limit)
+        return {"trades": history, "count": len(history)}
+
+    @mcp.tool(
+        name="get_closed_paper_positions",
+        description="Returns closed paper trading positions with PnL results from the virtual ledger.",
+    )
+    def get_closed_paper_positions_tool(limit: int = 50) -> dict:
+        if ledger is None:
+            return {"error": "Ledger not initialized"}
+        positions = ledger.get_paper_positions(status="CLOSED")[:limit]
+        return {"positions": positions, "count": len(positions)}

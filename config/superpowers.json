@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "source_reference": {
+    "name": "Superpowers",
+    "repo": "https://github.com/obra/superpowers",
+    "integration_mode": "local_methodology_adapter",
+    "notes": "Adapted locally to enforce specification-first, TDD-oriented loops, clear verification steps, and safe execution guardrails."
+  },
+  "context_budget_tokens": 3000,
+  "default_priority_files": [
+    "AGENTS.md",
+    "config/project_contexts.json",
+    "config/persona_prompts.json",
+    "docs/multi_persona_prompts.md",
+    "tests/"
+  ],
+  "phases": [
+    {
+      "id": "brainstorm",
+      "purpose": "Engage to clarify requirements, explore design alternatives, map edge cases, and finalize specification before writing code.",
+      "required_outputs": [
+        "requirements_agreed",
+        "alternatives_considered",
+        "specification"
+      ]
+    },
+    {
+      "id": "planning",
+      "purpose": "Decompose the goal into short, atomic task steps (2-5 mins each) with clear verification checkpoints.",
+      "required_outputs": [
+        "step_breakdown",
+        "verification_checkpoints"
+      ]
+    },
+    {
+      "id": "tdd",
+      "purpose": "Enforce strict Red-Green-Refactor development. A failing test must be run/verified before code implementation begins.",
+      "required_outputs": [
+        "failing_test_written",
+        "failing_test_run_red",
+        "test_passes_green",
+        "refactoring_done"
+      ]
+    },
+    {
+      "id": "execution",
+      "purpose": "Carry out changes in isolation while adhering to the agreed steps and maintaining minimal code additions.",
+      "required_outputs": [
+        "isolated_changes",
+        "scope_creep_prevented"
+      ]
+    },
+    {
+      "id": "review",
+      "purpose": "Self-review of changes against the specification, style guides, and codebase patterns.",
+      "required_outputs": [
+        "spec_compliance_checked",
+        "style_lint_verified"
+      ]
+    },
+    {
+      "id": "completion",
+      "purpose": "Run the complete test suite to verify no regressions and prepare branch/state summary.",
+      "required_outputs": [
+        "full_test_suite_passed",
+        "clean_git_status"
+      ]
+    }
+  ],
+  "guardrails": [
+    "Protect secrets, private keys, Telegram data, and raw production logs from prompts.",
+    "Do not execute trades directly from LLM-generated recommendations.",
+    "All code changes must pass localized unit tests prior to main workspace integration.",
+    "Maintain high modularity and separate concerns across all adapters."
+  ]
+}

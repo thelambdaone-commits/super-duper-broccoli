@@ -14,6 +14,7 @@ from core.freqai_engine import FreqAIEngine
 from core.portfolio_risk_engine import PortfolioRiskEngine
 from execution.passive_executor import PassiveExecutor
 from ledger.ledger_db import Ledger
+from core.performance_attribution import PerformanceAttribution
 from mcp_agents.mcp_server import (
     initialize as mcp_initialize,
     get_ledger_state,
@@ -204,6 +205,32 @@ def v1_feature_store() -> dict:
 @app.get("/v1/features/{ticker}/{feature_name}")
 def v1_feature_history(ticker: str, feature_name: str, since: float = 0.0, limit: int = 100) -> dict:
     return get_feature_history(ticker=ticker, feature_name=feature_name, since_timestamp=since, limit=limit)
+
+
+@app.get("/v1/pnl/summary")
+def v1_pnl_summary(mode: str = "PAPER") -> dict:
+    if _ledger is None:
+        raise HTTPException(503, "Not initialized")
+    summary = _ledger.get_performance_summary(mode=mode)
+    if not summary:
+        return {"execution_mode": mode, "total_trades": 0}
+    return summary
+
+
+@app.get("/v1/pnl/history")
+def v1_pnl_history(limit: int = 50) -> dict:
+    if _ledger is None:
+        raise HTTPException(503, "Not initialized")
+    history = _ledger.get_historical_performance(limit=limit)
+    return {"trades": history, "count": len(history)}
+
+
+@app.get("/v1/pnl/positions")
+def v1_pnl_positions(status: str = "CLOSED", limit: int = 50) -> dict:
+    if _ledger is None:
+        raise HTTPException(503, "Not initialized")
+    positions = _ledger.get_paper_positions(status=status)[:limit]
+    return {"positions": positions, "count": len(positions)}
 
 
 @app.get("/v1/market-intelligence/crypto")

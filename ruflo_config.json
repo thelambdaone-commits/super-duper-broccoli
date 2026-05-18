@@ -1,6 +1,19 @@
 {
   "swarm_name": "lobstar_quant_swarm",
   "shared_memory_namespace": "quant_core_v2",
+  "persona_prompt_registry": {
+    "config": "config/persona_prompts.json",
+    "orchestrator_persona": "ruflo_orchestrator",
+    "default_personas": [
+      "coder",
+      "analyst",
+      "actuary",
+      "ml",
+      "trader",
+      "strategist"
+    ],
+    "coordination_rule": "Use bounded agent DAGs with explicit file ownership, dependency gates, compact synthesis, and deterministic verification."
+  },
   "agents": [
     {
       "name": "microfish_ingest_agent",

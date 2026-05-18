@@ -310,8 +310,21 @@ class CredentialManager:
             else:
                 return False
         
-        os.remove(path)
-        logger.info(f"User wallet deleted: chat_id {chat_id} ({wallet_type})")
+        try:
+            archive_dir = os.path.join(DEFAULT_DATA_DIR, "archives")
+            os.makedirs(archive_dir, exist_ok=True)
+            from datetime import datetime
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            filename = os.path.basename(path)
+            archive_filename = f"{os.path.splitext(filename)[0]}_{timestamp}.enc"
+            archive_path = os.path.join(archive_dir, archive_filename)
+            import shutil
+            shutil.move(path, archive_path)
+            logger.info(f"User wallet archived and deleted: chat_id {chat_id} ({wallet_type}) -> {archive_path}")
+        except Exception as exc:
+            logger.error(f"Failed to archive wallet for user {chat_id} ({wallet_type}): {exc}")
+            if os.path.exists(path):
+                os.remove(path)
         
         if self.get_active_wallet_type(chat_id) == wallet_type:
             self._clear_active_wallet(chat_id)

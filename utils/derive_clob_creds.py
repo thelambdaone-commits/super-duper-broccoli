@@ -1,8 +1,7 @@
 from typing import Optional
 
 from eth_account import Account
-from py_clob_client.client import ClobClient
-from py_clob_client.constants import POLYGON
+from py_clob_client_v2 import ClobClient
 
 
 class ClobCredentialDeriver:
@@ -15,10 +14,10 @@ class ClobCredentialDeriver:
         client = ClobClient(
             host=self.host,
             key=self.private_key,
-            chain_id=POLYGON,
+            chain_id=137,
             signature_type=2,
         )
-        creds = client.create_or_derive_api_creds()
+        creds = client.create_or_derive_api_key()
         return {
             "CLOB_API_KEY": creds.api_key,
             "CLOB_API_SECRET": creds.api_secret,

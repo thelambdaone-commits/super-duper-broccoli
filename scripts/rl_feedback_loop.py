@@ -53,6 +53,9 @@ def run_rl_feedback_loop() -> None:
     new_wins = 0
     new_losses = 0
 
+    lambda_smooth = float(os.getenv("RL_SMOOTHING_FACTOR", "0.98"))
+    lambda_smooth = max(0.8, min(lambda_smooth, 0.999))
+
     for pos in closed_positions:
         pos_id = pos["position_id"]
         if pos_id in processed:
@@ -70,12 +73,30 @@ def run_rl_feedback_loop() -> None:
             weights["bias_factors"][ticker] = 1.0
 
         old_bias = weights["bias_factors"][ticker]
+
+        # Calculate risk-adjusted R-multiple
+        risk_capital = float(pos.get("capital_virtual") or 0.0)
+        if risk_capital <= 0.0:
+            # Fallback based on entry price and size
+            entry_price = float(pos.get("entry_price") or 0.5)
+            size = float(pos.get("size") or 1.0)
+            risk_capital = entry_price * size
+
+        if risk_capital <= 0.0:
+            risk_capital = 1.0
+
+        r_multiple = pnl / risk_capital
+
         if actual_win:
-            weights["bias_factors"][ticker] = min(2.0, old_bias + 0.05)
+            # Dynamic positive reinforcement scaled by R-multiple edge quality
+            reward = 1.0 + min(0.20, 0.05 * r_multiple)
+            weights["bias_factors"][ticker] = min(2.0, max(0.2, lambda_smooth * old_bias + (1.0 - lambda_smooth) * reward))
             new_wins += 1
-            logger.info(f"🏆 WIN  [{ticker}] {pos_id} PnL={pnl:.4f}. Bias: {old_bias:.3f} -> {weights['bias_factors'][ticker]:.3f}")
+            logger.info(f"🏆 WIN  [{ticker}] {pos_id} PnL={pnl:.4f} ({r_multiple:+.2f}R). Bias: {old_bias:.3f} -> {weights['bias_factors'][ticker]:.3f}")
         else:
-            weights["bias_factors"][ticker] = max(0.2, old_bias - 0.08)
+            # Gentle penalty for minor drawdowns/scratch trades, steeper for full losses
+            reward = 1.0 - min(0.30, 0.08 * abs(r_multiple))
+            weights["bias_factors"][ticker] = min(2.0, max(0.2, lambda_smooth * old_bias + (1.0 - lambda_smooth) * reward))
             new_losses += 1
             report = {
                 "position_id": pos_id,
@@ -88,7 +109,7 @@ def run_rl_feedback_loop() -> None:
                 "timestamp": time.time()
             }
             weights["deviation_reports"].append(report)
-            logger.info(f"⚠️ LOSS [{ticker}] {pos_id} PnL={pnl:.4f}. Bias: {old_bias:.3f} -> {weights['bias_factors'][ticker]:.3f}")
+            logger.info(f"⚠️ LOSS [{ticker}] {pos_id} PnL={pnl:.4f} ({r_multiple:+.2f}R). Bias: {old_bias:.3f} -> {weights['bias_factors'][ticker]:.3f}")
 
         processed.add(pos_id)
 

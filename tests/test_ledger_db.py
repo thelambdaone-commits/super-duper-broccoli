@@ -61,7 +61,17 @@ def test_record_order_updates_capital(temp_ledger):
     )
     temp_ledger.conn.commit()
     
-    temp_ledger.record_order("pos-1", "SOL", "BUY", 0.5, 1000)
+    temp_ledger.record_order(
+        "pos-1",
+        "SOL",
+        "BUY",
+        0.5,
+        1000,
+        requested_qty=1000,
+        filled_qty=1000,
+        execution_price=0.5,
+        notional_usd=500.0,
+    )
     
     summary = temp_ledger.get_capital_summary()
     assert summary["available_capital"] == 9500.0 # 10000 - (0.5 * 1000)
@@ -69,6 +79,16 @@ def test_record_order_updates_capital(temp_ledger):
     positions = temp_ledger.get_open_positions()
     assert len(positions) == 1
     assert positions[0]["ticker"] == "SOL"
+    assert positions[0]["requested_qty"] == 1000.0
+    assert positions[0]["filled_qty"] == 1000.0
+    assert positions[0]["execution_price"] == 0.5
+    assert positions[0]["notional_usd"] == 500.0
+
+    tx = temp_ledger.conn.execute("SELECT * FROM transactions WHERE position_id = ?", ("pos-1",)).fetchone()
+    assert tx["requested_qty"] == 1000.0
+    assert tx["filled_qty"] == 1000.0
+    assert tx["execution_price"] == 0.5
+    assert tx["notional_usd"] == 500.0
 
 
 def test_record_order_rolls_back_on_mid_transaction_failure(temp_ledger):
@@ -89,7 +109,17 @@ def test_record_order_rolls_back_on_mid_transaction_failure(temp_ledger):
     temp_ledger.conn.commit()
 
     with pytest.raises(QuantFatal):
-        temp_ledger.record_order("pos-fail", "SOL", "BUY", 0.5, 1000)
+        temp_ledger.record_order(
+            "pos-fail",
+            "SOL",
+            "BUY",
+            0.5,
+            1000,
+            requested_qty=1000,
+            filled_qty=1000,
+            execution_price=0.5,
+            notional_usd=500.0,
+        )
 
     assert temp_ledger.get_capital_summary()["available_capital"] == 10000.0
     tx_count = temp_ledger.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]

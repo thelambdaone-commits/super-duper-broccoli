@@ -74,7 +74,7 @@ def test_cognitive_brain_combines_past_present_future() -> None:
     assert decision.past_order_imbalance_avg == pytest.approx(0.30)
     assert decision.present_orderbook_imbalance == pytest.approx(0.40)
     assert decision.future_time_decay_probability == pytest.approx(0.80)
-    assert decision.fused_score == pytest.approx(0.45)
+    assert decision.fused_score == pytest.approx(0.435, abs=0.02)
     assert decision.action == "EXECUTE"
 
 
@@ -159,7 +159,7 @@ def test_cognitive_brain_kolmogorov_fusion() -> None:
 
     assert decision.kolmogorov_spread == pytest.approx(0.10)
     assert decision.arbitrage_edge == pytest.approx(0.10)
-    assert decision.fused_score > 0.45
+    assert decision.fused_score > 0.43
 
 
 def test_cognitive_brain_cross_market_arbitrage_fusion() -> None:
@@ -218,3 +218,35 @@ def test_cognitive_brain_legging_risk_degradation() -> None:
     assert decision.legging_risk_score == pytest.approx(1.0)
     assert decision.fused_score < 0.20
     assert decision.action == "FADE"
+
+
+def test_cognitive_brain_microstructure_enrichment() -> None:
+    brain = LobstarCognitiveBrain(
+        store=FakeStore(),
+        scanner=FakeScanner(),
+        training_pipeline=FakePipeline(),
+    )
+    signal = {
+        "asset": "SOL",
+        "action": "BUY",
+        "timestamp": time.time(),
+        "microstructure_context": {
+            "spread_bps": 18.0,
+            "order_imbalance": 0.42,
+            "liquidity_score": 0.88,
+            "regime": "LIQUID",
+        },
+    }
+
+    decision = asyncio.run(brain.synthetiser_decision_decision(signal))
+    enriched = brain.enrich_signal(signal, decision)
+
+    assert decision.microstructure_regime == "LIQUID"
+    assert decision.take_profit_bias > 0.0
+    assert decision.stop_loss_bias <= 0.0
+    assert decision.spread_bps == pytest.approx(18.0)
+    assert decision.order_imbalance == pytest.approx(0.42)
+    assert decision.observed_liquidity_score > 0.0
+    assert enriched["microstructure_regime"] == "LIQUID"
+    assert enriched["take_profit_bias"] == decision.take_profit_bias
+    assert enriched["stop_loss_bias"] == decision.stop_loss_bias

@@ -92,10 +92,10 @@ async def test_rl_feedback_loop_updates_weights() -> None:
         data = json.load(f)
 
     assert "bias_factors" in data
-    # SOL had a win: 1.0 + 0.05 = 1.05
-    assert abs(data["bias_factors"]["SOL"] - 1.05) < 1e-5
-    # BTC had a loss: 1.0 - 0.08 = 0.92
-    assert abs(data["bias_factors"]["BTC"] - 0.92) < 1e-5
+    # SOL had a win: 1.004 (EWMA with lambda 0.98, +10.4R win reward 1.20)
+    assert abs(data["bias_factors"]["SOL"] - 1.004) < 1e-5
+    # BTC had a loss: 0.994 (EWMA with lambda 0.98, -7.0R loss reward 0.70)
+    assert abs(data["bias_factors"]["BTC"] - 0.994) < 1e-5
     assert "test-win-123" in data["processed_positions"]
     assert "test-loss-456" in data["processed_positions"]
     assert len(data["deviation_reports"]) == 1

@@ -1,6 +1,8 @@
 import logging
 import json
+import asyncio
 import time
+import os
 from typing import Dict, List, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -32,6 +34,8 @@ class CalibrationReport:
     sample_size: int
 
 
+from utils.config_loader import TRADING_PARAMS
+
 class LobstarMLOpsEngine:
     """
     Moteur MLOps de grade institutionnel pour l'essaim Ruflo.
@@ -39,9 +43,9 @@ class LobstarMLOpsEngine:
     et pilote le réentraînement adaptatif.
     """
 
-    PSI_THRESHOLD = 0.20
-    KL_THRESHOLD = 0.5
-    BRIER_THRESHOLD = 0.05
+    PSI_THRESHOLD = TRADING_PARAMS["PSI_THRESHOLD"]
+    KL_THRESHOLD = TRADING_PARAMS["KL_THRESHOLD"]
+    BRIER_THRESHOLD = TRADING_PARAMS["BRIER_THRESHOLD"]
 
     def __init__(
         self,
@@ -58,6 +62,7 @@ class LobstarMLOpsEngine:
         self._drift_history: List[DriftReport] = []
         self._calibration_history: List[CalibrationReport] = []
         self._drift_callback: Optional[Callable] = None
+        self._last_prune_ts: float = 0.0
 
     def set_drift_callback(self, callback: Callable[[dict], None]) -> None:
         """Register a callback for drift detection events."""
@@ -245,15 +250,42 @@ class LobstarMLOpsEngine:
             "metadata": metadata or {}
         }
 
-        import os
-        os.makedirs(self.embedding_path, exist_ok=True)
-
         filename = f"{self.embedding_path}/tft_embeddings_{ticker}.jsonl"
-        with open(filename, "a") as f:
-            f.write(json.dumps(payload) + "\n")
+        await asyncio.to_thread(self._write_jsonl, filename, payload)
 
         logger.info(f"💾 [MLOPS] Embedded {ticker} to {filename}")
         return filename
+
+    def prune_feature_store(
+        self,
+        store: Any,
+        raw_retention_days: int = 7,
+        vacuum: bool = True,
+    ) -> dict[str, int]:
+        """
+        Keep only recent raw HF data and retain longer-lived derived features.
+        """
+        cutoff_ts = time.time() - float(raw_retention_days * 86400)
+        removed = store.prune_before(
+            cutoff_ts,
+            tables=["web_events_raw", "market_microstructure"],
+        )
+        if vacuum:
+            store.vacuum()
+        self._last_prune_ts = time.time()
+        logger.info("Feature store pruned before %s: %s", cutoff_ts, removed)
+        return removed
+
+    def should_prune(self, interval_hours: int = 24) -> bool:
+        if self._last_prune_ts <= 0:
+            return True
+        return (time.time() - self._last_prune_ts) >= interval_hours * 3600
+
+    @staticmethod
+    def _write_jsonl(filename: str, payload: Dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
 
     def get_drift_summary(self) -> Dict[str, Any]:
         if not self._drift_history:

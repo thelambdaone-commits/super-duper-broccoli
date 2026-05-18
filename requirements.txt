@@ -16,7 +16,7 @@ tqdm==4.66.0
 scrapling>=0.4.1
 mcp==1.27.1
 openai==2.24.0
-py-clob-client==0.34.6
+py-clob-client-v2==1.0.1
 python-telegram-bot==22.0
 fastapi==0.136.1
 uvicorn==0.47.0

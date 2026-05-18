@@ -226,7 +226,8 @@ class PassiveExecutor:
                 "order_id": order_id,
                 "ticker": ticker,
                 "side": side,
-                "price": price,
+                "price": execution_price,
+                "target_price": price,
                 "size": size,
                 "execution_path": "taker",
                 "raw": resp,
@@ -240,6 +241,7 @@ class PassiveExecutor:
                 "side": side,
                 "price": price,
                 "size": size,
+                "execution_path": "taker",
             }
 
     async def liquidate_all(self) -> dict[str, Any]:

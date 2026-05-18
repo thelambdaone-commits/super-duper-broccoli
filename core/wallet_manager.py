@@ -1,6 +1,7 @@
 import logging
+from datetime import datetime
 import re
-from typing import Any, Dict, Tuple
+from typing import Dict, Any, Tuple
 
 import httpx
 from eth_account import Account
@@ -21,7 +22,9 @@ class PolymarketWalletManager:
     def __init__(self, vault_handler: Any, polygon_rpc_url: str = "") -> None:
         self.vault = vault_handler
         self.rpc_url = polygon_rpc_url
-        self.usdc_polygon_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+        self.usdc_polygon_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # Bridged USDC.e
+        self.usdc_native_contract = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"   # Native USDC
+        self.pusd_contract = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb"          # Polymarket V2 pUSD Collateral
 
     @staticmethod
     def is_private_key(text: str) -> bool:
@@ -60,15 +63,29 @@ class PolymarketWalletManager:
             logger.warning("Invalid seed phrase import attempt: %s", exc)
             raise ValueError("Seed phrase invalide ou chemin de derivation corrompu.") from exc
 
-    async def recuperer_soldes_on_chain(self, wallet_address: str) -> Dict[str, float]:
+    async def recuperer_soldes_on_chain(self, wallet_address: str, proxy_address: str = "") -> Dict[str, float]:
         if not self.rpc_url:
-            return {"usdc_balance": 0.0, "eth_balance": 0.0}
+            return {
+                "usdc_balance": 0.0,
+                "usdc_direct": 0.0,
+                "usdc_proxy": 0.0,
+                "eth_balance": 0.0
+            }
 
         eth_balance = 0.0
-        usdc_balance = 0.0
+        
+        # EOA Direct Balances
+        eoa_usdc_native = 0.0
+        eoa_usdc_e = 0.0
+        
+        # Proxy Balances
+        proxy_pusd = 0.0
+        proxy_usdc_native = 0.0
+        proxy_usdc_e = 0.0
 
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
+                # 1. POL (gas) balance of EOA (wallet_address)
                 eth_payload = {
                     "jsonrpc": "2.0",
                     "method": "eth_getBalance",
@@ -80,27 +97,59 @@ class PolymarketWalletManager:
                 eth_result = eth_response.json().get("result", "0x0")
                 eth_balance = int(eth_result, 16) / 1e18
 
-                normalized_address = wallet_address.lower().replace("0x", "")
-                usdc_payload = {
-                    "jsonrpc": "2.0",
-                    "method": "eth_call",
-                    "params": [
-                        {
-                            "to": self.usdc_polygon_contract,
-                            "data": f"{self.ERC20_BALANCE_OF_SELECTOR}{normalized_address.zfill(64)}",
-                        },
-                        "latest",
-                    ],
-                    "id": 2,
-                }
-                usdc_response = await client.post(self.rpc_url, json=usdc_payload)
-                usdc_response.raise_for_status()
-                usdc_result = usdc_response.json().get("result", "0x0")
-                usdc_balance = int(usdc_result, 16) / 1e6
+                # Helper to fetch ERC20 balance
+                async def get_erc20_balance(token_contract: str, target_address: str) -> float:
+                    if not target_address:
+                        return 0.0
+                    normalized = target_address.lower().replace("0x", "")
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "method": "eth_call",
+                        "params": [
+                            {
+                                "to": token_contract,
+                                "data": f"0x70a08231{normalized.zfill(64)}",
+                            },
+                            "latest",
+                        ],
+                        "id": 4,
+                    }
+                    try:
+                        resp = await client.post(self.rpc_url, json=payload)
+                        resp.raise_for_status()
+                        result = resp.json().get("result", "0x0")
+                        return int(result, 16) / 1e6
+                    except Exception:
+                        return 0.0
+
+                # Query EOA balances
+                eoa_usdc_native = await get_erc20_balance(self.usdc_native_contract, wallet_address)
+                eoa_usdc_e = await get_erc20_balance(self.usdc_polygon_contract, wallet_address)
+
+                # Query Proxy balances
+                if proxy_address:
+                    proxy_pusd = await get_erc20_balance(self.pusd_contract, proxy_address)
+                    proxy_usdc_native = await get_erc20_balance(self.usdc_native_contract, proxy_address)
+                    proxy_usdc_e = await get_erc20_balance(self.usdc_polygon_contract, proxy_address)
+                else:
+                    # Fallback to EOA if no proxy is configured
+                    proxy_pusd = await get_erc20_balance(self.pusd_contract, wallet_address)
+
         except Exception as exc:
             logger.debug("Wallet balance RPC lookup failed: %s", exc)
 
-        return {"usdc_balance": float(usdc_balance), "eth_balance": float(eth_balance)}
+        # Direct USDC = EOA native USDC + EOA USDC.e
+        usdc_direct = eoa_usdc_native + eoa_usdc_e
+        
+        # Proxy Polymarket balance = Proxy pUSD + Proxy native USDC + Proxy USDC.e
+        usdc_proxy = proxy_pusd + proxy_usdc_native + proxy_usdc_e
+
+        return {
+            "usdc_balance": float(usdc_direct + usdc_proxy),
+            "usdc_direct": float(usdc_direct),
+            "usdc_proxy": float(usdc_proxy),
+            "eth_balance": float(eth_balance)
+        }
 
     def generer_layout_telegram(
         self,
@@ -108,38 +157,64 @@ class PolymarketWalletManager:
         wallet_address: str,
         soldes: Dict[str, Any],
         total_connections: int,
+        proxy_address: str = "",
     ) -> Tuple[str, InlineKeyboardMarkup]:
-        adresse_tronquee = f"`{wallet_address[:8]}...{wallet_address[-6:]}`"
-        text = (
-            "🎯 *Polymarket*\n"
-            "────────────────────────\n"
-            "✅ *Connecte*\n"
-            f"🔑 *Wallet actif* : `{wallet_name}`\n"
-            f"📬 *Adresse* : {adresse_tronquee}\n"
-            f"💵 *Solde Polymarket* : `{float(soldes.get('usdc_balance', 0.0)):.2f} USDC`\n"
-            f"👛 *Actifs wallet* : `{float(soldes.get('eth_balance', 0.0)):.4f} ETH`\n"
-            f"💾 *Connexions sauvegardees* : `{total_connections}`\n"
+        """
+        Génère le texte en Markdown V1 sans échappement parasite pour un rendu parfait.
+        """
+        # Somme du capital (USDC direct + pUSD sur le Proxy de marché)
+        usdc_direct = float(soldes.get('usdc_direct', 0.0))
+        usdc_proxy = float(soldes.get('usdc_proxy', 0.0))
+        total_capital = usdc_direct + usdc_proxy
+        
+        lines = [
+            "🎯 *Polymarket Cockpit*",
+            "────────────────────────",
+            "🟢 *Status* : `Connected`",
+            f"🔑 *Active Wallet* : `{wallet_name}`",
+            f"📬 *EOA Address* : `{wallet_address}`"
+        ]
+        
+        if proxy_address:
+            lines.append(f"🛡️ *Proxy Address* : `{proxy_address}`")
+            
+        lines.extend([
+            f"💵 *USDC Direct* : `{usdc_direct:.2f} USDC`",
+            f"🛡️ *Polymarket pUSD* : `{usdc_proxy:.2f} pUSD`",
+            f"💰 *Total Capital* : `{total_capital:.2f} $`",
+            f"👛 *Gas Assets* : `{float(soldes.get('eth_balance', 0.0)):.4f} POL`",
+            f"💾 *Saved Vaults* : `{total_connections}`",
             "────────────────────────"
-        )
+        ])
+        
+        if not proxy_address:
+            lines.append("⚠️ *No Proxy Wallet set.*")
+            lines.append("Use `/wallet set-proxy <address>` in DM to track your Polymarket pUSD balance!")
+            lines.append("────────────────────────")
+            
+        text = "\n".join(lines)
+        
+        # Clavier ultra-réactif avec gestionnaire de callback centralisé
         reply_markup = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton("📜 Historique", callback_data="wallet_history"),
-                    InlineKeyboardButton("📋 Ordres", callback_data="wallet_orders"),
+                    InlineKeyboardButton("📜 History", callback_data="wallet_history"),
+                    InlineKeyboardButton("📋 Active Orders", callback_data="wallet_orders"),
                 ],
                 [
-                    InlineKeyboardButton("📊 Positions", callback_data="wallet_positions"),
-                    InlineKeyboardButton("💰 PnL", callback_data="wallet_pnl"),
+                    InlineKeyboardButton("📊 Open Positions", callback_data="wallet_positions"),
+                    InlineKeyboardButton("💰 PnL Metrics", callback_data="wallet_pnl"),
                 ],
                 [
-                    InlineKeyboardButton("🔄 Rafraichir", callback_data="wallet_refresh"),
-                    InlineKeyboardButton("🔑 Voir cle privee", callback_data="wallet_show_key"),
+                    InlineKeyboardButton("🔄 Refresh Balances", callback_data="wallet_refresh"),
+                    InlineKeyboardButton("🔑 Export Private Key", callback_data="wallet_show_key"),
                 ],
                 [
-                    InlineKeyboardButton("🔄 Changer wallet", callback_data="wallet_change"),
-                    InlineKeyboardButton("❌ Deconnecter", callback_data="wallet_disconnect"),
+                    InlineKeyboardButton("🔀 Switch Wallet", callback_data="wallet_change"),
+                    InlineKeyboardButton("❌ Disconnect", callback_data="wallet_disconnect"),
                 ],
-                [InlineKeyboardButton("⬅️ Menu principal", callback_data="menu_main")],
+                [InlineKeyboardButton("⬅️ Return to Main Menu", callback_data="menu_main")],
             ]
         )
+        
         return text, reply_markup

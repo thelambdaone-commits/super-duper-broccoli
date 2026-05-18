@@ -7,6 +7,7 @@ import pytest
 
 from scrapers.clob_listener import CLOBListener
 from scrapers.web_scraper import WebScraper, WebScraperConfig
+from utils.clob_feed_utils import extract_live_clob_token_ids
 from utils.credential_manager import CredentialManager
 from utils.feature_store import FeatureStore
 from utils.output_formatter import OutputFormatter, TelegramOutputFormatter
@@ -102,6 +103,22 @@ async def test_clob_listener_parses_and_persists_orderbook_snapshot(feature_stor
     assert snapshots[0]["spread_bps"] == pytest.approx(400.0)
     assert feature_store.get_feature_history("token-yes", "mid_price")[0]["value"] == pytest.approx(0.50)
     assert feature_store.get_web_events(event_type="orderbook_snapshot")
+
+
+def test_extract_live_clob_token_ids_deduplicates_and_limits() -> None:
+    class MarketStub:
+        def __init__(self, tokens):
+            self.tokens = tokens
+
+    markets = [
+        MarketStub([{"token_id": "t1"}, {"token_id": "t2"}]),
+        MarketStub([{"token_id": "t2"}, {"token_id": "t3"}]),
+        MarketStub([{"token_id": ""}, {"token_id": "t4"}]),
+    ]
+
+    token_ids = extract_live_clob_token_ids(markets, limit=3)
+
+    assert token_ids == ["t1", "t2", "t3"]
 
 
 def test_output_formatter_is_terminal_clean_and_alias_compatible() -> None:

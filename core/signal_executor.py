@@ -17,6 +17,8 @@ logger = logging.getLogger("SignalExecutor")
 SUCCESS_STATUSES = {"FILLED", "TAKER_FILLED", "MATCHED", "LIVE", "DELAYED"}
 BLOCKED_REGIMES = {"ERRATIC_VOLATILITY"}
 
+FILL_STATUS_KEYS = {"FILLED", "PARTIAL", "PARTIALLY_FILLED", "PARTIAL_FILL", "OK", "MATCHED"}
+
 def _execution_succeeded(result: Optional[dict]) -> bool:
     if not result:
         return False
@@ -55,6 +57,42 @@ def _risk_rejection_reason(size: float, regime: str, sizing: dict) -> Optional[s
     if size <= 0 and sizing_reason:
         return sizing_reason
     return None
+
+
+def _extract_fill_confirmation(confirmation: Optional[dict], requested_size: float, requested_price: float) -> dict:
+    if not isinstance(confirmation, dict):
+        return {
+            "filled_size": 0.0,
+            "filled_price": requested_price,
+            "status": "UNKNOWN",
+        }
+
+    status = str(confirmation.get("status", "")).upper()
+    if status not in FILL_STATUS_KEYS and not confirmation.get("orderID") and not confirmation.get("order_id"):
+        return {
+            "filled_size": 0.0,
+            "filled_price": requested_price,
+            "status": status or "REJECTED",
+        }
+
+    raw_filled = confirmation.get("filled_size", confirmation.get("filledSize", confirmation.get("size", requested_size)))
+    try:
+        filled_size = max(0.0, float(raw_filled))
+    except (TypeError, ValueError):
+        filled_size = 0.0
+
+    raw_price = confirmation.get("price", requested_price)
+    try:
+        filled_price = float(raw_price)
+    except (TypeError, ValueError):
+        filled_price = requested_price
+
+    return {
+        "filled_size": filled_size,
+        "filled_price": filled_price,
+        "status": status or ("FILLED" if filled_size > 0 else "UNKNOWN"),
+        "order_id": confirmation.get("orderID", confirmation.get("order_id")),
+    }
 
 async def _execute_guarded(
     ticker: str, side: str, price: float, size: float,
@@ -170,19 +208,30 @@ async def _execute_guarded(
             exec_ok = False
 
     if exec_ok:
-        executed_size = final_size
-        ledger.record_order(
-            position_id=position_id,
-            ticker=ticker,
-            side=side,
-            price=price,
-            size=executed_size,
-            tenant_wallet=tenant_wallet,
-        )
-        if risk: risk.book_exposure(ticker, executed_size, side)
-        report_data["status"] = "SUCCESS"
-        report_data["executed_size"] = executed_size
-        report_data["trade_id"] = position_id
+        fill = _extract_fill_confirmation(exec_result, final_size, price)
+        executed_size = fill["filled_size"]
+        executed_price = fill["filled_price"]
+        if executed_size > 0:
+            ledger.record_order(
+                position_id=position_id,
+                ticker=ticker,
+                side=side,
+                price=executed_price,
+                size=executed_size,
+                tenant_wallet=tenant_wallet,
+                requested_qty=final_size,
+                filled_qty=executed_size,
+                execution_price=executed_price,
+                notional_usd=executed_size * executed_price,
+            )
+            if risk: risk.book_exposure(ticker, executed_size, side)
+            report_data["status"] = "SUCCESS"
+            report_data["executed_size"] = executed_size
+            report_data["executed_price"] = executed_price
+            report_data["trade_id"] = position_id
+        else:
+            report_data["status"] = "FAILED"
+            report_data["reason_1"] = "Zero fill returned by CLOB"
     else:
         report_data["status"] = "FAILED"
 

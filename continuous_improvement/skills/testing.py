@@ -8,7 +8,21 @@ logger = logging.getLogger("CI_Skill_Testing")
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-SOURCE_DIRS = ["core", "execution", "user_data/strategies", "utils", "ledger", "mcp_agents", "telegram_scraper"]
+SOURCE_DIRS = [
+    "api",
+    "continuous_improvement",
+    "core",
+    "execution",
+    "ledger",
+    "mcp_agents",
+    "models",
+    "monitors",
+    "scrapers",
+    "telegram_scraper",
+    "user_data/freqaimodels",
+    "user_data/strategies",
+    "utils",
+]
 TEST_DIR = os.path.join(PROJECT_ROOT, "tests")
 
 

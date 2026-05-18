@@ -129,6 +129,7 @@ class ArbitrageScanner:
             if abs(deviation) > self.min_profit:
                 overpriced = max(outcomes, key=outcomes.get)
                 underpriced = min(outcomes, key=outcomes.get)
+                action = "SELL" if deviation > 0 else "BUY"
                 opportunities.append({
                     "type": "sum_inefficiency",
                     "market_id": market_id,
@@ -138,12 +139,13 @@ class ArbitrageScanner:
                     "overpriced_prob": outcomes[overpriced],
                     "underpriced_outcome": underpriced,
                     "underpriced_prob": outcomes[underpriced],
-                    "action": "SELL",
+                    "action": action,
                     "confidence": min(1.0, abs(deviation) * 5),
                 })
                 logger.info(
                     f"Sum inefficiency detected in {market_id}: "
                     f"total_prob={total_prob:.4f}, "
+                    f"action={action}, "
                     f"overpriced={overpriced} ({outcomes[overpriced]:.4f}), "
                     f"underpriced={underpriced} ({outcomes[underpriced]:.4f})"
                 )
@@ -180,9 +182,12 @@ class ArbitrageScanner:
     def to_signals(self, opportunities: list[dict[str, Any]]) -> list[dict[str, Any]]:
         signals: list[dict[str, Any]] = []
         for opp in opportunities:
-            base_price = opp.get("current_price",
-                                 opp.get("underpriced_prob",
-                                         opp.get("child_probability", 0.5)))
+            base_price = opp.get("current_price")
+            if base_price is None:
+                if opp.get("type") == "sum_inefficiency":
+                    base_price = opp.get("underpriced_prob" if opp.get("action") == "BUY" else "overpriced_prob", 0.5)
+                else:
+                    base_price = opp.get("child_probability", 0.5)
             signals.append({
                 "source": "arbitrage",
                 "asset": opp.get("market_id", "UNKNOWN"),

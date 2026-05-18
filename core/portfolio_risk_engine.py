@@ -101,6 +101,18 @@ class PortfolioRiskEngine:
         max_allowed = self.max_correlated_drawdown_pct * capital
         return new_net <= max_allowed
 
+    def _update_drawdown_tracking(self, current_capital: float) -> Optional[str]:
+        if current_capital > self._peak_equity:
+            self._peak_equity = current_capital
+        if self._peak_equity > 0:
+            drawdown = (self._peak_equity - current_capital) / self._peak_equity
+            if drawdown >= self.max_trailing_drawdown_pct:
+                self._is_drawdown_tripped = True
+                return f"DRAWDOWN_TRIPPED:{drawdown*100:.1f}%"
+            if drawdown > 0:
+                self._is_drawdown_tripped = False
+        return None
+
     def compute_position_size(
         self,
         ticker: str,
@@ -118,6 +130,10 @@ class PortfolioRiskEngine:
 
         if total <= 0:
             return self._zero_size_result("NO_CAPITAL")
+
+        dd_reason = self._update_drawdown_tracking(total)
+        if dd_reason is not None:
+            return self._zero_size_result(dd_reason)
 
         if price <= 0:
             return self._zero_size_result("INVALID_PRICE")

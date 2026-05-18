@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.signal_executor import _execution_succeeded, _regex_confidence
+from core.signal_executor import _execution_succeeded, _extract_fill_confirmation, _regex_confidence
 from core.signal_executor import execute_regex_signal, execute_lobstar_signal
 
 
@@ -49,6 +49,28 @@ class TestExecutionSucceeded:
         assert _execution_succeeded({"status": "SOMETHING_ELSE"}) is False
 
 
+class TestFillExtraction:
+    def test_partial_fill_uses_reported_size(self) -> None:
+        confirmation = {
+            "status": "PARTIAL",
+            "filled_size": "3.5",
+            "price": "0.45",
+            "orderID": "ord-1",
+        }
+
+        fill = _extract_fill_confirmation(confirmation, requested_size=10.0, requested_price=0.5)
+
+        assert fill["filled_size"] == 3.5
+        assert fill["filled_price"] == 0.45
+        assert fill["status"] == "PARTIAL"
+
+    def test_rejected_fill_returns_zero(self) -> None:
+        fill = _extract_fill_confirmation({"status": "REJECTED"}, requested_size=10.0, requested_price=0.5)
+
+        assert fill["filled_size"] == 0.0
+        assert fill["filled_price"] == 0.5
+
+
 class TestRegexConfidence:
     def test_no_significant_decimals(self) -> None:
         c = _regex_confidence(0.0, decimals=4)
@@ -86,6 +108,8 @@ class TestRegexConfidence:
 class MockLedger:
     def __init__(self, mode: str = "PAPER") -> None:
         self._mode = mode
+        self.recorded_orders: list[dict] = []
+        self.recorded_paper_orders: list[dict] = []
 
     def get_execution_mode(self) -> str:
         return self._mode
@@ -94,10 +118,11 @@ class MockLedger:
         return {"authorized": True, "size": kwargs.get("requested_size", 100), "reason": "ok"}
 
     def record_paper_order(self, **kwargs) -> dict:
+        self.recorded_paper_orders.append(dict(kwargs))
         return {"position_id": "paper-1", **kwargs}
 
     def record_order(self, **kwargs) -> None:
-        pass
+        self.recorded_orders.append(dict(kwargs))
 
     def get_paper_positions(self, **kwargs) -> list:
         return []
@@ -135,11 +160,15 @@ class TestExecuteRegexSignal:
         ledger = MockLedger(mode="PROD")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
-        freqai.clob_execute = AsyncMock(return_value={"status": "FILLED", "orderID": "ord-1"})
+        freqai.clob_execute = AsyncMock(return_value={
+            "status": "FILLED", "orderID": "ord-1", "filled_size": 7.0, "price": 0.50,
+        })
 
         await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
 
         freqai.clob_execute.assert_called_once()
+        assert ledger.recorded_orders[0]["size"] == 7.0
+        assert ledger.recorded_orders[0]["price"] == 0.50
 
     @pytest.mark.asyncio
     async def test_prod_blocked_by_ledger(self) -> None:
@@ -178,7 +207,7 @@ class TestExecuteRegexSignal:
         freqai = AsyncMock()
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value={
-            "status": "FILLED", "execution_path": "maker", "order_id": "ord-1",
+            "status": "FILLED", "execution_path": "maker", "order_id": "ord-1", "filled_size": 4.0, "price": 0.50,
         })
 
         await execute_regex_signal(
@@ -186,6 +215,21 @@ class TestExecuteRegexSignal:
         )
 
         executor.execute.assert_called_once()
+        assert ledger.recorded_orders[0]["size"] == 4.0
+
+    @pytest.mark.asyncio
+    async def test_zero_fill_does_not_persist(self) -> None:
+        ledger = MockLedger(mode="PROD")
+        signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
+        freqai = AsyncMock()
+        freqai.clob_execute = AsyncMock(return_value={
+            "status": "FILLED", "orderID": "ord-1", "filled_size": 0.0, "price": 0.50,
+        })
+
+        result = await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
+
+        assert result["status"] == "FAILED"
+        assert ledger.recorded_orders == []
 
 
 class TestExecuteLobstarSignal:

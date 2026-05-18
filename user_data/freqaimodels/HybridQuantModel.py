@@ -1,12 +1,13 @@
 import json
 import logging
 import os
-import pickle
 import tempfile
 from typing import Any, Optional
 
 import numpy as np
+import joblib
 from lightgbm import LGBMClassifier
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
@@ -58,7 +59,7 @@ class TFTEmbeddingHook:
             return X
 
 
-class HybridQuantModel:
+class HybridQuantModel(BaseEstimator, ClassifierMixin):
     def __init__(
         self,
         n_estimators: int = 100,
@@ -104,6 +105,7 @@ class HybridQuantModel:
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "HybridQuantModel":
         self._classes = np.unique(y)
+        self.classes_ = self._classes
         self._init_learners()
 
         if self._tft_hook is not None:
@@ -128,7 +130,11 @@ class HybridQuantModel:
             f"meta: {self._meta_type} "
             f"(train accuracy: {self.score(X, y):.4f})"
         )
+        self.is_fitted_ = True
         return self
+
+    def __sklearn_is_fitted__(self) -> bool:
+        return bool(getattr(self, "is_fitted_", False) and self._meta is not None and self._models)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         if not self._models or self._meta is None:
@@ -182,7 +188,7 @@ class HybridQuantModel:
             dir=os.path.dirname(path),
         )
         with os.fdopen(fd, "wb") as f:
-            pickle.dump({
+            joblib.dump({
                 "models": self._models,
                 "meta": self._meta,
                 "classes": self._classes,
@@ -194,7 +200,7 @@ class HybridQuantModel:
                     "random_state": self.random_state,
                     "meta_type": self._meta_type,
                 },
-            }, f)
+            }, f, compress=("xz", 3))
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
@@ -202,8 +208,7 @@ class HybridQuantModel:
         return path
 
     def load(self, path: str) -> "HybridQuantModel":
-        with open(path, "rb") as f:
-            data = pickle.load(f)
+        data = joblib.load(path)
         self._models = data["models"]
         self._meta = data["meta"]
         self._classes = data.get("classes")

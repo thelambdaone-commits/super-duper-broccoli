@@ -37,6 +37,18 @@
       "description": "Aggregates post-simulation evidence into a compact prediction report."
     }
   ],
+  "persona_prompt_registry": {
+    "config": "config/persona_prompts.json",
+    "swarm_persona": "mirofish_swarm",
+    "recommended_support_personas": [
+      "trader",
+      "strategist",
+      "analyst",
+      "actuary",
+      "ml"
+    ],
+    "integration_rule": "Use MiroFish personas for bounded simulation planning only. Final trading recommendations must be reviewed by LLM Council and deterministic Lobstar guardrails."
+  },
   "guardrails": [
     "Do not send private keys, Telegram tokens, Vault tokens, raw logs, or unredacted credentials into simulations.",
     "Use simulation output as research only; do not execute trades from it directly.",

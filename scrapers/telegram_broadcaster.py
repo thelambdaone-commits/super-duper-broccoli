@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -11,6 +12,8 @@ from typing import Any, Optional, Sequence
 
 from utils.notifier import TelegramNotifier
 from utils.polymarket_client import Market, PolymarketClient
+from utils.security_utils import decrypt_data
+from utils.telegram.formatter import TelegramMessageFormatter
 
 logger = logging.getLogger("TelegramBroadcaster")
 
@@ -70,12 +73,64 @@ class BroadcastMemory:
         ttl_seconds: int = 3600,
         max_entries: int = 256,
         probability_bucket: float = 0.01,
+        feature_store: Any = None,
     ) -> None:
         self.ttl_seconds = max(1, int(ttl_seconds))
         self.max_entries = max(1, int(max_entries))
         self.probability_bucket = max(0.0001, float(probability_bucket))
         self._sent_at: dict[str, float] = {}
         self._last_by_ticker: dict[str, BroadcastSignal] = {}
+
+        if feature_store is not None:
+            self.rehydrate_from_db(feature_store)
+
+    def rehydrate_from_db(self, feature_store: Any) -> None:
+        try:
+            cutoff = time.time() - self.ttl_seconds
+            signals = feature_store.replay_signals(since_timestamp=cutoff, limit=self.max_entries)
+
+            rehydrated_count = 0
+            for sig in signals:
+                ticker = sig.get("ticker")
+                side = sig.get("side")
+                price = sig.get("price") or 0.0
+                confidence = sig.get("confidence") or 0.0
+                timestamp_val = sig.get("timestamp") or time.time()
+
+                if not ticker or not side:
+                    continue
+
+                market_slug = ""
+                raw_dec = sig.get("decision_json")
+                if raw_dec:
+                    try:
+                        decrypted = decrypt_data(raw_dec)
+                        decision = json.loads(decrypted)
+                        market_slug = decision.get("market_slug", "")
+                    except Exception:
+                        pass
+
+                broadcast_sig = BroadcastSignal(
+                    ticker=ticker,
+                    market_slug=market_slug,
+                    market_question="",
+                    calibrated_probability=confidence,
+                    market_probability=price,
+                    edge=confidence - price,
+                    action=side,
+                    timestamp=datetime.fromtimestamp(timestamp_val, timezone.utc).isoformat()
+                )
+                self._sent_at[self.signature(broadcast_sig)] = timestamp_val
+                self._last_by_ticker[ticker.upper()] = broadcast_sig
+                rehydrated_count += 1
+
+            if rehydrated_count > 0:
+                logger.info(
+                    "💾 [TEMPORAL RECOVERY] Rehydrated %d historical signals from FeatureStore to prevent duplication.",
+                    rehydrated_count,
+                )
+        except Exception as e:
+            logger.warning("⚠️ [TEMPORAL RECOVERY] Rehydration from FeatureStore failed: %s", e)
 
     def _bucket(self, value: float) -> int:
         return round(float(value) / self.probability_bucket)
@@ -127,6 +182,7 @@ class TelegramBroadcaster:
         rate_limiter: Optional[TokenBucketRateLimiter] = None,
         memory: Optional[BroadcastMemory] = None,
         enabled: bool = True,
+        feature_store: Any = None,
     ) -> None:
         self.notifier = notifier
         self.training_pipeline = training_pipeline
@@ -138,10 +194,16 @@ class TelegramBroadcaster:
             ttl_seconds=int(os.getenv("TELEGRAM_BROADCAST_MEMORY_TTL_SECONDS", "3600")),
             max_entries=int(os.getenv("TELEGRAM_BROADCAST_MEMORY_MAX_ENTRIES", "256")),
             probability_bucket=float(os.getenv("TELEGRAM_BROADCAST_MEMORY_PROB_BUCKET", "0.01")),
+            feature_store=feature_store,
         )
         self.enabled = enabled
         self._last_broadcast_at: dict[str, float] = {}
         self._cooldown_seconds = int(os.getenv("TELEGRAM_BROADCAST_COOLDOWN_SECONDS", "600"))
+        self._formatter = TelegramMessageFormatter()
+
+    @staticmethod
+    def escape_markdown_v2(text: Any) -> str:
+        return TelegramMessageFormatter.escape_markdown_v2(text)
 
     def _resolve_market(self, ticker: str) -> Market | None:
         direct = self.market_client.get_market(ticker)
@@ -202,6 +264,12 @@ class TelegramBroadcaster:
             "</pre>\n"
             f"Edge condition met: <code>{edge_pct:+.2f}%</code> vs market price."
         )
+
+    async def diffuser_alerte_risque_au_canal(self, alert_data: dict[str, Any]) -> bool:
+        if not self.enabled:
+            return False
+        text = self._formatter.format_risk_alert(alert_data)
+        return await self._send(text, parse_mode="MarkdownV2")
 
     async def _send(self, text: str, parse_mode: str = "MARKDOWN") -> bool:
         if not self.notifier.enabled:
@@ -267,3 +335,7 @@ class TelegramBroadcaster:
             except Exception as e:
                 logger.warning("Broadcast evaluation failed for %s: %s", ticker, e)
         return results
+
+
+# Backward-compatible alias during migration from the old channel broadcaster naming.
+TelegramChannelBroadcaster = TelegramBroadcaster

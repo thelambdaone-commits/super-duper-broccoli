@@ -10,6 +10,29 @@ from utils.credential_manager import CredentialManager
 logger = logging.getLogger("WalletHandler")
 
 
+def _proxy_resolver(chat_id: int, mgr: CredentialManager, wallet_type: str, address: str) -> str:
+    """Query Gamma API to auto-resolve Polymarket proxy wallet for the given address."""
+    import httpx
+    try:
+        r = httpx.get(
+            f"https://gamma-api.polymarket.com/public-profile?address={address}",
+            timeout=5.0,
+        )
+        if r.status_code == 200:
+            resolved = r.json().get("proxyWallet")
+            if resolved:
+                mgr.set_user_proxy(chat_id, resolved, wallet_type=wallet_type)
+                logger.info(
+                    "Auto-resolved proxy wallet %s for %s (%s)",
+                    resolved, wallet_type, address[:10],
+                )
+                return resolved
+        logger.info("No proxy wallet found on Gamma API for %s", address[:10])
+    except Exception as e:
+        logger.warning("Gamma API proxy resolution failed for %s: %s", address[:10], e)
+    return ""
+
+
 def get_chat_id(update: Update) -> int:
     return update.effective_chat.id
 
@@ -159,15 +182,19 @@ async def handle_wallet_add(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
         mgr.set_active_wallet_type(chat_id, "default")
         
+        proxy = _proxy_resolver(chat_id, mgr, "default", user_data["address"])
+        
+        proxy_line = f"\n*Proxy Wallet:* `{proxy}`" if proxy else ""
+        next_steps = "" if proxy else (
+            "\n🔑 *Next Step:* Set your Polymarket proxy wallet:\n"
+            "   `/wallet set-proxy <proxy_address>`"
+        )
+        
         msg = f"""
 ✅ **Wallet Created Successfully**
 
 *Profile:* `{profile_name}`
-*Address:* `{user_data['address']}`
-
-🔑 **Next Steps:**
-1. Set your Polymarket proxy wallet:
-   `/wallet set-proxy <proxy_address>`
+*Address:* `{user_data['address']}`{proxy_line}{next_steps}
 
 Your wallet is encrypted and stored in `default{chat_id}.enc`
 """
@@ -225,15 +252,19 @@ async def handle_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYP
         
         mgr.set_active_wallet_type(chat_id, "import")
         
+        proxy = _proxy_resolver(chat_id, mgr, "import", user_data["address"])
+        
+        proxy_line = f"\n*Proxy Wallet:* `{proxy}`" if proxy else ""
+        next_steps = "" if proxy else (
+            "\n🔑 *Next Step:* Set your Polymarket proxy wallet:\n"
+            "   `/wallet set-proxy <proxy_address>`"
+        )
+        
         msg = f"""
 ✅ **Wallet Imported Successfully**
 
 *Profile:* `{profile_name}`
-*Address:* `{user_data['address']}`
-
-🔑 **Next Steps:**
-1. Set your Polymarket proxy wallet:
-   `/wallet set-proxy <proxy_address>`
+*Address:* `{user_data['address']}`{proxy_line}{next_steps}
 
 ⚠️ Store your private key securely! It cannot be recovered.
 """
@@ -259,9 +290,18 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
         args = context.args
         
         if not args:
+            usage_text = (
+                "🎯 *Configure Polymarket Proxy Wallet*\n"
+                "────────────────────────\n"
+                "Le proxy wallet (Gnosis Safe) est le contrat qui détient vos positions et vos fonds sur la plateforme Polymarket.\n"
+                "────────────────────────\n"
+                "💡 *Usage* : `/wallet set-proxy <adresse_proxy_safe>`\n\n"
+                "Exemple :\n"
+                "`/wallet set-proxy 0x3915c544d673ed10959a45695cf643f8e63ec2b9`"
+            )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/wallet set-proxy <polymarket_proxy_address>`",
+                text=usage_text,
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -269,28 +309,64 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
         proxy_wallet = args[0]
         
         if not proxy_wallet.startswith("0x") or len(proxy_wallet) != 42:
+            error_text = (
+                "❌ *Address Format Invalid*\n"
+                "────────────────────────\n"
+                "L'adresse de votre Gnosis Safe Proxy doit être une adresse Ethereum valide :\n"
+                "- Commencer par `0x`\n"
+                "- Faire exactement 42 caractères de long\n"
+                "────────────────────────\n"
+                "💡 Veuillez vérifier votre saisie et réessayer."
+            )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ Invalid Ethereum address format.",
+                text=error_text,
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
         
         mgr = CredentialManager()
+        wallet_type = mgr.get_active_wallet_type(chat_id)
         
-        if not mgr.user_exists(chat_id):
+        if not mgr.user_exists(chat_id, wallet_type):
+            no_wallet_text = (
+                "❌ *No Active Wallet Found*\n"
+                "────────────────────────\n"
+                "Vous devez d'abord importer ou initialiser un wallet utilisateur avant de lui associer un proxy.\n"
+                "────────────────────────\n"
+                "💡 Envoyez votre clé privée ou seed phrase en DM pour configurer votre premier profil de trading !"
+            )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ You don't have a wallet yet. Use `/wallet add <profile>` to create one.",
+                text=no_wallet_text,
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
         
-        user_data = mgr.set_user_proxy(chat_id, proxy_wallet)
+        user_data = mgr.set_user_proxy(chat_id, proxy_wallet, wallet_type=wallet_type)
+        
+        success_text = (
+            "🎯 *Polymarket Gnosis Safe Proxy Wallet Set*\n"
+            "────────────────────────\n"
+            "Votre proxy wallet a été configuré avec succès et lié à votre profil actif.\n"
+            "Le cockpit a été mis à jour et est prêt à interroger la blockchain Polygon.\n"
+            "────────────────────────\n"
+            f"👤 *Active Profile* : `{user_data.get('profile_name', 'N/A')}`\n"
+            f"⚙️ *Wallet Type*    : `{wallet_type.capitalize()}`\n"
+            f"📌 *Proxy Address*  : `{proxy_wallet}`\n"
+            "────────────────────────\n"
+            "💡 *Tip* : Cliquez sur le bouton ci-dessous pour retourner au cockpit et voir vos soldes de jetons pUSD mis à jour !"
+        )
+        
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        reply_markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")
+        ]])
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"✅ **Proxy Wallet Set**\n\nAddress: `{proxy_wallet}`\nProfile: `{user_data.get('profile_name', 'N/A')}`",
+            text=success_text,
+            reply_markup=reply_markup,
             parse_mode=ParseMode.MARKDOWN,
         )
         
@@ -298,7 +374,7 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"Error in wallet set-proxy handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Error: {str(e)[:200]}",
+            text=f"❌ *System Error*\n────────────────────────\n`{str(e)[:200]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
 

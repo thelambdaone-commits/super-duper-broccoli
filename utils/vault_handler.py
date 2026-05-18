@@ -157,33 +157,36 @@ class VaultHandler:
                         val = os.getenv(key) or enc_secrets.get(key)
                 
                 if not val and key == "CLOB_PRIVATE_KEY":
-                    if user_creds and not prefer_env_file:
-                        val = user_creds.get("CLOB_PRIVATE_KEY")
-                    elif prefer_env_file:
-                        val = os.getenv("CLOB_PRIVATE_KEY")
+                    if user_creds:
+                        val = user_creds.get("CLOB_PRIVATE_KEY", "")
+                    if not val:
+                        val = enc_secrets.get("CLOB_PRIVATE_KEY", "") or enc_secrets.get("private_key", "")
+                    if not val and prefer_env_file:
+                        val = os.getenv("CLOB_PRIVATE_KEY", "")
                     if not val:
                         raise QuantFatal("CLOB_PRIVATE_KEY is missing from environment, user credentials, and encrypted vault.")
                 
                 if not val and key in ["CLOB_API_KEY", "CLOB_API_SECRET", "CLOB_API_PASSPHRASE"]:
-                    pk = None
-                    if prefer_env_file:
-                        pk = os.getenv("CLOB_PRIVATE_KEY")
-                    elif user_creds:
-                        pk = user_creds.get("CLOB_PRIVATE_KEY")
+                    pk = validated_secrets.get("CLOB_PRIVATE_KEY", "")
+                    if not pk:
+                        pk = user_creds.get("CLOB_PRIVATE_KEY", "") if user_creds else ""
+                    if not pk:
+                        pk = enc_secrets.get("CLOB_PRIVATE_KEY", "") or enc_secrets.get("private_key", "")
+                    if not pk:
+                        pk = os.getenv("CLOB_PRIVATE_KEY", "")
                     
                     if not pk:
                         raise QuantFatal("CLOB_PRIVATE_KEY is missing. Cannot derive API credentials.")
                     
-                    if pk:
-                        if user_creds and not prefer_env_file:
-                            validated_secrets["CLOB_API_KEY"] = user_creds.get("CLOB_API_KEY", "")
-                            validated_secrets["CLOB_API_SECRET"] = user_creds.get("CLOB_API_SECRET", "")
-                            validated_secrets["CLOB_API_PASSPHRASE"] = user_creds.get("CLOB_API_PASSPHRASE", "")
-                        else:
-                            creds = mgr.get_or_generate_creds(pk)
-                            validated_secrets.update(creds)
-                        if key in validated_secrets:
-                            continue
+                    if user_creds and user_creds.get("CLOB_API_KEY"):
+                        validated_secrets["CLOB_API_KEY"] = user_creds.get("CLOB_API_KEY", "")
+                        validated_secrets["CLOB_API_SECRET"] = user_creds.get("CLOB_API_SECRET", "")
+                        validated_secrets["CLOB_API_PASSPHRASE"] = user_creds.get("CLOB_API_PASSPHRASE", "")
+                    else:
+                        creds = mgr.get_or_generate_creds(pk)
+                        validated_secrets.update(creds)
+                    if key in validated_secrets:
+                        continue
                 
                 if not val and key not in validated_secrets:
                     raise QuantFatal(f"Missing required environment variable: {key}")

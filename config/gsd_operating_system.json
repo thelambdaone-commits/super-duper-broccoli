@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "source_reference": {
+    "name": "GSD / get-shit-done",
+    "repo": "https://github.com/gsd-build/get-shit-done",
+    "integration_mode": "local_spec_driven_adapter",
+    "notes": "Adapt concepts only: context engineering, spec-driven phases, compact work packets, and verification gates. Do not vendor upstream runtime code."
+  },
+  "context_budget_tokens": 2500,
+  "default_priority_files": [
+    "AGENTS.md",
+    "config/project_contexts.json",
+    "config/ai_specialists.json",
+    "docs/README.md",
+    "tests/"
+  ],
+  "phases": [
+    {
+      "id": "intake",
+      "purpose": "Convert the user's goal into a compact, testable work packet.",
+      "required_outputs": [
+        "goal",
+        "scope",
+        "non_goals"
+      ]
+    },
+    {
+      "id": "context",
+      "purpose": "Load only the files needed for the selected specialist and avoid context rot.",
+      "required_outputs": [
+        "priority_files",
+        "external_sources",
+        "license_notes"
+      ]
+    },
+    {
+      "id": "implementation",
+      "purpose": "Make bounded code/config/doc changes with clear ownership.",
+      "required_outputs": [
+        "changed_files",
+        "behavior_change"
+      ]
+    },
+    {
+      "id": "verification",
+      "purpose": "Prove the change with deterministic checks before final handoff.",
+      "required_outputs": [
+        "tests_run",
+        "residual_risks"
+      ]
+    },
+    {
+      "id": "handoff",
+      "purpose": "Leave compact operational notes for the next agent or operator.",
+      "required_outputs": [
+        "summary",
+        "next_commands"
+      ]
+    }
+  ],
+  "guardrails": [
+    "No secrets, private keys, Telegram updates, or raw runtime logs in external prompts.",
+    "No direct trading execution from agent-generated text.",
+    "Keep risk engine, ledger, HMM, and MODE guardrails as the source of truth.",
+    "Prefer adapters, config cards, and docs over vendoring external agent frameworks.",
+    "Every adapter or workflow rule must have focused tests or an explicit residual-risk note."
+  ],
+  "artifacts": {
+    "task_packet": "Generated in-memory by core.services.gsd_workflow.GSDWorkflow.",
+    "durable_context": "config/project_contexts.json",
+    "skill_prompt": ".agents/gsd_execution_skill.md",
+    "operator_docs": "docs/gsd_workflow.md"
+  }
+}

@@ -1,6 +1,8 @@
 import logging
 import json
+import asyncio
 import time
+import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -34,6 +36,8 @@ class ArbitrageResult:
     timestamp: str
 
 
+from utils.config_loader import TRADING_PARAMS
+
 class LobstarArbitrageEngine:
     """
     Moteur d'Arbitrage Auto-Apprenant pour l'essaim Ruflo.
@@ -41,9 +45,9 @@ class LobstarArbitrageEngine:
     et enregistre la télémétrie des opérations dans un fichier JSONL.
     """
 
-    FRICTION_PER_CONTRACT = 0.005
-    MIN_LIQUIDITY_THRESHOLD = 50.0
-    DEFAULT_TRIGGER_THRESHOLD = 0.015
+    FRICTION_PER_CONTRACT = TRADING_PARAMS["FRICTION_PER_CONTRACT"]
+    MIN_LIQUIDITY_THRESHOLD = float(TRADING_PARAMS["LEGGING_LIQUIDITY_MIN"])
+    DEFAULT_TRIGGER_THRESHOLD = TRADING_PARAMS["ARBITRAGE_TRIGGER_THRESHOLD"]
 
     def __init__(
         self,
@@ -57,7 +61,7 @@ class LobstarArbitrageEngine:
         self.slippage_tolerance = slippage_tolerance
         self.trigger_threshold = trigger_threshold
         self.telemetry_path = telemetry_path
-        self.MIN_LIQUIDITY_THRESHOLD = float(os.getenv("LEGGING_LIQUIDITY_MIN", "50.0"))
+        self.MIN_LIQUIDITY_THRESHOLD = float(TRADING_PARAMS["LEGGING_LIQUIDITY_MIN"])
 
         self._opportunities: List[ArbitrageOpportunity] = []
         self._results: List[ArbitrageResult] = []
@@ -205,12 +209,8 @@ class LobstarArbitrageEngine:
             "legs_total": legs_total
         }
 
-        import os
-        os.makedirs(self.telemetry_path, exist_ok=True)
-
         filename = f"{self.telemetry_path}/arbitrage_telemetry.jsonl"
-        with open(filename, "a") as f:
-            f.write(json.dumps(payload) + "\n")
+        await asyncio.to_thread(self._write_jsonl, filename, payload)
 
         logger.info(f"💾 [ARBITRAGE MLOPS] Télémétrie archivée: {basket_id}")
 
@@ -231,6 +231,12 @@ class LobstarArbitrageEngine:
             self._results.pop(0)
 
         return filename
+
+    @staticmethod
+    def _write_jsonl(filename: str, payload: Dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
 
     def ajuster_seuil_trigger(self, nouvelle_efficience: float) -> None:
         """

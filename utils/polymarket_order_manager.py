@@ -229,9 +229,9 @@ class PolymarketOrderManager:
         Claim winnings from a resolved market.
         
         Args:
-            market_id: Market ID
+            market_id: Market ID or Condition ID
             outcome: "YES" or "NO"
-            dry_run: If True, don't execute
+            dry_run: If True, don't execute transaction
         
         Returns:
             ClaimReceipt with transaction details
@@ -246,27 +246,185 @@ class PolymarketOrderManager:
             )
 
         try:
-            logger.info(f"Claiming winnings for {market_id} - {outcome}")
+            logger.info(f"Initiating claim for market/condition {market_id} - Outcome: {outcome}")
 
-            if dry_run:
-                logger.info("DRY RUN: Not claiming")
+            # 1. Fetch market details to get the exact condition_id and token_id
+            try:
+                market_details = self._clob_client.get_market(market_id)
+            except Exception as e:
+                logger.warning(f"Could not fetch market details via CLOB, using market_id directly as condition: {e}")
+                market_details = {}
+
+            condition_id = market_details.get("condition_id", market_id)
+            
+            # Find the outcome token ID
+            token_id_str = None
+            tokens = market_details.get("tokens", [])
+            for token_dict in tokens:
+                if str(token_dict.get("outcome", "")).upper() == outcome.upper():
+                    token_id_str = token_dict.get("token_id")
+                    break
+
+            # 2. Setup Web3 provider
+            import os
+            from web3 import Web3
+            rpc_url = os.getenv("POLYGON_RPC_URL", "https://polygon.drpc.org")
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+            if not w3.is_connected():
                 return ClaimReceipt(
                     market_id=market_id,
                     outcome=outcome,
                     amount_claimed=0,
-                    status="pending",
+                    status="failed",
+                    error_message="Failed to connect to Polygon RPC",
                 )
 
-            # TODO: Implement actual claiming via ClobClient
-            # This requires: resolving market, checking positions, executing claim
-            # For now, return success
+            # EOA derivation
+            private_key = self._private_key or self.wallet_manager.get_private_key()
+            if not private_key:
+                return ClaimReceipt(
+                    market_id=market_id,
+                    outcome=outcome,
+                    amount_claimed=0,
+                    status="failed",
+                    error_message="EOA private key not available",
+                )
 
-            return ClaimReceipt(
-                market_id=market_id,
-                outcome=outcome,
-                amount_claimed=0,
-                status="pending",
-            )
+            acct = w3.eth.account.from_key(private_key)
+            eoa_address = acct.address
+
+            # Resolving Proxy Wallet (Funder)
+            proxy_address = None
+            if hasattr(self.wallet_manager, "get_proxy_address"):
+                proxy_address = self.wallet_manager.get_proxy_address()
+            elif hasattr(self.wallet_manager, "get_credentials"):
+                creds = self.wallet_manager.get_credentials()
+                proxy_address = creds.get("proxy_wallet")
+
+            # CTF Contract details
+            CTF_ADDRESS = "0x4D97dCD97eC945f40Cf65F87097Ace5Ea0476045"
+            CTF_ABI = [
+                {
+                    "constant": True,
+                    "inputs": [{"name": "account", "type": "address"}, {"name": "id", "type": "uint256"}],
+                    "name": "balanceOf",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "payable": False,
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+                {
+                    "constant": False,
+                    "inputs": [
+                        {"name": "collateralToken", "type": "address"},
+                        {"name": "parentCollectionId", "type": "bytes32"},
+                        {"name": "conditionId", "type": "bytes32"},
+                        {"name": "indexSets", "type": "uint256[]"}
+                    ],
+                    "name": "redeemPositions",
+                    "outputs": [],
+                    "payable": False,
+                    "stateMutability": "nonpayable",
+                    "type": "function"
+                }
+            ]
+            ctf_contract = w3.eth.contract(address=w3.to_checksum_address(CTF_ADDRESS), abi=CTF_ABI)
+
+            # Check balances
+            token_id = int(token_id_str) if token_id_str else None
+            eoa_balance = 0
+            proxy_balance = 0
+
+            if token_id:
+                try:
+                    eoa_balance = ctf_contract.functions.balanceOf(eoa_address, token_id).call()
+                    if proxy_address:
+                        proxy_balance = ctf_contract.functions.balanceOf(w3.to_checksum_address(proxy_address), token_id).call()
+                except Exception as e:
+                    logger.warning(f"Failed to query balances: {e}")
+
+            logger.info(f"Balances - EOA: {eoa_balance} | Proxy: {proxy_balance} contracts")
+            
+            # Determine target for claim
+            target_address = eoa_address
+            has_winnings = eoa_balance > 0
+            
+            if proxy_balance > 0 and proxy_address:
+                target_address = proxy_address
+                has_winnings = True
+
+            amount_to_claim = max(eoa_balance, proxy_balance) / 10**6  # USDC scales at 6 decimals
+
+            if dry_run:
+                logger.info(f"[DRY RUN] Would claim {amount_to_claim:.2f} USDC for address {target_address}")
+                return ClaimReceipt(
+                    market_id=market_id,
+                    outcome=outcome,
+                    amount_claimed=amount_to_claim,
+                    status="pending",
+                    error_message="Dry run active",
+                )
+
+            if not has_winnings:
+                logger.info(f"No active redeemable balance found on-chain for {outcome} on market {market_id}.")
+                return ClaimReceipt(
+                    market_id=market_id,
+                    outcome=outcome,
+                    amount_claimed=0,
+                    status="success",
+                    error_message="No winning balance detected or already claimed",
+                )
+
+            # Build and send transaction
+            index_sets = [1] if outcome.upper() == "YES" else [2]
+            
+            # Format condition_id into 32-byte hex bytes
+            cond_bytes = w3.to_bytes(hexstr=condition_id)
+            if len(cond_bytes) < 32:
+                cond_bytes = cond_bytes.rjust(32, b'\x00')
+
+            logger.info(f"Sending on-chain redeemPositions transaction on Polygon...")
+            
+            if target_address == eoa_address:
+                # Direct EOA redemption
+                tx = ctf_contract.functions.redeemPositions(
+                    w3.to_checksum_address(USDC_ADDRESS),
+                    b'\x00' * 32,
+                    cond_bytes,
+                    index_sets
+                ).build_transaction({
+                    "from": eoa_address,
+                    "nonce": w3.eth.get_transaction_count(eoa_address),
+                    "gasPrice": int(w3.eth.gas_price * 1.2),  # +20% for speed
+                })
+                
+                signed_tx = w3.eth.account.sign_transaction(tx, private_key)
+                tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+                tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+                
+                logger.info(f"Direct EOA claim tx completed: {tx_receipt.transactionHash.hex()}")
+                return ClaimReceipt(
+                    market_id=market_id,
+                    outcome=outcome,
+                    amount_claimed=amount_to_claim,
+                    tx_hash=tx_receipt.transactionHash.hex(),
+                    status="success",
+                )
+            else:
+                # Safe / Proxy Wallet execution
+                # Gnosis Safe or proxy adapters typically require transaction building
+                # For safety and because a standard EOA cannot call arbitrary methods of a Safe directly
+                # without proper EIP-712 multisig nonce signing, we provide instructions or fall back
+                # to direct EOA triggering if the Safe is configured to auto-redeem.
+                logger.warning("Winnings are located inside the Proxy Wallet (Gnosis Safe). Redemptions for smart contract wallets should be claimed through the Polymarket UI to benefit from gasless relayer support.")
+                return ClaimReceipt(
+                    market_id=market_id,
+                    outcome=outcome,
+                    amount_claimed=amount_to_claim,
+                    status="pending",
+                    error_message=f"Winnings held in Proxy Wallet ({proxy_address}). Please redeem on Polymarket UI to claim gaslessly.",
+                )
 
         except Exception as e:
             logger.error(f"Failed to claim: {e}")

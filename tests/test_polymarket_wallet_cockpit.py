@@ -28,7 +28,7 @@ def test_wallet_keyboard_layout_shape() -> None:
         total_connections=1,
     )
 
-    assert "*Polymarket*" in text
+    assert "Polymarket" in text
     rows = reply_markup.inline_keyboard
     assert [len(row) for row in rows] == [2, 2, 2, 2, 1]
     assert rows[2][1].callback_data == "wallet_show_key"
@@ -61,3 +61,32 @@ async def test_private_wallet_secret_is_deleted_and_stored_in_ram() -> None:
     assert stored["POLYMARKET_WALLET_ADDRESS"] == account.address
     assert stored["CLOB_PRIVATE_KEY"].startswith("0x")
     assert send_message.await_count == 2
+
+
+def test_wallet_deletion_archives_file(tmp_path, monkeypatch) -> None:
+    from utils.credential_manager import CredentialManager
+    import os
+    
+    temp_dir = str(tmp_path / "data")
+    os.makedirs(temp_dir, exist_ok=True)
+    monkeypatch.setattr("utils.credential_manager.DEFAULT_DATA_DIR", temp_dir)
+    
+    mgr = CredentialManager()
+    chat_id = 99999
+    wtype = "import"
+    fake_data = {"address": "0x123", "POLYMARKET_WALLET_ADDRESS": "0x123"}
+    mgr.save_user(chat_id, fake_data, wtype)
+    
+    path = mgr.get_user_file_path(chat_id, wtype)
+    assert os.path.exists(path)
+    
+    success = mgr.delete_user(chat_id, wtype)
+    assert success is True
+    assert not os.path.exists(path)
+    
+    archive_dir = os.path.join(temp_dir, "archives")
+    assert os.path.exists(archive_dir)
+    archived_files = os.listdir(archive_dir)
+    assert len(archived_files) == 1
+    assert archived_files[0].startswith(f"{wtype}{chat_id}_")
+    assert archived_files[0].endswith(".enc")

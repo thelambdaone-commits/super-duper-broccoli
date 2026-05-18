@@ -96,6 +96,8 @@ class CLOBListener:
             condition_id=str(snapshot.get("market", "")),
             timestamp=snapshot["timestamp"],
         )
+        if getattr(self.store, "_conn", None) is not None:
+            self.store._conn.commit()
 
     async def handle_message(
         self,

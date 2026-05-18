@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,6 +16,7 @@ from scrapers.telegram_broadcaster import (
     TokenBucketRateLimiter,
 )
 from user_data.strategies.probability_calibrator import ProbabilityCalibrator
+from utils.notifier import TelegramNotifier
 
 
 class DummyLimiter:
@@ -145,6 +147,15 @@ async def test_broadcast_triggers_only_on_edge() -> None:
     assert "action: BUY" in payload
 
 
+def test_escape_markdown_v2_escapes_reserved_chars() -> None:
+    from utils.telegram.formatter import TelegramMessageFormatter
+
+    escaped = TelegramMessageFormatter.escape_markdown_v2("BTC_USDT (spot)! 100%")
+    assert "BTC\\_USDT" in escaped
+    assert "\\(spot\\)" in escaped
+    assert "\\!" in escaped
+
+
 @pytest.mark.asyncio
 async def test_broadcast_skips_when_edge_below_threshold() -> None:
     broadcaster, notifier = _make_broadcaster(prob_up=0.68, market_yes=0.65)
@@ -212,3 +223,97 @@ async def test_broadcast_memory_allows_materially_different_signal() -> None:
     assert await broadcaster.broadcast_opportunity(first) is True
     assert await broadcaster.broadcast_opportunity(second) is True
     assert notifier.send_async.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_risk_alert_escapes_message_text() -> None:
+    notifier = SimpleNamespace(enabled=True, send_async=AsyncMock(return_value=True))
+    broadcaster = TelegramBroadcaster(
+        notifier=notifier,
+        training_pipeline=FakePipeline(0.75),
+        market_client=FakeClient(None),
+        rate_limiter=DummyLimiter(),
+    )
+
+    await broadcaster.diffuser_alerte_risque_au_canal({
+        "title": "Queue full (BTC_USDT)",
+        "message": "Signal loss > 10% !",
+        "severity": "critical",
+    })
+
+    payload = notifier.send_async.await_args.args[0]
+    assert "BTC" in payload
+    assert "Signal loss" in payload
+    assert "\\>" in payload
+    assert "\\!" in payload
+
+
+@pytest.mark.asyncio
+async def test_notifier_keeps_background_task_and_logs_failure(monkeypatch, caplog) -> None:
+    notifier = TelegramNotifier(bot_token="token", chat_id="chat")
+
+    async def failing_send_async(message: str, parse_mode: str = "Markdown") -> bool:
+        raise RuntimeError("telegram boom")
+
+    monkeypatch.setattr(notifier, "send_async", failing_send_async)
+
+    with caplog.at_level("ERROR", logger="Notifier"):
+        assert notifier.send("hello") is True
+        assert len(notifier._background_tasks) == 1
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    assert len(notifier._background_tasks) == 0
+    assert any("telegram boom" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_memory_rehydrates_from_feature_store() -> None:
+    from utils.security_utils import encrypt_data
+    import json
+    import time
+
+    class FakeFeatureStore:
+        def __init__(self, signals: list[dict]) -> None:
+            self.signals = signals
+
+        def replay_signals(self, since_timestamp: float, limit: int) -> list[dict]:
+            return [s for s in self.signals if s["timestamp"] > since_timestamp][:limit]
+
+    encrypted_dec = encrypt_data(json.dumps({"market_slug": "sol-above-200"}))
+    now_ts = time.time()
+
+    fake_signals = [
+        {
+            "signal_id": 1,
+            "timestamp": now_ts - 100.0,
+            "source": "lobstar_llm",
+            "ticker": "SOL",
+            "side": "BUY",
+            "price": 0.65,
+            "size": 100.0,
+            "confidence": 0.75,
+            "raw_text": "Buy SOL",
+            "regime_label": "LOW_VOLATILITY",
+            "decision_json": encrypted_dec,
+        }
+    ]
+
+    fs = FakeFeatureStore(fake_signals)
+    memory = BroadcastMemory(ttl_seconds=3600, probability_bucket=0.01, feature_store=fs)
+
+    test_signal = BroadcastSignal(
+        ticker="SOL",
+        market_slug="sol-above-200",
+        market_question="",
+        calibrated_probability=0.75,
+        market_probability=0.65,
+        edge=0.10,
+        action="BUY",
+    )
+
+    # Signal was sent and recorded within the 24h/1h TTL window, so memory should recognize it as duplicate
+    assert memory.was_sent(test_signal) is True
+    assert memory.last_for_ticker("SOL") is not None
+    assert memory.last_for_ticker("SOL").market_slug == "sol-above-200"
+

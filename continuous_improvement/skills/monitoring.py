@@ -21,8 +21,8 @@ class MonitoringSkill(Skill):
             "core/signal_executor.py",
             "execution/passive_executor.py",
             "utils/feature_store.py",
-            "dashboard.py",
-            "api_server.py",
+            "api/dashboard.py",
+            "api/api_server.py",
         ]
 
     def detect_issues(self, paths: Optional[list[str]] = None) -> list[dict[str, Any]]:

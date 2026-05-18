@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS positions (
     side TEXT NOT NULL,
     entry_price REAL NOT NULL,
     size REAL NOT NULL,
+    requested_qty REAL DEFAULT 0.0,
+    filled_qty REAL DEFAULT 0.0,
+    execution_price REAL DEFAULT 0.0,
+    notional_usd REAL DEFAULT 0.0,
     capital_engaged REAL NOT NULL,
     status TEXT DEFAULT 'OPEN',
     opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -26,6 +30,10 @@ CREATE TABLE IF NOT EXISTS transactions (
     side TEXT NOT NULL,
     price REAL NOT NULL,
     size REAL NOT NULL,
+    requested_qty REAL DEFAULT 0.0,
+    filled_qty REAL DEFAULT 0.0,
+    execution_price REAL DEFAULT 0.0,
+    notional_usd REAL DEFAULT 0.0,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(position_id) REFERENCES positions(position_id)
 );
@@ -99,10 +107,9 @@ CREATE TABLE IF NOT EXISTS historical_performance (
     settled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Performance metrics (rolling)
+-- Performance metrics (rolling, one row per execution mode)
 CREATE TABLE IF NOT EXISTS performance_metrics (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    execution_mode TEXT NOT NULL DEFAULT 'PAPER',
+    execution_mode TEXT PRIMARY KEY NOT NULL DEFAULT 'PAPER',
     total_trades INTEGER DEFAULT 0,
     winning_trades INTEGER DEFAULT 0,
     losing_trades INTEGER DEFAULT 0,
@@ -142,9 +149,9 @@ INSERT INTO execution_config (id, mode)
 SELECT 1, 'PAPER'
 WHERE NOT EXISTS (SELECT 1 FROM execution_config);
 
-INSERT INTO performance_metrics (id, execution_mode)
-SELECT 1, 'PAPER'
-WHERE NOT EXISTS (SELECT 1 FROM performance_metrics);
+INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES ('PAPER');
+INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES ('SHADOW');
+INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES ('PROD');
 
 INSERT INTO safety_flags (id, strict_maker_only, max_kelly_pct)
 SELECT 1, 0, 0.25

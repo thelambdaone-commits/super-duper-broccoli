@@ -1,83 +1,61 @@
 # Ouroboros Integration
 
-## Requirements
-- Python >= 3.12 (currently using 3.11)
-- Install: `pip install ouroboros-ai`
+This repository contains a lightweight compatibility layer for Ouroboros Agent OS.
+The current code does not implement the full Ouroboros workflow; it exposes a
+small wrapper that reports availability and returns explicit `not_implemented`
+responses when the package is not present.
 
-## What is Ouroboros?
+## Current Status
 
-**Agent OS** - Stop prompting. Start specifying.
+- Runtime requirement: Python `>= 3.12` for the external `ouroboros` package.
+- Local wrapper: [`utils/ouroboros_integration.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/ouroboros_integration.py)
+- Behavior today:
+  - `OuroborosIntegration.is_available()` reports whether `import ouroboros` succeeds.
+  - `get_status()` returns a small status map with the Python version requirement.
+  - `interview_agent_requirements()` returns `unavailable` or `not_implemented`.
+  - `validate_trade_decision()` returns `unavailable` or `not_implemented`.
 
-Ouroboros provides a structured specification-first workflow for AI coding:
+## What It Is For
 
-1. **Interview** - Socratic questioning to expose hidden assumptions
-2. **Seed** - Crystallize into immutable specification
-3. **Execute** - Double Diamond decomposition
-4. **Evaluate** - 3-stage verification (Mechanical -> Semantic -> Consensus)
-5. **Evolve** - Evolutionary loop until ontology convergence (>= 0.95 similarity)
+The intended use is to keep a narrow integration point ready for future
+specification-first workflows without making the trading runtime depend on
+Ouroboros being installed.
 
-## Integration with Lobstar
+Practical uses:
 
-Ouroboros can enhance the swarm agents with:
-- Ambiguity scoring for signal validation (<= 0.2 threshold)
-- Specification-first development for new agents
-- 3-stage evaluation for trade decisions
-- Ontology convergence for model drift detection
+- Agent requirement clarification before adding new autonomous behaviors
+- Structured validation hooks for trade decision review
+- Future drift-analysis workflows if the project adopts Ouroboros natively
 
-## Quick Start (when Python >= 3.12)
+## What It Is Not
 
-```bash
-# Install Ouroboros
-pip install ouroboros-ai
+- It is not a production dependency of the current runtime.
+- It does not expose the full Ouroboros CLI workflow.
+- It does not perform interview, seed, evaluation, or evolution steps locally.
 
-# Setup runtime
-ouroboros setup --runtime claude
-
-# Inside Claude Code session:
-ooo interview "Build a new arbitrage detection agent"
-ooo run seed.yaml
-```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `ooo interview` | Socratic questioning to define requirements |
-| `ooo seed` | Generate immutable specification |
-| `ooo run` | Execute via Double Diamond |
-| `ooo evaluate` | 3-stage verification |
-| `ooo evolve` | Evolutionary loop until convergence |
-| `ooo ralph` | Persistent loop until verified |
-
-## Nine Minds
-
-Ouroboros provides 9 specialized agents:
-
-1. **Socratic Interviewer** - Questions only, exposes assumptions
-2. **Ontologist** - Finds essence, not symptoms  
-3. **Seed Architect** - Crystallizes specs
-4. **Evaluator** - 3-stage verification
-5. **Contrarian** - Challenges every assumption
-6. **Hacker** - Finds unconventional paths
-7. **Simplifier** - Removes complexity
-8. **Researcher** - Stops coding, investigates
-9. **Architect** - Identifies structural causes
-
-## Future Integration
-
-When Python is upgraded to 3.12+, integrate with:
+## Code Contract
 
 ```python
-# In continuous_improvement/agents/
-from ouroboros import OuroborosEngine
+from utils.ouroboros_integration import get_ouroboros_integration
 
-# Use for:
-# - New agent specification
-# - Trade decision validation
-# - Drift detection convergence
-# - Specification-first agent development
+integration = get_ouroboros_integration()
+status = integration.get_status()
+available = integration.is_available()
 ```
 
-## Reference
-- GitHub: https://github.com/Q00/ouroboros
-- PyPI: https://pypi.org/project/ouroboros-ai/
+Expected responses:
+
+- When Ouroboros is missing: `{"status": "unavailable", "message": "Requires Python >= 3.12"}`
+- When Ouroboros is present: `{"status": "not_implemented", "message": "Implement when Ouroboros available"}`
+
+## Deployment Notes
+
+- Keep the wrapper import-safe even when Ouroboros is absent.
+- Do not make production trade execution depend on this module.
+- Use it as an integration seam, not as a hidden runtime assumption.
+
+## References
+
+- Local module: [`utils/ouroboros_integration.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/ouroboros_integration.py)
+- Project context: [`AGENTS.md`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/AGENTS.md)
+- Upstream project: https://github.com/Q00/ouroboros

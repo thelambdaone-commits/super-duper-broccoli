@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 import pytest
+import joblib
 
 from core.training_pipeline import TrainingPipeline
 
@@ -137,6 +138,37 @@ class TestTraining:
         assert "dissimilarity_index" in pred
         assert "ood_alert" in pred
         assert pred["signal"] in ("BUY", "SELL")
+
+    def test_train_exports_calibrated_model(self, pipeline: TrainingPipeline) -> None:
+        pipeline.register_features("SOL", ["oi_5min", "tam_state", "spread_bps", "mid_price"], target_feature="mid_price")
+        result = pipeline.train("SOL", hyperparams={"n_estimators": 10, "max_depth": 3})
+        assert result is not None
+        assert result["calibrated_model_path"]
+        assert os.path.exists(result["calibrated_model_path"])
+        calibrated = joblib.load(result["calibrated_model_path"])
+        X = np.random.randn(2, 3).astype(np.float32)
+        proba = calibrated.predict_proba(X)
+        assert proba.shape == (2, 2)
+
+    def test_prune_model_artifacts_keeps_latest_two(self, pipeline: TrainingPipeline) -> None:
+        pipeline.register_features("SOL", ["oi_5min", "tam_state", "spread_bps", "mid_price"], target_feature="mid_price")
+        result = pipeline.train("SOL", hyperparams={"n_estimators": 10, "max_depth": 3})
+        assert result is not None
+        extra = os.path.join(pipeline.model_dir, "SOL_legacy.pkl")
+        with open(extra, "wb") as fh:
+            fh.write(b"old")
+        stats = pipeline.prune_model_artifacts("SOL", keep_latest=2)
+        assert stats["removed"] >= 1
+        assert os.path.exists(result["model_path"])
+        assert os.path.exists(result["calibrated_model_path"])
+
+    def test_audit_model_calibration_reports_ece(self) -> None:
+        y_true = np.array([0, 0, 1, 1, 0, 1, 1, 0], dtype=np.int32)
+        y_prob = np.array([0.1, 0.2, 0.8, 0.9, 0.3, 0.7, 0.6, 0.4], dtype=np.float32)
+        audit = TrainingPipeline.audit_model_calibration(y_true, y_prob, n_bins=4)
+        assert "ece" in audit
+        assert audit["ece"] >= 0.0
+        assert len(audit["true_frequencies"]) == len(audit["pred_probabilities"])
 
     def test_predict_without_train_returns_none(
         self, pipeline: TrainingPipeline

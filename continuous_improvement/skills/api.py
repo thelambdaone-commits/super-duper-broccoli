@@ -18,8 +18,8 @@ class APISkill(Skill):
     @property
     def priority_files(self) -> list[str]:
         return [
-            "api_server.py",
-            "dashboard.py",
+            "api/api_server.py",
+            "api/dashboard.py",
         ]
 
     def detect_issues(self, paths: Optional[list[str]] = None) -> list[dict[str, Any]]:
@@ -77,7 +77,7 @@ class APISkill(Skill):
     def generate_tests(self, paths: Optional[list[str]] = None) -> list[dict[str, Any]]:
         return [
             {
-                "target": "api_server.py",
+                "target": "api/api_server.py",
                 "test_file": "tests/test_api_server.py",
                 "description": "Integration tests for FastAPI endpoints using TestClient",
                 "test_cases": [

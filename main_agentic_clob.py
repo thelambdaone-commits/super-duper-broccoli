@@ -25,19 +25,22 @@ from utils.localization_sync import apply_backward_compatible_aliases
 apply_backward_compatible_aliases()
 
 from core.container import ServiceContainer
+from core.wallet_manager import PolymarketWalletManager
 from core.lobstar_cognitive_brain import LobstarCognitiveBrain
 from core.training_pipeline import TrainingPipeline
 from mcp_agents.lobstar_agent import LobstarAgent
 from monitors.polymarket_monitor import PolymarketMonitor
 from agents.copy_trading_agent import CopyTradingAgent, CopyConfig
 from telegram_scraper.telegram_listener import TelegramListener
-from utils.circuit_breaker import CircuitBreaker
+from core.services.circuit_breaker import CircuitBreakerService
 from utils.access_control import AccessControlManager
 from utils.crypto_market_intelligence import CryptoMarketIntelligence, format_intelligence_report
+from utils.data_archiver import DataArchiver
 from utils.exceptions import QuantFatal
 from utils.feature_store import FeatureStore
 from utils.market_scanner import MarketScanner
 from utils.model_validator import ModelValidator
+from utils.clob_feed_utils import extract_live_clob_token_ids
 from ai.agents.self_improvement_agent import SelfImprovementAgent
 from utils.snapshot_manager import get_snapshot_manager
 from scrapers.telegram_broadcaster import TelegramBroadcaster
@@ -47,6 +50,7 @@ from utils.message_formatter import (
     format_market_report,
     format_winning_bets_alert,
 )
+from scripts.daily_tca_report import DailyTcaReportConfig, DailyTcaReportJob
 from utils.logging_setup import setup_logging
 from utils.telegram_helpers import parse_chat_ids, parse_private_chat_ids
 from core.swarm_supervisor import initialize_swarm_supervisor
@@ -56,6 +60,9 @@ from utils.api_key_notifier import get_api_key_notifier
 from telegram.constants import ParseMode
 from core.orchestrator import LobstarOrchestrator
 from core.health_monitor import LobstarHealthMonitor
+from core.health_supervisor_agent import HealthSupervisorAgent, HealthSupervisorConfig
+from agents.health_monitor_agent import HealthMonitorAgent, HealthMonitorConfig
+from scrapers.clob_listener import CLOBListener
 
 logger = setup_logging()
 
@@ -166,16 +173,20 @@ def build_telegram_listener(
     token = secrets.get("TELEGRAM_BOT_TOKEN")
     if not token:
         raise QuantFatal("TELEGRAM_BOT_TOKEN is missing from Vault/Environment.")
-    private_chat_ids = parse_private_chat_ids(
-        secrets.get("TELEGRAM_PRIVATE_CHAT_IDS") or os.getenv("TELEGRAM_PRIVATE_CHAT_IDS", "")
-    )
-    allow_private_messages = private_chat_ids is not None
+    raw_private = secrets.get("TELEGRAM_PRIVATE_CHAT_IDS") or os.getenv("TELEGRAM_PRIVATE_CHAT_IDS", "")
+    if not raw_private and chat_id:
+        raw_private = str(chat_id)
+    private_chat_ids = parse_private_chat_ids(raw_private)
+    raw_admin = secrets.get("TELEGRAM_ADMIN_CHAT_IDS") or os.getenv("TELEGRAM_ADMIN_CHAT_IDS", "")
+    admin_chat_ids = parse_chat_ids(raw_admin) or set()
+    allow_private_messages = True
     return TelegramListener(
         bot_token=token,
         on_signal=on_signal,
         chat_id=chat_id,
         access_control=access_control,
         private_chat_ids=private_chat_ids,
+        admin_chat_ids=admin_chat_ids,
         allow_private_messages=allow_private_messages,
     )
 
@@ -212,10 +223,69 @@ def build_crypto_intelligence() -> CryptoMarketIntelligence:
 
 
 async def run_blocking(label: str, func: Callable[..., Any], *args: Any, timeout: float = 30.0, **kwargs: Any) -> Any:
+    """
+    Execute a blocking function in a thread pool with timeout and contextual error logging.
+    
+    Args:
+        label: Human-readable label for logging (e.g., "market scan", "vault lookup")
+        func: The blocking function to execute
+        *args: Positional arguments for func
+        timeout: Timeout in seconds
+        **kwargs: Keyword arguments for func
+        
+    Returns:
+        Result from func
+        
+    Raises:
+        TimeoutError: If execution exceeds timeout
+    """
     try:
-        return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
+        logger.debug(f"🔄 [BLOCKING] Starting: {label} (timeout={timeout}s, args={len(args)}, kwargs={list(kwargs.keys())})")
+        result = await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
+        logger.debug(f"✅ [BLOCKING] Completed: {label}")
+        return result
     except asyncio.TimeoutError:
+        logger.error(
+            f"❌ [TIMEOUT] {label} exceeded {timeout}s limit\n"
+            f"   Function: {func.__name__}\n"
+            f"   Args: {args}\n"
+            f"   Kwargs: {list(kwargs.keys())}"
+        )
+        logger.error(f"🚨 [CRITICAL] System resource bottleneck detected in {label}")
         raise TimeoutError(f"{label} timed out after {timeout}s") from None
+    except Exception as e:
+        logger.error(
+            f"❌ [ERROR] {label} failed with exception:\n"
+            f"   Function: {func.__name__}\n"
+            f"   Exception: {type(e).__name__}: {e}\n"
+            f"   Args: {args}\n"
+            f"   Kwargs: {list(kwargs.keys())}"
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            f"❌ [BLOCKING ERROR] {label} failed\n"
+            f"   Function: {func.__name__}\n"
+            f"   Error: {type(e).__name__}: {e}"
+        )
+        raise
+
+
+def _fetch_rpc_blocking(rpc_url: str) -> dict[str, Any]:
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(
+        rpc_url,
+        data=b'{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}',
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return json.loads(response.read().decode())
+
+
+async def _check_rpc_dry_run(rpc_url: str) -> dict[str, Any]:
+    return await asyncio.to_thread(_fetch_rpc_blocking, rpc_url)
 
 
 def _setup_ml_features(training_pipeline: TrainingPipeline) -> None:
@@ -227,9 +297,12 @@ def _setup_ml_features(training_pipeline: TrainingPipeline) -> None:
 
 def _setup_quantum_runner(
     runner: LobstarQuantumRunner,
+    container: ServiceContainer,
     freqai: Any,
     cognitive_brain: LobstarCognitiveBrain,
     mlops_engine: LobstarMLOpsEngine,
+    autonomic_healer: "LobstarAutonomicHealer",
+    broadcaster: Any,
 ) -> None:
     """Schedules cron/quantum runner background jobs using English hook register_job."""
     runner.register_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
@@ -237,27 +310,215 @@ def _setup_quantum_runner(
         runner.register_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
     runner.register_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
 
+    async def prune_feature_store():
+        store = getattr(cognitive_brain, "store", None) or getattr(container, "store", None)
+        if store and mlops_engine.should_prune(interval_hours=24):
+            mlops_engine.prune_feature_store(store, raw_retention_days=7, vacuum=True)
 
-def _dry_run_report(mode: str, circuit_breaker: CircuitBreaker, store: FeatureStore) -> None:
-    """Logs dry-run validation report."""
+    # Ensure log directory exists
+    os.makedirs(os.path.dirname(autonomic_healer.log_path), exist_ok=True)
+
+    async def run_healer():
+        erreurs = autonomic_healer.analyser_nouveaux_logs()
+        for err in erreurs:
+            await autonomic_healer.deployer_correctif_autonome(err)
+
+    runner.register_job("Autonomic_Healer", run_healer, interval_sec=2.0)
+    runner.register_job("FeatureStore_Prune", prune_feature_store, interval_sec=3600.0)
+
+    async def daily_tca_report():
+        metrics_log_path = os.getenv(
+            "EXECUTION_METRICS_LOG_PATH",
+            os.path.join(os.getenv("DATA_PATH", "user_data/data"), "execution_metrics.jsonl"),
+        )
+        state_path = os.getenv(
+            "DAILY_TCA_REPORT_STATE_PATH",
+            os.path.join(os.getenv("DATA_PATH", "user_data/data"), "daily_tca_report_state.json"),
+        )
+        job = DailyTcaReportJob(
+            broadcaster=broadcaster,
+            config=DailyTcaReportConfig(
+                metrics_log_path=metrics_log_path,
+                state_path=state_path,
+                send_hour_utc=int(os.getenv("DAILY_TCA_REPORT_HOUR_UTC", "8")),
+                send_minute_utc=int(os.getenv("DAILY_TCA_REPORT_MINUTE_UTC", "0")),
+                send_window_minutes=int(os.getenv("DAILY_TCA_REPORT_WINDOW_MINUTES", "5")),
+            ),
+        )
+        await job.run()
+
+    runner.register_job("Daily_TCA_Report", daily_tca_report, interval_sec=60.0)
+
+    async def train_and_rotate_models():
+        pipeline = getattr(container, "training_pipeline", None)
+        if not pipeline:
+            return
+        tickers = os.getenv("MODEL_TICKERS", "SOL,BTC,ETH").split(",")
+        tickers = [t.strip().upper() for t in tickers if t.strip()]
+        feature_names = [name.strip() for name in os.getenv(
+            "MODEL_FEATURES",
+            "oi_5min,tam_state,spread_bps,mid_price,binance_return_1m,binance_order_imbalance,polymarket_spread_premium",
+        ).split(",") if name.strip()]
+        target_feature = os.getenv("MODEL_TARGET_FEATURE", "mid_price")
+        for ticker in tickers:
+            pipeline.register_features(ticker, feature_names, target_feature=target_feature)
+            result = pipeline.train(ticker)
+            if result:
+                pipeline.prune_model_artifacts(ticker=ticker, keep_latest=2)
+
+    runner.register_job("Model_Retrain_Rotate", train_and_rotate_models, interval_sec=14400.0)
+
+
+async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, store: FeatureStore, container: ServiceContainer) -> None:
+    """Logs dry-run validation report with real system state checks."""
     logger.info("=== DRY RUN MODE ===")
-    logger.info("Vault: OK (6 secrets loaded)")
-    logger.info("CLOB Engine: OK")
-    logger.info("Ledger: OK")
-    logger.info("HMMRegimeFilter: OK")
-    logger.info("PortfolioRiskEngine: OK")
-    logger.info("LobstarAgent: OK")
-    logger.info(f"CircuitBreaker: OK ({circuit_breaker.status_report})")
-    logger.info(f"FeatureStore: OK ({store.get_stats()})")
+    
+    # 1. Validate vault and RAM dictionary state of active session wallets
+    try:
+        vault_secrets = container.secrets or {}
+        vault_count = len(vault_secrets)
+        required_secrets = ["TELEGRAM_BOT_TOKEN", "CLOB_PRIVATE_KEY"]
+        missing_secrets = [s for s in required_secrets if not vault_secrets.get(s)]
+        vault_status = "OK" if vault_count > 0 and not missing_secrets else "MISSING"
+        
+        session_wallet_count = container.vault.compter_wallets_session()
+        logger.info(f"Vault RAM session wallets state: {session_wallet_count} active session wallets in memory.")
+        logger.info(f"Vault Secrets: {vault_status} ({vault_count} secrets loaded, {len(missing_secrets)} missing)")
+    except Exception as e:
+        logger.info(f"Vault Check: ERROR ({e})")
+    
+    # 2. Verify Alchemy RPC connectivity
+    rpc_url = container.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL")
+    if rpc_url:
+        try:
+            res = await _check_rpc_dry_run(rpc_url)
+            if "result" in res:
+                block = int(res["result"], 16)
+                logger.info(f"Alchemy RPC Connectivity: OK (Current Block: {block})")
+            else:
+                logger.warning("Alchemy RPC Connectivity: FAILED (Invalid JSON-RPC response)")
+        except Exception as e:
+            logger.warning(f"Alchemy RPC Connectivity: FAILED ({e})")
+    else:
+        logger.warning("Alchemy RPC Connectivity: SKIPPED (No POLYGON_RPC_URL configured)")
+    
+    # Validate CLOB engine with actual connectivity
+    try:
+        freqai_status = "OK" if container.freqai else "MISSING"
+        if container.freqai:
+            # Test basic CLOB connectivity
+            try:
+                orders = container.freqai.get_orders()
+                logger.info(f"CLOB Engine: OK ({len(orders)} orders retrieved)")
+            except Exception as e:
+                logger.info(f"CLOB Engine: CONNECTIVITY_ERROR ({e})")
+                freqai_status = "CONNECTIVITY_ERROR"
+    except Exception as e:
+        logger.info(f"CLOB Engine: ERROR ({e})")
+    
+    # Validate ledger with actual database check
+    try:
+        ledger_status = "OK" if container.ledger else "MISSING"
+        if container.ledger:
+            try:
+                balance = container.ledger.get_available_capital()
+                positions = container.ledger.get_positions()
+                logger.info(f"Ledger: OK (Balance: ${balance:.2f}, Positions: {len(positions)})")
+            except Exception as e:
+                logger.info(f"Ledger: DATABASE_ERROR ({e})")
+                ledger_status = "DATABASE_ERROR"
+    except Exception as e:
+        logger.info(f"Ledger: ERROR ({e})")
+    
+    # Validate HMM with actual model check
+    try:
+        hmm_status = "OK" if container.hmm else "MISSING"
+        if container.hmm:
+            try:
+                # Test regime prediction
+                regimes = container.hmm.get_regime_labels()
+                logger.info(f"HMMRegimeFilter: OK ({len(regimes)} regimes available)")
+            except Exception as e:
+                logger.info(f"HMMRegimeFilter: MODEL_ERROR ({e})")
+                hmm_status = "MODEL_ERROR"
+    except Exception as e:
+        logger.info(f"HMMRegimeFilter: ERROR ({e})")
+    
+    # Validate risk engine with actual calculation
+    try:
+        risk_status = "OK" if container.risk else "MISSING"
+        if container.risk:
+            try:
+                # Test risk calculation
+                max_size = container.risk.calculate_max_position_size("SOL", 100.0)
+                concentration = container.risk.get_concentration("SOL")
+                logger.info(f"PortfolioRiskEngine: OK (Max size: ${max_size:.2f}, Concentration: {concentration:.1%})")
+            except Exception as e:
+                logger.info(f"PortfolioRiskEngine: CALCULATION_ERROR ({e})")
+                risk_status = "CALCULATION_ERROR"
+    except Exception as e:
+        logger.info(f"PortfolioRiskEngine: ERROR ({e})")
+    
+    # Validate executor with actual status
+    try:
+        executor_status = "OK" if container.executor else "MISSING"
+        if container.executor:
+            try:
+                # Test executor status
+                timeout = getattr(container.executor, 'timeout', 30)
+                queue_size = getattr(container.executor, 'queue_size', 0)
+                logger.info(f"PassiveExecutor: OK (Timeout: {timeout}s, Queue: {queue_size})")
+            except Exception as e:
+                logger.info(f"PassiveExecutor: STATUS_ERROR ({e})")
+                executor_status = "STATUS_ERROR"
+    except Exception as e:
+        logger.info(f"PassiveExecutor: ERROR ({e})")
+    
+    # Circuit breaker with actual status
+    try:
+        cb_status = circuit_breaker.status_report
+        cb_allowed = circuit_breaker.is_allowed()
+        logger.info(f"CircuitBreaker: {cb_status} (Allowed: {cb_allowed})")
+    except Exception as e:
+        logger.info(f"CircuitBreaker: ERROR ({e})")
+    
+    # Feature store with actual stats
+    try:
+        store_stats = store.get_stats() if store else "N/A"
+        logger.info(f"FeatureStore: OK ({store_stats})")
+    except Exception as e:
+        logger.info(f"FeatureStore: PARTIAL ({e})")
+    
     logger.info(f"Execution Mode: {mode}")
     logger.info("Telegram Bot: SKIPPED (dry-run)")
-    logger.info("Pipeline validated successfully.")
+    
+    # Overall status with real validation
+    component_status = {
+        'vault': vault_status != "MISSING",
+        'freqai': freqai_status == "OK",
+        'ledger': ledger_status == "OK",
+        'hmm': hmm_status == "OK",
+        'risk': risk_status == "OK",
+        'executor': executor_status == "OK"
+    }
+    
+    all_ok = all(component_status.values())
+    
+    if all_ok:
+        logger.info("✅ Pipeline validated successfully. All core components operational.")
+    else:
+        failed_components = [k for k, v in component_status.items() if not v]
+        logger.warning(f"⚠️ Pipeline has {len(failed_components)} failed components: {', '.join(failed_components)}")
+    
     logger.info(f"Active mode: {mode} — {'Virtual' if mode in ('REPLAY', 'PAPER') else 'Real capital at risk.'}")
 
 
 async def _run_services_loop(
     listener: TelegramListener,
+    clob_feed_coro: Any,
     polymarket_monitor: Any,
+    health_supervisor: Any,
+    health_sidecar: Any,
     runner: LobstarQuantumRunner,
     orchestrator: LobstarOrchestrator,
     health_monitor: LobstarHealthMonitor,
@@ -270,35 +531,102 @@ async def _run_services_loop(
     logger.info(f"Telegram bot listening — execution mode: {mode}")
     scan_task = None
     retrain_task = None
+    clob_feed_task = None
     monitor_task = None
     telegram_task = None
     runner_task = None
+    health_supervisor_task = None
+    health_sidecar_task = None
     try:
         # Start core components
         orchestrator.start()
         health_monitor.start()
 
         telegram_task = asyncio.create_task(listener.start())
+        clob_feed_task = asyncio.create_task(clob_feed_coro) if clob_feed_coro else None
         scan_task = asyncio.create_task(scan_coro)
         retrain_task = asyncio.create_task(retrain_coro)
         monitor_task = asyncio.create_task(polymarket_monitor.start()) if polymarket_monitor else None
+        health_supervisor_task = asyncio.create_task(health_supervisor.start()) if health_supervisor else None
+        health_sidecar_task = asyncio.create_task(health_sidecar.run_forever()) if health_sidecar else None
         runner_task = asyncio.create_task(runner_coro)
         
-        tasks = [telegram_task, scan_task, retrain_task, runner_task] + ([monitor_task] if monitor_task else [])
+        tasks = [telegram_task, scan_task, retrain_task, runner_task]
+        if clob_feed_task:
+            tasks.append(clob_feed_task)
+        if monitor_task:
+            tasks.append(monitor_task)
+        if health_supervisor_task:
+            tasks.append(health_supervisor_task)
+        if health_sidecar_task:
+            tasks.append(health_sidecar_task)
         await asyncio.gather(*tasks)
     finally:
+        logger.info("💤 [CLEANUP] Initiating graceful shutdown...")
+        
+        # Stop core services first
         runner.stop()
+        logger.debug("✅ QuantumRunner stopped")
+        
         await orchestrator.stop()
+        logger.debug("✅ Orchestrator stopped")
+        
         await health_monitor.stop()
+        logger.debug("✅ HealthMonitor stopped")
+        
         if polymarket_monitor:
             try:
                 await polymarket_monitor.stop()
+                logger.debug("✅ PolymarketMonitor stopped")
             except Exception as e:
-                logger.warning(f"Error stopping monitor: {e}")
-        if scan_task:
+                logger.warning(f"Error stopping polymarket_monitor: {e}")
+        if health_supervisor:
+            try:
+                health_supervisor.stop()
+                logger.debug("✅ HealthSupervisor stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping health_supervisor: {e}")
+        if health_sidecar:
+            try:
+                health_sidecar.stop()
+                logger.debug("✅ HealthMonitorSidecar stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping health_sidecar: {e}")
+        
+        # Properly cancel all tasks with exception handling
+        tasks_to_cancel = []
+        if telegram_task and not telegram_task.done():
+            telegram_task.cancel()
+            tasks_to_cancel.append(telegram_task)
+        if scan_task and not scan_task.done():
             scan_task.cancel()
-        if retrain_task:
+            tasks_to_cancel.append(scan_task)
+        if retrain_task and not retrain_task.done():
             retrain_task.cancel()
+            tasks_to_cancel.append(retrain_task)
+        if clob_feed_task and not clob_feed_task.done():
+            clob_feed_task.cancel()
+            tasks_to_cancel.append(clob_feed_task)
+        if monitor_task and not monitor_task.done():
+            monitor_task.cancel()
+            tasks_to_cancel.append(monitor_task)
+        if health_supervisor_task and not health_supervisor_task.done():
+            health_supervisor_task.cancel()
+            tasks_to_cancel.append(health_supervisor_task)
+        if health_sidecar_task and not health_sidecar_task.done():
+            health_sidecar_task.cancel()
+            tasks_to_cancel.append(health_sidecar_task)
+        if runner_task and not runner_task.done():
+            runner_task.cancel()
+            tasks_to_cancel.append(runner_task)
+        
+        # Wait for all cancellations to complete
+        if tasks_to_cancel:
+            logger.debug(f"Awaiting cancellation of {len(tasks_to_cancel)} tasks...")
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+            logger.debug("✅ All tasks cancelled")
+        
+        logger.info("✅ [CLEANUP] Graceful shutdown complete")
 
 
 async def main(
@@ -331,28 +659,7 @@ async def main(
         logger.warning("GROQ_API_KEY missing. Semantic signal parsing (LOBSTAR) disabled.")
         lobstar = None
     
-    circuit_breaker = CircuitBreaker(name="CLOB_Execution")
-
-    swarm_supervisor = await initialize_swarm_supervisor(mode=execution_mode)
-    data_diag = swarm_supervisor.check_data_gaps()
-    logger.info(f"📊 Data Gap Check: {data_diag}")
-
-    async def on_mode_change(new_mode):
-        mode_str = new_mode.value
-        logger.warning(f"⚠️ Swarm triggered mode change: {mode_str}")
-        ledger.set_execution_mode(mode_str)
-        if listener is not None:
-            await listener.send_message(f"🔄 *Mode changed to:* `{mode_str}` (Swarm Supervisor)")
-
-    async def on_circuit_breaker(reason, data):
-        logger.critical(f"🚨 Swarm Circuit Breaker: {reason.value}")
-        if listener is not None:
-            await listener.send_message(
-                f"🚨 *CIRCUIT BREAKER*\nReason: `{reason.value}`\nData: `{data}`"
-            )
-
-    swarm_supervisor.set_mode_change_callback(on_mode_change)
-    swarm_supervisor.set_circuit_breaker_callback(on_circuit_breaker)
+    circuit_breaker = CircuitBreakerService({"name": "CLOB_Execution"})
 
     copy_trading_agent = build_copy_trading_agent()
 
@@ -366,32 +673,50 @@ async def main(
 
     snapshot_mgr = get_snapshot_manager()
     model_validator = ModelValidator(snapshot_manager=snapshot_mgr)
+
     self_improver = SelfImprovementAgent()
 
+    # Set execution mode early to prevent race conditions
     if execution_mode:
         ledger.set_execution_mode(execution_mode)
-
     mode = ledger.get_execution_mode()
 
     if dry_run:
-        _dry_run_report(mode, circuit_breaker, store)
+        await _dry_run_report(mode, circuit_breaker, store, container)
         return
 
     market_scanner = MarketScanner()
     crypto_intelligence = build_crypto_intelligence()
     cognitive_brain = build_cognitive_brain(store, market_scanner, training_pipeline)
     broadcaster = build_broadcaster(container, training_pipeline, market_scanner)
+    live_clob_feed_coro = None
+
+    # Initialize autonomic healer
+    from core.autonomic_healer import LobstarAutonomicHealer
+    autonomic_healer = LobstarAutonomicHealer(
+        log_file_path="user_data/logs/app.log",
+    )
 
     mlops_engine = LobstarMLOpsEngine()
     runner = LobstarQuantumRunner()
-    _setup_quantum_runner(runner, freqai, cognitive_brain, mlops_engine)
+    _setup_quantum_runner(runner, container, freqai, cognitive_brain, mlops_engine, autonomic_healer, broadcaster)
 
-    # Instantiate the new LobstarOrchestrator
+    # Build listener FIRST before orchestrator and swarm (prevents race conditions)
+    listener = build_telegram_listener(
+        secrets=secrets,
+        on_signal=None,  # Will set after orchestrator creation
+        chat_id=chat_id,
+        access_control=access_control,
+    )
+    
+    logger.info("✅ Telegram listener initialized (ready for callbacks)")
+
+    # Instantiate the orchestrator with listener passed directly
     orchestrator = LobstarOrchestrator(
         container=container,
         secrets=secrets,
         execution_mode=execution_mode,
-        listener=None, # will attach below
+        listener=listener,  # Pass listener directly (dependency injection)
         circuit_breaker=circuit_breaker,
         snapshot_mgr=snapshot_mgr,
         cognitive_brain=cognitive_brain,
@@ -401,15 +726,34 @@ async def main(
         access_control=access_control,
     )
 
-    listener = build_telegram_listener(
-        secrets=secrets,
-        on_signal=orchestrator.on_signal,
-        chat_id=chat_id,
-        access_control=access_control,
-    )
+    # Attach the orchestrator's broadcaster to autonomic healer for notifications
+    autonomic_healer.broadcaster = orchestrator.broadcaster
 
-    # Attach listener reference to orchestrator
-    orchestrator.listener = listener
+    # NOW attach the orchestrator's signal handler to listener (callback chain)
+    listener.on_signal = orchestrator.on_signal
+
+    # THEN initialize swarm with callbacks (listener is now guaranteed to exist)
+    swarm_supervisor = await initialize_swarm_supervisor(mode=execution_mode)
+    data_diag = swarm_supervisor.check_data_gaps()
+    logger.info(f"📊 Data Gap Check: {data_diag}")
+
+    async def on_mode_change(new_mode):
+        mode_str = new_mode.value
+        logger.warning(f"⚠️ Swarm triggered mode change: {mode_str}")
+        ledger.set_execution_mode(mode_str)
+        # listener is guaranteed to exist at this point
+        await listener.send_message(f"🔄 *Mode changed to:* `{mode_str}` (Swarm Supervisor)")
+
+    async def on_circuit_breaker(reason, data):
+        logger.critical(f"🚨 Swarm Circuit Breaker: {reason.value}")
+        # listener is guaranteed to exist at this point
+        await listener.send_message(
+            f"🚨 *CIRCUIT BREAKER*\nReason: `{reason.value}`\nData: `{data}`"
+        )
+
+    swarm_supervisor.set_mode_change_callback(on_mode_change)
+    swarm_supervisor.set_circuit_breaker_callback(on_circuit_breaker)
+    logger.info("✅ Swarm supervisor callbacks registered (listener guaranteed to exist)")
 
     health_monitor = LobstarHealthMonitor(
         orchestrator=orchestrator,
@@ -436,6 +780,36 @@ async def main(
         scanner=market_scanner,
         copy_agent=copy_trading_agent,
     )
+
+    try:
+        top_markets = await run_blocking(
+            "prime live clob token ids",
+            market_scanner.client.list_markets,
+            limit=25,
+            sort_by="volume",
+            timeout=30.0,
+        )
+        live_token_ids = extract_live_clob_token_ids(top_markets)
+        if live_token_ids:
+            clob_listener = CLOBListener(token_ids=live_token_ids, store=store)
+
+            async def _persist_live_snapshot(snapshot: dict[str, Any]) -> None:
+                snapshot_mgr.capture(
+                    category="SYSTEM",
+                    component="CLOB_ORDERBOOK",
+                    data=snapshot,
+                    tags=["live", "clob", snapshot.get("token_id", "unknown")],
+                )
+
+            live_clob_feed_coro = clob_listener.run(callback=_persist_live_snapshot)
+            logger.info(
+                "✅ Live CLOB feed armed with %s token IDs from top markets",
+                len(live_token_ids),
+            )
+        else:
+            logger.warning("Live CLOB feed disabled: no token IDs resolved from top markets")
+    except Exception as e:
+        logger.warning(f"Live CLOB feed disabled: failed to prime token IDs ({e})")
 
     async def _health_check_loop():
         """Periodic model health, drift check, and self-improvement analysis."""
@@ -482,17 +856,6 @@ async def main(
                 await listener.send_message(imp_report, parse_mode="Markdown")
 
                 try:
-                    from utils.data_archiver import DataArchiver
-                    archiver = DataArchiver()
-                    await run_blocking(
-                        "archive maintenance",
-                        archiver.run_maintenance_cycle,
-                        timeout=120.0,
-                    )
-                except Exception:
-                    logger.exception("Maintenance cycle failed")
-
-                try:
                     from scripts.rl_feedback_loop import run_rl_feedback_loop
                     await run_blocking(
                         "RL feedback loop",
@@ -510,30 +873,42 @@ async def main(
     async def _market_scan_loop() -> None:
         from utils.market_scanner import SCAN_INTERVAL_SECONDS
         
+        # Wait for listener to be fully initialized
         for _ in range(30):
             if listener.application:
                 break
             await asyncio.sleep(1)
             
         logger.info(f"Market scanner started (interval={SCAN_INTERVAL_SECONDS}s)")
-        first_scan = True
+        
+        # Timing trackers
         last_crypto_intelligence_at = 0.0
         crypto_intelligence_interval = int(os.getenv("CRYPTO_INTELLIGENCE_INTERVAL_SECONDS", "1800"))
         last_sentiment = None
+        iteration_count = 0
+        first_scan_completed = False
+        
         while True:
             try:
+                iteration_count += 1
+                is_first_scan = iteration_count == 1
+                
                 result = await run_blocking(
                     "market scan",
                     market_scanner.scan_markets,
                     timeout=float(os.getenv("MARKET_SCAN_TIMEOUT_SECONDS", "60")),
                 )
+                
                 if result.total_markets_scanned > 0:
                     logger.info(
                         f"Scan: {result.total_markets_scanned} markets, "
                         f"{len(result.winning_bets)} winning, "
                         f"{len(result.trending_markets)} trending"
                     )
-                    if first_scan:
+                    
+                    # ─── FIRST SCAN INITIALIZATION (Only on iteration 1) ───
+                    if is_first_scan:
+                        logger.info("🎯 [FIRST SCAN] Initializing market baseline report...")
                         signals = (
                             result.winning_bets
                             + result.trending_markets
@@ -556,10 +931,14 @@ async def main(
                             category="SYSTEM",
                             component="MARKET_REPORT",
                             data={"report": report},
-                            tags=["periodic", "market_scan"]
+                            tags=["periodic", "market_scan", "first_run"]
                         )
-                        first_scan = False
-
+                        logger.info("✅ [FIRST SCAN] Baseline report sent")
+                        first_scan_completed = True
+                    
+                    # ─── CONTINUOUS MONITORING (Every iteration) ───
+                    
+                    # Monitor sentiment changes
                     sentiment = result.aggregate_sentiment.get("sentiment", "NEUTRAL")
                     if sentiment != last_sentiment:
                         mood = result.aggregate_sentiment.get("bullish_pct", 50)
@@ -571,16 +950,26 @@ async def main(
                         )
                         last_sentiment = sentiment
                     
+                    # Record features for training pipeline
                     await run_blocking(
                         "record scanner features",
                         market_scanner.record_features,
                         store,
                         timeout=30.0,
                     )
+                    
+                    # Broadcast market analysis
                     await broadcaster.scan_and_broadcast()
-
+                    
+                    # ─── PERIODIC CRYPTO INTELLIGENCE (First scan + time-based) ───
                     now = datetime.now(timezone.utc).timestamp()
-                    if first_scan or now - last_crypto_intelligence_at >= crypto_intelligence_interval:
+                    should_run_intelligence = (
+                        is_first_scan or 
+                        (now - last_crypto_intelligence_at) >= crypto_intelligence_interval
+                    )
+                    
+                    if should_run_intelligence:
+                        logger.info(f"📊 [CRYPTO INTELLIGENCE] Running analysis...")
                         markets = await run_blocking(
                             "crypto intelligence market fetch",
                             market_scanner.client.list_markets,
@@ -599,6 +988,7 @@ async def main(
                             sent = await listener.send_message(intelligence_text)
                             if sent:
                                 last_crypto_intelligence_at = now
+                                logger.info(f"✅ [CRYPTO INTELLIGENCE] Report sent and cached")
                             snapshot_mgr.capture(
                                 category="SYSTEM",
                                 component="CRYPTO_INTELLIGENCE",
@@ -606,6 +996,7 @@ async def main(
                                 tags=["periodic", "crypto_intelligence"],
                             )
                     
+                    # ─── WINNING BETS ALERTS (Every iteration if present) ───
                     if result.winning_bets:
                         alert = format_winning_bets_alert(result.winning_bets[:3])
                         await listener.send_message(alert, parse_mode="Markdown")
@@ -614,15 +1005,18 @@ async def main(
                             await listener.send_message(trending, parse_mode="Markdown")
                 else:
                     logger.warning("Scan returned 0 markets — check API connectivity")
+                    
             except Exception as e:
-                logger.error(f"Market scan failed: {e}")
-            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+                logger.error(f"❌ [MARKET SCAN] Failed: {e}")
+            finally:
+                await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
     ws_url = secrets.get("WS_URL") or os.getenv("WS_URL", "")
     polygon_rpc = secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL") or os.getenv("RPC_URL", "")
 
     polymarket_monitor = None
-    if ws_url:
+    onchain_monitor_enabled = _env_bool("POLYMARKET_ONCHAIN_MONITOR_ENABLED", False)
+    if onchain_monitor_enabled and ws_url:
         target_wallet = os.getenv("TARGET_WALLET", "")
         polymarket_monitor = PolymarketMonitor(
             on_signal=orchestrator.on_signal,
@@ -631,12 +1025,58 @@ async def main(
             rpc_url=polygon_rpc,
         )
         logger.info(f"Polymarket on-chain monitor: {'enabled (target=' + target_wallet + ')' if target_wallet else 'enabled (ALL wallets)'}")
-    else:
+    elif onchain_monitor_enabled:
         logger.info("Polymarket on-chain monitor: disabled (set WS_URL to enable)")
+    else:
+        logger.info("Polymarket on-chain monitor: disabled (POLYMARKET_ONCHAIN_MONITOR_ENABLED=0)")
+
+    health_supervisor = HealthSupervisorAgent(
+        feature_store=store,
+        ledger=ledger,
+        wallet_manager=PolymarketWalletManager(
+            vault_handler=container.vault,
+            polygon_rpc_url=polygon_rpc,
+        ),
+        data_archiver=DataArchiver(
+            db_path=os.getenv(
+                "API_FEATURE_STORE_PATH",
+                os.path.join(os.getenv("DATA_PATH", "user_data/data"), "feature_store.duckdb"),
+            ),
+        ),
+        broadcaster=orchestrator.broadcaster,
+        secrets=secrets,
+        config=HealthSupervisorConfig(
+            staleness_threshold_seconds=float(os.getenv("HEALTH_STALENESS_THRESHOLD_SECONDS", os.getenv("MAX_POLYMARKET_STALENESS_SECONDS", "60.0"))),
+            memory_warning_mb=float(os.getenv("HEALTH_MEMORY_WARNING_MB", os.getenv("MAX_MEMORY_MB_THRESHOLD", "1024"))),
+            memory_critical_mb=float(os.getenv("HEALTH_MEMORY_CRITICAL_MB", str(float(os.getenv("HEALTH_MEMORY_WARNING_MB", os.getenv("MAX_MEMORY_MB_THRESHOLD", "1024"))) * 1.5))),
+            wallet_reconciliation_interval_seconds=float(os.getenv("HEALTH_WALLET_RECONCILIATION_INTERVAL_SECONDS", "3600")),
+            maintenance_interval_seconds=float(os.getenv("HEALTH_MAINTENANCE_INTERVAL_SECONDS", "86400")),
+            check_interval_seconds=float(os.getenv("HEALTH_CHECK_INTERVAL_SECONDS", "5")),
+            wallet_drift_tolerance_usd=float(os.getenv("HEALTH_WALLET_DRIFT_TOLERANCE_USD", os.getenv("MAX_WALLET_DRIFT_USDC", "0.01"))),
+            disk_usage_warning_bytes=int(os.getenv("HEALTH_DISK_WARNING_BYTES", "5000000000")),
+            disk_usage_critical_bytes=int(os.getenv("HEALTH_DISK_CRITICAL_BYTES", "8000000000")),
+        ),
+    )
+    health_sidecar = HealthMonitorAgent(
+        config=HealthMonitorConfig(
+            heartbeat_interval_seconds=float(os.getenv("HEALTH_SIDE_CAR_HEARTBEAT_SECONDS", "30")),
+            duckdb_prune_interval_seconds=float(os.getenv("HEALTH_SIDE_CAR_DUCKDB_PRUNE_SECONDS", "86400")),
+            memory_check_interval_seconds=float(os.getenv("HEALTH_SIDE_CAR_MEMORY_CHECK_SECONDS", "60")),
+            max_memory_rss_mb=float(os.getenv("HEALTH_SIDE_CAR_MAX_MEMORY_RSS_MB", os.getenv("MAX_MEMORY_MB_THRESHOLD", "1024"))),
+            enable_ledger_reconciliation=_env_bool("HEALTH_SIDE_CAR_ENABLE_LEDGER_RECONCILIATION", True),
+            enable_feature_store_maintenance=_env_bool("HEALTH_SIDE_CAR_ENABLE_FEATURE_STORE_MAINTENANCE", True),
+        ),
+        feature_store=store,
+        ledger=ledger,
+        broadcaster=orchestrator.broadcaster,
+    )
 
     await _run_services_loop(
         listener=listener,
+        clob_feed_coro=live_clob_feed_coro,
         polymarket_monitor=polymarket_monitor,
+        health_supervisor=health_supervisor,
+        health_sidecar=health_sidecar,
         runner=runner,
         orchestrator=orchestrator,
         health_monitor=health_monitor,
@@ -714,15 +1154,22 @@ if __name__ == "__main__":
         logger.critical("🚨 CONFLICT: Both REAL=true and PAPER=true are defined in the environment!")
         raise QuantFatal("Conflicting environment variables: Both REAL=true and PAPER=true are defined!")
 
-    # Exclusive Priority: CLI Argument > Environment Variable
-    resolved_mode = "PAPER"
-    if real_env:
+    # Exclusive Priority: CLI Argument > Environment Variable > Database (Ledger) > Fallback ("PAPER")
+    resolved_mode = None
+    if args.mode is not None:
+        resolved_mode = args.mode
+    elif real_env:
         resolved_mode = "PROD"
     elif paper_env:
         resolved_mode = "PAPER"
-
-    if args.mode is not None:
-        resolved_mode = args.mode
+    else:
+        try:
+            from ledger.ledger_db import Ledger
+            resolved_mode = Ledger().get_execution_mode()
+            logger.info(f"Loaded execution mode from SQLite ledger database: `{resolved_mode}`")
+        except Exception as e:
+            logger.debug(f"Failed to read execution mode from database: {e}")
+            resolved_mode = "PAPER"
 
     try:
         require_production_confirmation(resolved_mode)

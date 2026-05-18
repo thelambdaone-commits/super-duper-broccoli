@@ -265,7 +265,7 @@
       "name": "Superpowers",
       "repo": "https://github.com/obra/superpowers",
       "category": "agent_methodology",
-      "status": "external_reference",
+      "status": "local_methodology_adapter",
       "token_strategy": "Use as a lightweight methodology reference for spec-first, plan-first, TDD, and review loops; keep the active context to the current task and touched files.",
       "use_for": [
         "Specification-driven implementation",
@@ -277,6 +277,12 @@
         "Mandatory process overhead for small fixes",
         "Replacing repo-specific MCP/project context tools",
         "Expanding task scope beyond the user's request"
+      ],
+      "local_entrypoints": [
+        "config/superpowers.json",
+        "core/services/superpowers_workflow.py",
+        "docs/superpowers_workflow.md",
+        "tests/services/test_superpowers_workflow.py"
       ],
       "install": [
         "Use upstream methodology as reference; do not install runtime dependencies by default"
@@ -337,7 +343,7 @@
       "local_entrypoints": [
         "utils/crypto_market_intelligence.py",
         "scripts/crypto_market_intelligence.py",
-        "api_server.py#/v1/market-intelligence/crypto",
+        "api/api_server.py#/v1/market-intelligence/crypto",
         "tests/test_crypto_market_intelligence.py"
       ],
       "required_guardrails": [
@@ -345,6 +351,101 @@
         "Use PolymarketClient public market data; no secrets required",
         "All generated signals must pass parser, risk, ledger, and execution mode checks before action",
         "Keep reports compact for Telegram and LLM prompts"
+      ]
+    },
+    {
+      "id": "openbb",
+      "name": "OpenBB",
+      "repo": "https://github.com/OpenBB-finance/OpenBB",
+      "category": "financial_data_platform",
+      "status": "external_reference",
+      "license": "AGPL-3.0",
+      "token_strategy": "Use OpenBB as a reference for market data aggregation, research workflows, and AI-agent tooling. Prefer compact adapters and context cards instead of vendoring upstream code.",
+      "use_for": [
+        "Financial data aggregation",
+        "Research dashboards",
+        "Agent-friendly market data tooling",
+        "Reference design for external data backends"
+      ],
+      "avoid_for": [
+        "Direct trading execution",
+        "Vendoring AGPL code into the runtime without license review",
+        "Replacing the existing risk, ledger, or execution guardrails",
+        "Sending secrets or private data to external OpenBB services"
+      ],
+      "required_guardrails": [
+        "Treat OpenBB output as research input only until validated locally",
+        "Keep the integration as an adapter or context card, not a runtime replacement",
+        "Add focused tests for any adapter or MCP tool that consumes OpenBB data",
+        "Keep all execution decisions behind parser, risk, ledger, and execution-mode checks"
+      ]
+    },
+    {
+      "id": "gsd_get_shit_done",
+      "name": "GSD / get-shit-done",
+      "repo": "https://github.com/gsd-build/get-shit-done",
+      "category": "agent_methodology",
+      "status": "local_spec_driven_adapter",
+      "license": "MIT upstream; adapted as concepts/config/docs only.",
+      "token_strategy": "Use config/gsd_operating_system.json to build compact work packets before loading broad repo context. Keep the phase report short and verify required outputs before handoff.",
+      "use_for": [
+        "Spec-driven development packets",
+        "Context-budgeted external project integration",
+        "Verification gates for agentic code changes",
+        "Durable handoff notes across sessions"
+      ],
+      "avoid_for": [
+        "Vendoring the upstream runtime into this repo",
+        "Bypassing local Codex permissions or production guardrails",
+        "Replacing Lobstar risk, ledger, credential, or execution controls",
+        "Sending secrets, wallet data, Telegram data, or raw logs to external LLMs"
+      ],
+      "local_entrypoints": [
+        "config/gsd_operating_system.json",
+        ".agents/gsd_execution_skill.md",
+        "core/services/gsd_workflow.py",
+        "docs/gsd_workflow.md",
+        "tests/services/test_gsd_workflow.py"
+      ],
+      "required_guardrails": [
+        "Adapters and context cards only by default",
+        "Every phase must define required outputs",
+        "Every implementation must include focused verification or residual-risk notes",
+        "No live trading action without deterministic parser, risk, ledger, and MODE validation"
+      ]
+    },
+    {
+      "id": "multi_persona_prompts",
+      "name": "Multi-Persona Prompt Registry",
+      "repo": "local",
+      "category": "agent_prompting",
+      "status": "local_prompt_adapter",
+      "token_strategy": "Use utils.persona_prompts.build_multi_persona_packet to generate compact persona prompts and priority files instead of pasting large role descriptions into every prompt.",
+      "use_for": [
+        "Trader, coder, ML, strategist, analyst, and actuary reviews",
+        "LLM Council profile construction",
+        "MiroFish simulation persona planning",
+        "Ruflo bounded agent orchestration"
+      ],
+      "avoid_for": [
+        "Live trading execution",
+        "Sending secrets, wallet data, Telegram data, or raw logs to external models",
+        "Unbounded multi-agent fan-out without a synthesis contract"
+      ],
+      "local_entrypoints": [
+        "config/persona_prompts.json",
+        "utils/persona_prompts.py",
+        "config/llm_council.json",
+        "config/mirofish.json",
+        "ruflo_config.json",
+        "docs/multi_persona_prompts.md",
+        "tests/test_persona_prompts.py"
+      ],
+      "required_guardrails": [
+        "Run personas independently before synthesis",
+        "Preserve dissent and uncertainty",
+        "Keep MiroFish research-only and Ruflo bounded by file ownership",
+        "Require deterministic verification before action"
       ]
     }
   ],
@@ -355,7 +456,7 @@
       "priority_files": [
         "utils/vault_handler.py",
         "core/freqai_engine.py",
-        "api_server.py"
+        "api/api_server.py"
       ]
     },
     {
@@ -383,6 +484,33 @@
         "mcp_agents/mcp_server.py",
         "mcp_agents/lobstar_agent.py",
         "config/mcp_tools.json"
+      ]
+    },
+    {
+      "id": "data_ingestion",
+      "entrypoint": "continuous_improvement.skills.data_ingestion.DataIngestionSkill",
+      "priority_files": [
+        "scrapers/data_pipeline.py",
+        "utils/market_data_reader.py",
+        "utils/orderbook_scraper.py"
+      ]
+    },
+    {
+      "id": "backtesting",
+      "entrypoint": "continuous_improvement.skills.backtesting.BacktestingSkill",
+      "priority_files": [
+        "scripts/backtest_simulation.py",
+        "scripts/simulate_trades.py",
+        "core/training_pipeline.py"
+      ]
+    },
+    {
+      "id": "post_trade_analytics",
+      "entrypoint": "continuous_improvement.skills.post_trade_analytics.PostTradeAnalyticsSkill",
+      "priority_files": [
+        "core/performance_attribution.py",
+        "continuous_improvement/agents/forensic_postmortem.py",
+        "ledger/ledger_db.py"
       ]
     }
   ]

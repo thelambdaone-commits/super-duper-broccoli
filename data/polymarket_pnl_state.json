@@ -1,0 +1,16 @@
+{
+  "wallets": {
+    "0xa005088ba69014581d6460db325627600887590b": {
+      "reference_capital": 14.82,
+      "label": "import proxy wallet"
+    },
+    "0xdc5585fc1cedf10eecedb9d71f02f13b34cf614e": {
+      "reference_capital": 14.82,
+      "label": "import EOA wallet"
+    },
+    "7413500821": {
+      "reference_capital": 14.82,
+      "label": "telegram owner fallback"
+    }
+  }
+}

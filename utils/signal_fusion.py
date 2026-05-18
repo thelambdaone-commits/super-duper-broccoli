@@ -9,7 +9,9 @@ import httpx
 
 logger = logging.getLogger("SignalFusion")
 
-MIN_EDGE_THRESHOLD = 0.07
+from utils.config_loader import TRADING_PARAMS
+
+MIN_EDGE_THRESHOLD = TRADING_PARAMS["MIN_EDGE_THRESHOLD"]
 MICROSTRUCTURE_WEIGHT = 0.35
 CALIBRATED_WEIGHT = 0.45
 SENTIMENT_WEIGHT = 0.20
@@ -323,7 +325,7 @@ class SignalFusion:
             return 0.0
 
         kelly = (edge * confidence) / 1.0
-        kelly = min(kelly, 0.25)
+        kelly = min(kelly, TRADING_PARAMS["MAX_KELLY_PCT"])
         kelly = max(kelly, 0.01)
         return kelly
 

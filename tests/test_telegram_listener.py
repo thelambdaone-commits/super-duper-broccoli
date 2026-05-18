@@ -236,6 +236,31 @@ async def test_check_auth_rejects_unknown_chat() -> None:
 
 
 @pytest.mark.asyncio
+async def test_check_auth_accepts_access_control_admin_when_chat_id_is_channel() -> None:
+    from utils.access_control import AccessControlManager
+
+    message = SimpleNamespace(
+        chat_id=123,
+        chat=SimpleNamespace(type="private"),
+        reply_text=AsyncMock(),
+    )
+    update = SimpleNamespace(
+        message=message,
+        channel_post=None,
+        effective_user=SimpleNamespace(id=123),
+    )
+    listener = TelegramListener(
+        bot_token="token",
+        on_signal=lambda _: None,
+        chat_id=-100,
+        access_control=AccessControlManager(admin_chat_ids=[123]),
+    )
+
+    assert await listener._check_auth(update) is True
+    message.reply_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_handle_error_replies_to_command_update() -> None:
     message = SimpleNamespace(reply_text=AsyncMock())
     update = SimpleNamespace(message=message, channel_post=None)
@@ -599,5 +624,4 @@ async def test_cmd_ai_status_errors_and_prompt(monkeypatch):
     mock_status_msg.edit_text.assert_called_once()
     final_text = mock_status_msg.edit_text.call_args[0][0]
     assert "OPENROUTER API KEY MISSING" in final_text or "LOBSTAR AI COUNCIL SYNTHESIS" in final_text
-
 

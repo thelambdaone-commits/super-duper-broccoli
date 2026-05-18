@@ -41,18 +41,8 @@ class APIKeyNotifier:
             is_critical=True,
         ),
         APIKeyRequirement(
-            key_name="POLYMARKET_API_KEY",
-            description="API Polymarket",
-            is_critical=True,
-        ),
-        APIKeyRequirement(
-            key_name="POLYMARKET_API_SECRET",
-            description="API Secret Polymarket",
-            is_critical=True,
-        ),
-        APIKeyRequirement(
-            key_name="POLYMARKET_SECRET",
-            description="Wallet Secret Polymarket",
+            key_name="CLOB_PRIVATE_KEY",
+            description="Polymarket CLOB Private Key (dérive les API credentials)",
             is_critical=True,
         ),
         APIKeyRequirement(

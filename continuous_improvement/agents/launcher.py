@@ -1,7 +1,11 @@
+import os
+import sys
+# Inject root directory to python path for PM2 and subprocess pathing
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 import asyncio
 import logging
 import signal
-import sys
 from typing import List, Optional
 
 from core.mlops_feedback_loop import LobstarMLOpsEngine

@@ -1,0 +1,3 @@
+[bandit]
+exclude_dirs = .venv,.git,__pycache__,logs,ledger.db,data,graphify-out,scratch,.agents,agent_skills,docs,tests
+skips = B101,B110,B311,B404,B603,B607

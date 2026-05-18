@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import numpy as np
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.model_selection import TimeSeriesSplit
 
 from utils.feature_store import FeatureStore
@@ -33,6 +34,7 @@ class TrainingPipeline:
         self.min_samples = min_train_samples
         self.validation_split = validation_split
         self._models: dict[str, Any] = {}
+        self._calibrated_models: dict[str, Any] = {}
         self._calibrators: dict[str, Any] = {}
         self._feature_registry: dict[str, list[str]] = {}
         os.makedirs(self.model_dir, exist_ok=True)
@@ -92,6 +94,25 @@ class TrainingPipeline:
         std = np.where(std < 1e-8, 1.0, std)
         z = np.abs((live[-1] - mean) / std)
         return float(np.max(z))
+
+    @staticmethod
+    def audit_model_calibration(
+        y_true: np.ndarray,
+        y_prob_predicted: np.ndarray,
+        n_bins: int = 10,
+    ) -> dict[str, Any]:
+        y_true_arr = np.asarray(y_true, dtype=np.int32)
+        y_prob_arr = np.asarray(y_prob_predicted, dtype=np.float64)
+        if y_prob_arr.ndim == 2:
+            y_prob_arr = y_prob_arr[:, 1]
+        true_freq, pred_prob = calibration_curve(y_true_arr, y_prob_arr, n_bins=n_bins, strategy="uniform")
+        ece = float(np.mean(np.abs(true_freq - pred_prob))) if len(true_freq) else 0.0
+        return {
+            "ece": round(ece, 6),
+            "true_frequencies": true_freq.tolist(),
+            "pred_probabilities": pred_prob.tolist(),
+            "n_bins": int(n_bins),
+        }
 
     def _build_training_set(
         self, ticker: str, feature_names: list[str], target_feature: str = "",
@@ -159,6 +180,26 @@ class TrainingPipeline:
 
         return X, y, sample_ts
 
+    def build_multi_market_frame(
+        self,
+        ticker: str,
+        feature_names: list[str],
+        target_feature: str = "",
+        binance_symbol: str = "",
+        since_ts: float = 0.0,
+        limit: int = 5000,
+        window_seconds: int = 300,
+    ) -> list[dict]:
+        base_rows = self.store.get_multi_market_feature_frame(
+            target_ticker=ticker,
+            base_feature_names=[name for name in feature_names if name != (target_feature or feature_names[-1])],
+            binance_symbol=binance_symbol or ticker,
+            since_ts=since_ts,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        return base_rows
+
     def train(
         self,
         ticker: str,
@@ -216,6 +257,7 @@ class TrainingPipeline:
 
         calibrator_path = os.path.join(self.model_dir, f"{ticker}_calibrator.pkl")
         calibration_log = None
+        calibrated_path = ""
         if len(X_val) >= 10 and len(np.unique(y_val)) >= 2:
             try:
                 from user_data.strategies.probability_calibrator import ProbabilityCalibrator
@@ -232,13 +274,40 @@ class TrainingPipeline:
                 calibrator.save(calibrator_path)
                 self._calibrators[ticker] = calibrator
                 calibration_log = calibrator.calibration_log
+
+                from user_data.freqaimodels.calibrated_bundle import CalibratedModelBundle
+                import joblib
+
+                bundle = CalibratedModelBundle(
+                    base_model=model,
+                    calibrator=calibrator,
+                    calibration_log=calibration_log,
+                )
+                calibrated_path = os.path.join(self.model_dir, f"{ticker}_calibrated.pkl")
+                joblib.dump(bundle, calibrated_path, compress=("xz", 3))
+                self._calibrated_models[ticker] = bundle
             except Exception as e:
                 logger.warning(f"Calibration persistence skipped for {ticker}: {e}")
+            if calibrated_path:
+                try:
+                    model_for_audit = self._calibrated_models[ticker].predict_proba(X_val)
+                    audit = self.audit_model_calibration(y_val, model_for_audit, n_bins=10)
+                    if calibration_log is None:
+                        calibration_log = {}
+                    calibration_log["ece"] = audit["ece"]
+                    calibration_log["calibration_curve"] = {
+                        "true_frequencies": audit["true_frequencies"],
+                        "pred_probabilities": audit["pred_probabilities"],
+                        "n_bins": audit["n_bins"],
+                    }
+                except Exception as e:
+                    logger.warning(f"Calibration audit skipped for {ticker}: {e}")
 
         result = {
             "ticker": ticker,
             "model_path": model_path,
             "calibrator_path": calibrator_path if os.path.exists(calibrator_path) else "",
+            "calibrated_model_path": calibrated_path if calibrated_path and os.path.exists(calibrated_path) else "",
             "train_samples": len(X_train),
             "val_samples": len(X_val),
             "train_start_ts": float(train_ts[0]) if len(train_ts) else 0.0,
@@ -306,7 +375,18 @@ class TrainingPipeline:
                 logger.warning(f"No model found for {ticker}")
                 return None
 
-        proba = model.predict_proba(features)
+        calibrated = self._calibrated_models.get(ticker)
+        if calibrated is None:
+            calibrated_path = os.path.join(self.model_dir, f"{ticker}_calibrated.pkl")
+            if os.path.exists(calibrated_path):
+                try:
+                    import joblib
+                    calibrated = joblib.load(calibrated_path)
+                    self._calibrated_models[ticker] = calibrated
+                except Exception as e:
+                    logger.warning(f"Failed to load calibrated model for {ticker}: {e}")
+
+        proba = calibrated.predict_proba(features) if calibrated is not None else model.predict_proba(features)
         di = 0.0
         ood_alert = False
         if hasattr(model, "_training_mean") and hasattr(model, "_training_std"):
@@ -475,6 +555,39 @@ class TrainingPipeline:
                     "mtime": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(),
                 })
         return models
+
+    def prune_model_artifacts(self, ticker: str, keep_latest: int = 2) -> dict[str, int]:
+        """
+        Keep only the active artifacts for a ticker and remove stale pkl files.
+        """
+        removed = 0
+
+        candidates: list[tuple[float, str]] = []
+        if os.path.exists(self.model_dir):
+            for fname in os.listdir(self.model_dir):
+                if fname.startswith(f"{ticker}_") and fname.endswith(".pkl"):
+                    path = os.path.join(self.model_dir, fname)
+                    candidates.append((os.path.getmtime(path), path))
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        keep_paths = set()
+        for suffix in ("_hybrid.pkl", "_calibrated.pkl", "_calibrator.pkl"):
+            path = os.path.join(self.model_dir, f"{ticker}{suffix}")
+            if os.path.exists(path):
+                keep_paths.add(path)
+
+        for _, path in candidates:
+            try:
+                if path in keep_paths:
+                    continue
+                os.remove(path)
+                removed += 1
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                logger.warning("Failed to prune model artifact %s: %s", path, exc)
+
+        return {"removed": removed, "kept": len(keep_paths)}
 
     def update_calibration_from_paper_trades(
         self, ticker: str, ledger: Any

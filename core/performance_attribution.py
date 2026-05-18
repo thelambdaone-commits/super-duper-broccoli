@@ -12,9 +12,11 @@ from utils.output_formatter import TelegramOutputFormatter
 
 logger = logging.getLogger("PerformanceAttribution")
 
-FRICTION_COST_PER_CONTRACT = 0.005
+from utils.config_loader import TRADING_PARAMS
+
+FRICTION_COST_PER_CONTRACT = TRADING_PARAMS["FRICTION_PER_CONTRACT"]
 EXECUTION_LOSS_THRESHOLD = 0.30
-MIN_EDGE_THRESHOLD = 0.07
+MIN_EDGE_THRESHOLD = TRADING_PARAMS["MIN_EDGE_THRESHOLD"]
 
 
 class PerformanceAttribution:
@@ -172,6 +174,11 @@ class PerformanceAttribution:
     ) -> None:
         cursor = self.ledger.conn.cursor()
 
+        cursor.execute(
+            "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES (?)",
+            (execution_mode,),
+        )
+
         cursor.execute("""
             SELECT total_trades, winning_trades, losing_trades, total_gross_pnl,
                    total_net_pnl, total_friction, avg_win, avg_loss
@@ -181,6 +188,7 @@ class PerformanceAttribution:
         metrics = cursor.fetchone()
 
         if not metrics:
+            logger.warning(f"No performance_metrics row for mode {execution_mode}, skipping")
             return
 
         total_trades = metrics["total_trades"] + 1

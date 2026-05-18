@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
+from utils.exceptions import QuantFatal
+
 logger = logging.getLogger("PredictiveEngine")
 
 DEFAULT_MODEL_DIR = os.path.join(
@@ -23,18 +25,21 @@ class PolymarketPredictiveEngine:
 
     DEFAULT_MIN_EDGE = 0.07
     TIME_DECAY_FLOOR = 0.15
+    DEFAULT_MAX_BINANCE_STALENESS_SECONDS = 3.0
 
     def __init__(
         self,
         models_ensemble: Optional[Dict[str, Any]] = None,
         calibrator: Optional[Any] = None,
         feature_pipeline: Optional[Any] = None,
+        feature_store: Optional[Any] = None,
         min_edge_threshold: float = DEFAULT_MIN_EDGE,
         allow_mock_predictions: Optional[bool] = None,
     ) -> None:
         self.models = models_ensemble or {}
         self.calibrator = calibrator
         self.pipeline = feature_pipeline
+        self.feature_store = feature_store
         self.min_edge = min_edge_threshold
         self.allow_mock_predictions = (
             os.getenv("ALLOW_SIMULATED_PREDICTIVE_GATE", "false").lower() == "true"
@@ -66,6 +71,104 @@ class PolymarketPredictiveEngine:
     def _get_mock_prediction(self) -> float:
         """Génère une prédiction simulée pour test."""
         return np.random.uniform(0.55, 0.75)
+
+    @staticmethod
+    def _max_binance_staleness_seconds() -> float:
+        raw_value = os.getenv(
+            "MAX_BINANCE_STALENESS_SECONDS",
+            str(PolymarketPredictiveEngine.DEFAULT_MAX_BINANCE_STALENESS_SECONDS),
+        )
+        try:
+            return max(0.0, float(raw_value))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid MAX_BINANCE_STALENESS_SECONDS=%r; falling back to %.1f",
+                raw_value,
+                PolymarketPredictiveEngine.DEFAULT_MAX_BINANCE_STALENESS_SECONDS,
+            )
+            return PolymarketPredictiveEngine.DEFAULT_MAX_BINANCE_STALENESS_SECONDS
+
+    def _latest_binance_snapshot(
+        self,
+        ticker: str,
+        max_staleness_seconds: Optional[float] = None,
+    ) -> dict[str, Any]:
+        if self.feature_store is None:
+            raise QuantFatal("FeatureStore unavailable for live Binance feature injection")
+
+        symbol = str(ticker or "").upper()
+        if not symbol.endswith("USDT"):
+            symbol = f"{symbol}USDT"
+
+        try:
+            events = self.feature_store.get_web_events(event_type="book_ticker", limit=200)
+        except Exception as exc:
+            raise QuantFatal(f"Unable to read Binance web events: {exc}") from exc
+
+        latest: dict[str, Any] | None = None
+        latest_ts = float("-inf")
+        for event in events:
+            if str(event.get("source", "")).strip() != "binance_ws":
+                continue
+            if str(event.get("market_slug", "")).strip().upper() != symbol:
+                continue
+            raw = event.get("raw") or {}
+            if not isinstance(raw, dict):
+                continue
+            event_ts = float(event.get("timestamp") or 0.0)
+            if event_ts >= latest_ts:
+                latest_ts = event_ts
+                latest = {
+                    "timestamp": event_ts,
+                    "binance_mid_price": float(raw.get("mid_price", raw.get("mid", 0.0)) or 0.0),
+                    "binance_spread_bps": float(raw.get("spread_bps", raw.get("spread", 0.0)) or 0.0),
+                    "binance_order_imbalance": float(raw.get("order_imbalance", 0.5) or 0.5),
+                    "binance_queue_velocity": float(raw.get("queue_velocity", 0.0) or 0.0),
+                    "binance_bid_volume": float(raw.get("bid_volume", raw.get("bid_depth", 0.0)) or 0.0),
+                    "binance_ask_volume": float(raw.get("ask_volume", raw.get("ask_depth", 0.0)) or 0.0),
+                }
+
+        if latest is None:
+            raise QuantFatal(f"No Binance snapshot available for {symbol}")
+
+        now = time.time()
+        max_staleness_seconds = (
+            self._max_binance_staleness_seconds()
+            if max_staleness_seconds is None
+            else float(max_staleness_seconds)
+        )
+        drift = now - float(latest["timestamp"])
+        if drift < 0:
+            raise QuantFatal(
+                f"Lookahead bias detected for {symbol}: snapshot timestamp is {abs(drift):.3f}s in the future"
+            )
+        if drift > max_staleness_seconds:
+            raise QuantFatal(
+                f"Binance snapshot for {symbol} is stale by {drift:.3f}s; inference blocked"
+            )
+        return latest
+
+    def get_live_prediction(
+        self,
+        ticker: str,
+        polymarket_frame: Dict[str, Any],
+        clob_price_yes: float,
+        timestamp_resolution: float,
+        max_staleness_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        binance_snapshot = self._latest_binance_snapshot(
+            ticker=ticker,
+            max_staleness_seconds=max_staleness_seconds,
+        )
+        live_features = {**polymarket_frame, **binance_snapshot}
+        df_live = pd.DataFrame(self._normalize_market_feature_rows(live_features))
+        if df_live.empty:
+            raise QuantFatal("Live feature matrix is empty after Binance injection")
+        return self.predict_winning_bet(
+            df_market_ticks=df_live,
+            clob_price_yes=clob_price_yes,
+            timestamp_resolution=timestamp_resolution,
+        )
 
     @staticmethod
     def _extract_positive_probability(prediction: Any) -> float:

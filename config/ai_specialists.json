@@ -24,7 +24,7 @@
       "name": "Security Auditor",
       "skill_context_id": "security",
       "tasks": ["secret exposure", "auth", "API hardening", "log redaction"],
-      "priority_files": ["utils/vault_handler.py", "api_server.py", "main_agentic_clob.py", "mcp_agents/mcp_server.py"],
+      "priority_files": ["utils/vault_handler.py", "api/api_server.py", "main_agentic_clob.py", "mcp_agents/mcp_server.py"],
       "output_contract": "Prioritized findings with exploit path, impact, and patch recommendation.",
       "provider_policy": "local_or_user_key_only"
     },
@@ -119,11 +119,29 @@
       }
     },
     {
+      "id": "agentic_trust_validator",
+      "name": "Agentic Trust Validator",
+      "skill_context_id": "agentic_validation",
+      "tasks": ["agent trace validation", "multi-path workflow acceptance", "promotion gate audit", "essential milestone extraction"],
+      "priority_files": ["core/services/agentic_trust_layer.py", "config/trading_agents_playbook.json", "config/rl_training_blueprint.json", "tests/services/test_agentic_trust_layer.py"],
+      "output_contract": "Trace validation report with missing essential milestones, incidental-noise notes, and promotion-gate recommendation.",
+      "provider_policy": "local_preferred"
+    },
+    {
+      "id": "gsd_workflow_operator",
+      "name": "GSD Workflow Operator",
+      "skill_context_id": "gsd_execution",
+      "tasks": ["spec intake", "context budgeting", "phase planning", "verification gates", "handoff notes"],
+      "priority_files": ["config/gsd_operating_system.json", ".agents/gsd_execution_skill.md", "core/services/gsd_workflow.py", "config/project_contexts.json", "docs/gsd_workflow.md"],
+      "output_contract": "Compact task packet, required phase outputs, guardrails honored, tests run, and residual-risk notes.",
+      "provider_policy": "local_preferred"
+    },
+    {
       "id": "api_dashboard_engineer",
       "name": "API Dashboard Engineer",
       "skill_context_id": "api",
       "tasks": ["FastAPI endpoints", "Streamlit dashboard", "read-only views", "auth boundaries"],
-      "priority_files": ["api_server.py", "dashboard.py", "ecosystem.config.js"],
+      "priority_files": ["api/api_server.py", "api/dashboard.py", "ecosystem.config.js"],
       "output_contract": "Endpoint/UI changes with auth and operational risk notes.",
       "provider_policy": "local_preferred"
     },

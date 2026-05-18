@@ -1,3 +1,32 @@
+const fs = require("fs");
+const path = require("path");
+
+function loadDotEnv(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return {};
+    }
+    return fs
+        .readFileSync(filePath, "utf8")
+        .split(/\r?\n/)
+        .reduce((env, line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) {
+                return env;
+            }
+            const index = trimmed.indexOf("=");
+            const key = trimmed.slice(0, index).trim();
+            const value = trimmed
+                .slice(index + 1)
+                .trim()
+                .replace(/^["']|["']$/g, "");
+            env[key] = value;
+            return env;
+        }, {});
+}
+
+const envFile = loadDotEnv(path.join(__dirname, ".env"));
+const env = (key, fallback = undefined) => process.env[key] || envFile[key] || fallback;
+
 module.exports = {
     apps: [{
         // Core trading runtime. Keep a single forked process because the bot owns
@@ -27,18 +56,22 @@ module.exports = {
         env: {
             NODE_ENV: "production",
             PYTHONUNBUFFERED: "1",
-            CHAT_ID: "-1003714224501",
-            TARGET_CHANNEL: "Lobstar",
-            TELEGRAM_PRIVATE_CHAT_IDS: "7413500821",
-            TELEGRAM_ADMIN_CHAT_IDS: "7413500821",
-            TELEGRAM_SIGNALS: process.env.TELEGRAM_SIGNALS || "true",
-            TELEGRAM_BROADCAST_ENABLED: process.env.TELEGRAM_BROADCAST_ENABLED || "1",
-            TELEGRAM_BROADCAST_EDGE_THRESHOLD: process.env.TELEGRAM_BROADCAST_EDGE_THRESHOLD || "0.07",
-            TELEGRAM_BROADCAST_MAX_PER_MINUTE: process.env.TELEGRAM_BROADCAST_MAX_PER_MINUTE || "3",
-            TELEGRAM_BROADCAST_TICKERS: process.env.TELEGRAM_BROADCAST_TICKERS || "SOL,BTC,ETH",
-            SECRET_SOURCE: process.env.SECRET_SOURCE || "auto",
-            VAULT_ADDR: process.env.VAULT_ADDR || "false",
-            VAULT_TOKEN: process.env.VAULT_TOKEN,
+            CHAT_ID: env("CHAT_ID"),
+            TARGET_CHANNEL: env("TARGET_CHANNEL", "Lobstar"),
+            TELEGRAM_CHANNEL_CHAT_ID: env("TELEGRAM_CHANNEL_CHAT_ID"),
+            TELEGRAM_CHANNEL_ID: env("TELEGRAM_CHANNEL_ID"),
+            TELEGRAM_BROADCASTER_CHANNEL_ID: env("TELEGRAM_BROADCASTER_CHANNEL_ID"),
+            TELEGRAM_PRIVATE_CHAT_IDS: env("TELEGRAM_PRIVATE_CHAT_IDS"),
+            TELEGRAM_ADMIN_CHAT_IDS: env("TELEGRAM_ADMIN_CHAT_IDS"),
+            TELEGRAM_SIGNALS: env("TELEGRAM_SIGNALS", "true"),
+            TELEGRAM_BROADCAST_ENABLED: env("TELEGRAM_BROADCAST_ENABLED", "1"),
+            TELEGRAM_BROADCAST_EDGE_THRESHOLD: env("TELEGRAM_BROADCAST_EDGE_THRESHOLD", "0.07"),
+            TELEGRAM_BROADCAST_MAX_PER_MINUTE: env("TELEGRAM_BROADCAST_MAX_PER_MINUTE", "3"),
+            TELEGRAM_BROADCAST_TICKERS: env("TELEGRAM_BROADCAST_TICKERS", "SOL,BTC,ETH"),
+            POLYMARKET_ONCHAIN_MONITOR_ENABLED: env("POLYMARKET_ONCHAIN_MONITOR_ENABLED", "0"),
+            SECRET_SOURCE: env("SECRET_SOURCE", "auto"),
+            VAULT_ADDR: env("VAULT_ADDR", "false"),
+            VAULT_TOKEN: env("VAULT_TOKEN"),
             // PROD is intentionally not enabled here. main_agentic_clob.py requires
             // an interactive confirmation plus LOBSTAR_PROD_CONFIRM_SECRET before
             // any PROD startup can proceed.
@@ -67,9 +100,9 @@ module.exports = {
         env: {
             NODE_ENV: "production",
             PYTHONUNBUFFERED: "1",
-            SECRET_SOURCE: process.env.SECRET_SOURCE || "auto",
-            VAULT_ADDR: process.env.VAULT_ADDR || "false",
-            VAULT_TOKEN: process.env.VAULT_TOKEN,
+            SECRET_SOURCE: env("SECRET_SOURCE", "auto"),
+            VAULT_ADDR: env("VAULT_ADDR", "false"),
+            VAULT_TOKEN: env("VAULT_TOKEN"),
             API_FEATURE_STORE_PATH: "data/api_feature_store.duckdb",
         },
     }, {

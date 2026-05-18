@@ -57,8 +57,48 @@ class Ledger:
         except sqlite3.OperationalError:
             pass
 
+        self._migrate_performance_metrics()
+        self._seed_performance_metrics_modes()
+        self._ensure_execution_columns()
         self._conn.commit()
         logger.info("Ledger schema initialized")
+
+    def _migrate_performance_metrics(self) -> None:
+        try:
+            cursor = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='performance_metrics'"
+            )
+            row = cursor.fetchone()
+            if row and 'CHECK' in row[0].upper():
+                logger.info("Migrating performance_metrics table to multi-mode schema")
+                self._conn.execute("DROP TABLE performance_metrics")
+                with open(self.schema_path) as f:
+                    self._conn.executescript(f.read())
+        except Exception as e:
+            logger.warning(f"performance_metrics migration skipped: {e}")
+
+    def _seed_performance_metrics_modes(self) -> None:
+        for mode in ('PAPER', 'SHADOW', 'PROD'):
+            try:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES (?)",
+                    (mode,),
+                )
+            except Exception:
+                pass
+
+    def _ensure_execution_columns(self) -> None:
+        for table in ("positions", "transactions"):
+            for col, col_type in [
+                ("requested_qty", "REAL"),
+                ("filled_qty", "REAL"),
+                ("execution_price", "REAL"),
+                ("notional_usd", "REAL"),
+            ]:
+                try:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type} DEFAULT 0.0")
+                except sqlite3.OperationalError:
+                    pass
 
     @contextmanager
     def _transaction(self):
@@ -122,11 +162,25 @@ class Ledger:
         }
 
     def record_order(
-        self, position_id: str, ticker: str, side: str, price: float, size: float, tenant_wallet: Optional[str] = None
+        self,
+        position_id: str,
+        ticker: str,
+        side: str,
+        price: float,
+        size: float,
+        tenant_wallet: Optional[str] = None,
+        requested_qty: Optional[float] = None,
+        filled_qty: Optional[float] = None,
+        execution_price: Optional[float] = None,
+        notional_usd: Optional[float] = None,
     ) -> None:
         if price <= 0 or size <= 0:
             raise QuantFatal("Order persistence failed: price and size must be positive")
-        capital_engaged = price * size
+        filled_qty_val = float(filled_qty if filled_qty is not None else size)
+        execution_price_val = float(execution_price if execution_price is not None else price)
+        requested_qty_val = float(requested_qty if requested_qty is not None else size)
+        notional_usd_val = float(notional_usd if notional_usd is not None else execution_price_val * filled_qty_val)
+        capital_engaged = notional_usd_val
 
         try:
             with self._transaction() as cursor:
@@ -153,20 +207,52 @@ class Ledger:
                     new_size = existing["size"] + size
                     new_capital = existing["capital_engaged"] + capital_engaged
                     cursor.execute(
-                        "UPDATE positions SET size = ?, capital_engaged = ? WHERE position_id = ?",
-                        (new_size, new_capital, position_id),
+                        "UPDATE positions SET size = ?, capital_engaged = ?, requested_qty = requested_qty + ?, "
+                        "filled_qty = filled_qty + ?, execution_price = ?, notional_usd = notional_usd + ? "
+                        "WHERE position_id = ?",
+                        (
+                            new_size,
+                            new_capital,
+                            requested_qty_val,
+                            filled_qty_val,
+                            execution_price_val,
+                            notional_usd_val,
+                            position_id,
+                        ),
                     )
                 else:
                     cursor.execute(
-                        "INSERT INTO positions (position_id, ticker, side, entry_price, size, capital_engaged, tenant_wallet) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (position_id, ticker, side, price, size, capital_engaged, tenant_wallet),
+                        "INSERT INTO positions (position_id, ticker, side, entry_price, size, requested_qty, filled_qty, execution_price, notional_usd, capital_engaged, tenant_wallet) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            position_id,
+                            ticker,
+                            side,
+                            price,
+                            size,
+                            requested_qty_val,
+                            filled_qty_val,
+                            execution_price_val,
+                            notional_usd_val,
+                            capital_engaged,
+                            tenant_wallet,
+                        ),
                     )
 
                 cursor.execute(
-                    "INSERT INTO transactions (position_id, ticker, side, price, size) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (position_id, ticker, side, price, size),
+                    "INSERT INTO transactions (position_id, ticker, side, price, size, requested_qty, filled_qty, execution_price, notional_usd) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        position_id,
+                        ticker,
+                        side,
+                        price,
+                        size,
+                        requested_qty_val,
+                        filled_qty_val,
+                        execution_price_val,
+                        notional_usd_val,
+                    ),
                 )
 
                 cursor.execute(
@@ -219,6 +305,10 @@ class Ledger:
         side: str,
         price: float,
         size: float,
+        requested_qty: Optional[float] = None,
+        filled_qty: Optional[float] = None,
+        execution_price: Optional[float] = None,
+        notional_usd: Optional[float] = None,
         confidence: float = 0.0,
         regime_label: str = "",
         signal_source: str = "",
@@ -226,7 +316,11 @@ class Ledger:
     ) -> dict:
         if price <= 0 or size <= 0:
             return {"error": "price and size must be positive"}
-        capital_virtual = price * size
+        requested_qty_val = float(requested_qty if requested_qty is not None else size)
+        filled_qty_val = float(filled_qty if filled_qty is not None else size)
+        execution_price_val = float(execution_price if execution_price is not None else price)
+        notional_usd_val = float(notional_usd if notional_usd is not None else execution_price_val * filled_qty_val)
+        capital_virtual = notional_usd_val
         position_id = f"paper-{ticker}-{side}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
         try:
             with self._transaction() as cursor:
@@ -235,16 +329,20 @@ class Ledger:
                     "(position_id, ticker, side, entry_price, size, capital_virtual, "
                     "confidence, regime_label, signal_source, tenant_wallet) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (position_id, ticker, side, price, size, capital_virtual,
+                    (position_id, ticker, side, price, filled_qty_val, capital_virtual,
                      confidence, regime_label, signal_source, tenant_wallet),
                 )
 
-            logger.info(f"Paper order recorded: {side} {size} {ticker} @ {price}")
+            logger.info(f"Paper order recorded: {side} {filled_qty_val} {ticker} @ {execution_price_val}")
             return {
                 "position_id": position_id,
                 "ticker": ticker,
                 "side": side,
-                "size": size,
+                "requested_qty": requested_qty_val,
+                "filled_qty": filled_qty_val,
+                "execution_price": execution_price_val,
+                "notional_usd": notional_usd_val,
+                "size": filled_qty_val,
                 "capital_virtual": capital_virtual,
             }
         except sqlite3.Error as e:
@@ -277,7 +375,53 @@ class Ledger:
                 "WHERE position_id = ?",
                 (position_id,),
             )
+
+        if pnl is not None:
+            self._update_performance_from_paper(pnl, is_win if is_win is not None else False)
+
         self.conn.commit()
+
+    def _update_performance_from_paper(self, pnl: float, is_win: bool) -> None:
+        is_win_int = 1 if is_win else 0
+        cursor = self.conn.cursor()
+
+        cursor.execute(
+            "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES ('PAPER')",
+        )
+
+        cursor.execute("""
+            SELECT total_trades, winning_trades, losing_trades,
+                   total_net_pnl, total_friction, avg_win, avg_loss
+            FROM performance_metrics WHERE execution_mode = 'PAPER'
+        """)
+        metrics = cursor.fetchone()
+        if not metrics:
+            return
+
+        total_trades = metrics["total_trades"] + 1
+        winning_trades = metrics["winning_trades"] + is_win_int
+        losing_trades = metrics["losing_trades"] + (0 if is_win else 1)
+        total_net_pnl = metrics["total_net_pnl"] + pnl
+
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
+        avg_win = (
+            (metrics["avg_win"] * metrics["winning_trades"] + (pnl if is_win else 0))
+            / winning_trades if winning_trades > 0 else 0.0
+        )
+        avg_loss = (
+            (metrics["avg_loss"] * metrics["losing_trades"] + (pnl if not is_win else 0))
+            / losing_trades if losing_trades > 0 else 0.0
+        )
+        profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else 0.0
+
+        cursor.execute("""
+            UPDATE performance_metrics SET
+                total_trades = ?, winning_trades = ?, losing_trades = ?,
+                total_net_pnl = ?, win_rate = ?, profit_factor = ?,
+                avg_win = ?, avg_loss = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE execution_mode = 'PAPER'
+        """, (total_trades, winning_trades, losing_trades, total_net_pnl,
+              win_rate, profit_factor, avg_win, avg_loss))
 
     def close_position(self, position_id: str) -> None:
         cursor = self.conn.cursor()

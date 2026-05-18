@@ -152,8 +152,21 @@ TelegramListener ──► SignalParser.parse_deterministic() ──► execute_
 | File | Purpose |
 |---|---|
 | `main_agentic_clob.py` | CLI: `--mode REPLAY|PAPER|SHADOW|PROD`, `--dry-run`, `--resolve-chat`, `--maintenance` |
-| `api_server.py` | FastAPI REST server — 13 endpoints for ledger, regime, circuit breaker, execution mode, arbitrage, sentiment, feature store |
-| `dashboard.py` | Streamlit dashboard — metric cards, positions table, arbitrage scanner, sentiment widget, execution controls |
+| `api/api_server.py` | FastAPI REST server — 13 endpoints for ledger, regime, circuit breaker, execution mode, arbitrage, sentiment, feature store |
+| `api/dashboard.py` | Streamlit dashboard — metric cards, positions table, arbitrage scanner, sentiment widget, execution controls |
+
+### Documentation
+
+| File | Purpose |
+|---|---|
+| `docs/README.md` | Documentation index |
+| `docs/web_first_architecture.md` | Web-first ingestion, CLOB snapshots, output formatting, FeatureStore persistence |
+| `docs/api_and_mcp.md` | HTTP API and MCP server surface |
+| `docs/execution_and_risk.md` | Risk engine, execution modes, and safety gates |
+| `docs/telegram_ingestion.md` | Telegram listener, command routing, and signal intake |
+| `docs/ledger_and_wallets.md` | Ledger persistence and wallet storage |
+| `docs/configuration.md` | Constants and secret-loading policy |
+| `docs/scripts_and_training.md` | Training and maintenance scripts |
 
 ## Execution Modes
 
@@ -270,6 +283,7 @@ The optional integration registry lives in `config/agent_integrations.json`:
 | Everything Claude Code | External reference for Codex-compatible skills, AGENTS.md patterns, and cost-aware workflows |
 | Superpowers | External reference for spec-first, TDD-oriented agent methodology |
 | Ruflo | External reference for bounded multi-agent orchestration and RAG workflow patterns |
+| OpenBB | External reference for financial data aggregation, research dashboards, and agent-friendly market data tooling |
 | Market Intelligence Platform App | Local Python adapter for crypto/Polymarket market intelligence reports |
 
 For low-token agent workflows, use `config/project_contexts.json` or the MCP tools
@@ -389,10 +403,10 @@ python scripts/train_all.py
 python scripts/dump_project.py -o project_dump.txt
 
 # FastAPI REST server
-uvicorn api_server:app --host 0.0.0.0 --port 8000
+uvicorn api.api_server:app --host 0.0.0.0 --port 8000
 
 # Streamlit dashboard
-streamlit run dashboard.py
+streamlit run api/dashboard.py
 
 # PM2 managed
 pm2 start ecosystem.config.js
@@ -441,7 +455,7 @@ Exposes 29 tools over stdio transport (configured in `config/mcp_tools.json`):
 
 ## API Server (FastAPI)
 
-`api_server.py` exposes 13 REST endpoints:
+`api/api_server.py` exposes 13 REST endpoints:
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -459,12 +473,12 @@ Exposes 29 tools over stdio transport (configured in `config/mcp_tools.json`):
 | `/v1/features/{ticker}/{feature_name}` | GET | Historical feature values |
 
 ```bash
-uvicorn api_server:app --host 0.0.0.0 --port 8000
+uvicorn api.api_server:app --host 0.0.0.0 --port 8000
 ```
 
 ## Dashboard (Streamlit)
 
-`dashboard.py` provides a browser-based UI with:
+`api/dashboard.py` provides a browser-based UI with:
 - 4-column metric cards (total capital, available, execution mode, open positions, beta exposure, market regime, feature store rows)
 - Open positions data table
 - Feature store stats table
@@ -473,7 +487,7 @@ uvicorn api_server:app --host 0.0.0.0 --port 8000
 - Execution Mode control (dropdown + apply)
 
 ```bash
-streamlit run dashboard.py
+streamlit run api/dashboard.py
 ```
 
 ## Continuous Improvement Agent
@@ -492,6 +506,12 @@ The CI agent integrates with the MCP server and can be queried via the `ci_agent
 ```bash
 pytest tests/ -v
 # 224 tests across 13 test files
+```
+
+## Security Scan
+
+```bash
+make bandit
 ```
 
 | Test File | Tests | Coverage |
@@ -525,8 +545,9 @@ pytest tests/ -v
 ```
 quant-agentic-trading-core/
 ├── main_agentic_clob.py       # CLI entry point
-├── api_server.py              # FastAPI REST server
-├── dashboard.py               # Streamlit dashboard
+├── api/
+│   ├── api_server.py          # FastAPI REST server
+│   └── dashboard.py           # Streamlit dashboard
 ├── config/                    # Configuration
 │   ├── constants.py
 │   ├── ledger_schema.sql

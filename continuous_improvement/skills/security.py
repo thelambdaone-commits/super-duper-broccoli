@@ -31,7 +31,7 @@ class SecuritySkill(Skill):
         return [
             "utils/vault_handler.py",
             "core/freqai_engine.py",
-            "api_server.py",
+            "api/api_server.py",
             "mcp_agents/mcp_server.py",
             "telegram_scraper/telegram_listener.py",
         ]

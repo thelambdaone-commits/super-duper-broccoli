@@ -44,6 +44,8 @@ class PaperExecutionResult:
         self.fill_probability = fill_probability
 
 
+from utils.config_loader import TRADING_PARAMS
+
 class PolymarketPaperEngine:
     """
     Simulateur d'Exécution Haute Fidélité (Paper Trading) pour Polymarket.
@@ -51,7 +53,7 @@ class PolymarketPaperEngine:
     et les probabilités de remplissage des ordres passifs.
     """
 
-    FRICTION_PER_CONTRACT = 0.005
+    FRICTION_PER_CONTRACT = TRADING_PARAMS["FRICTION_PER_CONTRACT"]
     LATENCY_MIN_MS = 15
     LATENCY_MAX_MS = 85
     EPSILON = 1e-9
@@ -68,6 +70,7 @@ class PolymarketPaperEngine:
         self.latency_min = latency_min_ms
         self.latency_max = latency_max_ms
         self._executions: List[Dict[str, Any]] = []
+        self._perf_attr = None
 
     @staticmethod
     def _is_buy(side: str) -> bool:
@@ -432,9 +435,15 @@ class PolymarketPaperEngine:
         if result.status == "SUCCESS" and self.ledger:
             try:
                 from core.performance_attribution import PerformanceAttribution
-                perf_attr = PerformanceAttribution(ledger=self.ledger)
+                if self._perf_attr is None:
+                    self._perf_attr = PerformanceAttribution(ledger=self.ledger)
+                    try:
+                        import asyncio
+                        asyncio.create_task(self._perf_attr.start())
+                    except RuntimeError:
+                        pass
 
-                trade_id = perf_attr.enregistrer_trade(
+                trade_id = self._perf_attr.enregistrer_trade(
                     ticker=ticker,
                     condition_id=f"cond_{ticker}",
                     side=side,
