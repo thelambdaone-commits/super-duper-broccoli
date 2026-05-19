@@ -54,15 +54,18 @@ class CopyConfig:
 class CopyTradingAgent:
     """
     Agent de copy trading - monitore un wallet et mirror ses trades.
+    Connecté au PortfolioRiskEngine pour respecter le Drawdown Circuit Breaker global.
     """
 
     def __init__(
         self,
         config: CopyConfig,
         on_copy_callback: Optional[Callable[[TargetTrade, float], Any]] = None,
+        risk_engine: Optional[Any] = None,
     ):
         self.config = config
         self.on_copy = on_copy_callback
+        self.risk_engine = risk_engine
         self._client = httpx.AsyncClient(timeout=30.0)
         self._last_trade_timestamp = 0.0
         self._running = False
@@ -175,16 +178,32 @@ class CopyTradingAgent:
         if self.config.buy_only and trade.side == "SELL":
             logger.info(f"⚠️ Skipping SELL trade (BUY-only mode): {trade.id}")
             return None
-            
+
+        # ─── Drawdown Circuit Breaker Check ───────────────────────────────────
+        if self.risk_engine is not None and hasattr(self.risk_engine, "ledger"):
+            try:
+                ledger = self.risk_engine.ledger
+                if hasattr(ledger, "get_global_drawdown"):
+                    global_dd = ledger.get_global_drawdown()
+                    if global_dd <= -0.10:
+                        logger.critical(
+                            f"🛑 [COPY TRADING] Drawdown Circuit Breaker ENGAGED "
+                            f"({global_dd*100:.1f}%). Blocking copy trade {trade.id}."
+                        )
+                        return None
+            except Exception as e:
+                logger.warning(f"CopyTradingAgent: drawdown check failed (non-blocking): {e}")
+        # ─────────────────────────────────────────────────────────────────────
+
         copy_notional = self.calculate_copy_size(trade.size)
         allowed, reason = self.check_risk_limits(copy_notional)
         if not allowed:
             logger.warning(f"⚠️ Risk check blocked trade: {reason}")
             return None
-        
+
         self._copied_trades.add(trade.id)
         self._session_notional += copy_notional
-        
+
         copy_signal = {
             "source": "copy_trading",
             "original_trade_id": trade.id,
@@ -198,12 +217,12 @@ class CopyTradingAgent:
             "market": trade.market,
             "timestamp": trade.timestamp,
         }
-        
+
         logger.info(
             f"📋 COPY SIGNAL: {trade.side} {copy_notional:.2f} USD @ {trade.price:.2f} "
             f"({trade.outcome})"
         )
-        
+
         return copy_signal
 
     async def start_monitoring(
