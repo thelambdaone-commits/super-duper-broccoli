@@ -1,0 +1,14 @@
+{
+  "fred_api_key_env": "FRED_API_KEY",
+  "default_taylor_variant": "1993",
+  "taylor_variants": ["1993", "1999", "balanced", "forward"],
+  "inflation_target": 2.0,
+  "neutral_rate": 2.5,
+  "gdp_nowcast_alpha": 0.3,
+  "risk_off_thresholds": {
+    "taylor_z_score_high": 2.0,
+    "taylor_z_score_low": -2.0,
+    "vix_high": 25.0,
+    "vix_low": 15.0
+  }
+}

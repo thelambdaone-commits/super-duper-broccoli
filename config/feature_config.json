@@ -1,0 +1,11 @@
+{
+  "feature_groups": {
+    "momentum": ["roc_1", "roc_5", "roc_21", "rsi", "macd", "macd_signal", "macd_histogram"],
+    "volatility": ["bb_upper", "bb_middle", "bb_lower", "bb_width", "bb_pct", "atr", "natr"],
+    "volume": ["volume_sma", "volume_ratio", "obv", "mfi"],
+    "trend": ["sma_10", "sma_20", "sma_50", "ema_12", "ema_26", "adx", "plus_di", "minus_di"],
+    "statistical": ["kurtosis", "skew", "hurst_exponent"],
+    "price_action": ["doji", "hammer", "engulfing", "morning_star", "evening_star", "three_white_soldiers", "three_black_crows"]
+  },
+  "default_indicators": ["roc_1", "roc_5", "rsi", "macd", "bb_width", "atr", "volume_ratio", "sma_20", "ema_12"]
+}

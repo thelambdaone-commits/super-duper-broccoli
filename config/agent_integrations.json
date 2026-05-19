@@ -86,6 +86,42 @@
       ]
     },
     {
+      "name": "GitAgent",
+      "repo": "https://github.com/open-gitagent/gitagent",
+      "package": "gitagent",
+      "purpose": "Git workflow automation, PR management, code review, commit analysis. Integrated as TypeScript/Node.js specialist agent.",
+      "status": "inactive_external_reference",
+      "local_entrypoints": [
+        "agents/gitagent/src/",
+        "agents/gitagent/skills/",
+        "agents/gitagent/agents/",
+        ".agents/gitagent_integration_skill.md",
+        "config/ai_specialists.json#gitagent_specialist",
+        "mcp_agents/tools/gitagent_tools.py"
+      ],
+      "tech_stack": "TypeScript/Node.js >= 18",
+      "capabilities": ["code-review", "pr-analysis", "git-automation", "commit-history", "branch-management"],
+      "skill_context_id": "gitagent"
+    },
+    {
+      "name": "MiroThinker",
+      "repo": "https://github.com/MiroMindAI/MiroThinker",
+      "package": "mirothinker",
+      "purpose": "Advanced reasoning engine for AI agents. Multi-step planning, decision analysis, confidence scoring, transparent thinking chains. Integrated as Rust + Python specialist.",
+      "status": "inactive_external_reference",
+      "local_entrypoints": [
+        "agents/mirothinker/apps/",
+        "agents/mirothinker/libs/",
+        ".agents/mirothinker_integration_skill.md",
+        "config/ai_specialists.json#mirothinker_specialist",
+        "mcp_agents/tools/mirothinker_tools.py"
+      ],
+      "tech_stack": "Rust (build) + Python (runtime)",
+      "build_system": "justfile",
+      "capabilities": ["reasoning", "planning", "decision-analysis", "confidence-scoring", "thinking-traces"],
+      "skill_context_id": "mirothinker"
+    },
+    {
       "name": "Ruflo",
       "repo": "https://github.com/ruvnet/ruflo",
       "purpose": "Multi-agent orchestration and RAG workflow reference for bounded research/review tasks.",
@@ -111,6 +147,26 @@
       "repo": "https://github.com/Jeomon/Meta-Agent-with-More-Agents",
       "purpose": "Meta-agent task delegation pattern using specialist agents for tool use and reasoning.",
       "status": "external_reference"
+    }
+  ],
+  "autonomous_problem_solving": [
+    {
+      "name": "AI-Problem-Solver",
+      "repo": "https://github.com/mwpenny/AI-Problem-Solver",
+      "purpose": "Recursive AI agent loop that analyzes, designs, and executes code fixes for bugs and new features.",
+      "status": "external_reference_methodology"
+    },
+    {
+      "name": "OpenClaw GitHub Issue Resolver",
+      "repo": "https://github.com/openclaw/github-issue-resolver",
+      "purpose": "Automated skill for ingesting issue specifications, selecting file context, and submitting PR-ready code modifications.",
+      "status": "external_reference_methodology"
+    },
+    {
+      "name": "Haystack GitHub Issue Resolver Agent",
+      "repo": "https://github.com/deepset-ai/haystack-cookbook/tree/main/notebooks/github_issue_resolver_agent",
+      "purpose": "Cookbook reference for multi-agent tool calling pipelines to resolve engineering issues with high verification standards.",
+      "status": "external_reference_methodology"
     }
   ]
 }

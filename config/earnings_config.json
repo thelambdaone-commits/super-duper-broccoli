@@ -1,0 +1,12 @@
+{
+  "watchlist": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
+  "finbert_model": "ProsusAI/finbert",
+  "hf_fallback_model": "ahmedrachid/FinancialBERT",
+  "use_earnings_analyzer": false,
+  "sentiment_thresholds": {
+    "bullish": 0.3,
+    "bearish": -0.3,
+    "neutral_range": [-0.15, 0.15]
+  },
+  "db_path": "user_data/data/earnings_sentiment.db"
+}

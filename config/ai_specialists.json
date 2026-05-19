@@ -171,6 +171,24 @@
       "priority_files": ["config/project_contexts.json", "user_data/strategies/arbitrage_scanner.py"],
       "output_contract": "Design-only notes unless a separate Solana adapter is explicitly requested.",
       "provider_policy": "local_preferred"
+    },
+    {
+      "id": "gitagent_specialist",
+      "name": "GitAgent Specialist",
+      "skill_context_id": "gitagent",
+      "tasks": ["git automation", "PR management", "code review", "branch analysis", "commit history"],
+      "priority_files": ["agents/gitagent/src", "agents/gitagent/skills", ".agents/gitagent_integration_skill.md"],
+      "output_contract": "Git workflow automation results with review findings, commit analysis, or improvement suggestions.",
+      "provider_policy": "local_preferred"
+    },
+    {
+      "id": "mirothinker_specialist",
+      "name": "MiroThinker Reasoning Agent",
+      "skill_context_id": "mirothinker",
+      "tasks": ["complex reasoning", "multi-step planning", "decision analysis", "confidence scoring", "thinking chains"],
+      "priority_files": ["agents/mirothinker/apps", "agents/mirothinker/libs", ".agents/mirothinker_integration_skill.md"],
+      "output_contract": "Structured reasoning traces with decision rationale, confidence scores, and transparent thinking process.",
+      "provider_policy": "local_preferred"
     }
   ]
 }

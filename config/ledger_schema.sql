@@ -20,7 +20,12 @@ CREATE TABLE IF NOT EXISTS positions (
     notional_usd REAL DEFAULT 0.0,
     capital_engaged REAL NOT NULL,
     status TEXT DEFAULT 'OPEN',
-    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    stop_loss_pct REAL DEFAULT 0.0,
+    take_profit_pct REAL DEFAULT 0.0,
+    exit_price REAL,
+    pnl REAL,
+    closed_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -58,7 +63,9 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     mid_price_signal REAL,
     fill_price REAL,
     slippage REAL,
-    execution_mode TEXT DEFAULT 'PAPER'
+    execution_mode TEXT DEFAULT 'PAPER',
+    stop_loss_pct REAL DEFAULT 0.0,
+    take_profit_pct REAL DEFAULT 0.0
 );
 
 -- Active trades for resolution tracking

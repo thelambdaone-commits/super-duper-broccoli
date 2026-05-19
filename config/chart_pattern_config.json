@@ -1,0 +1,16 @@
+{
+  "model_name": "foduucom/stockmarket-pattern-detection-yolov8",
+  "conf_threshold": 0.5,
+  "device": "cpu",
+  "supported_patterns": [
+    "head_and_shoulders",
+    "double_top",
+    "double_bottom",
+    "triangle_ascending",
+    "triangle_descending",
+    "wedge",
+    "flag"
+  ],
+  "chart_width": 640,
+  "chart_height": 480
+}

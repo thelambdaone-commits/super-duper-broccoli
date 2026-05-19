@@ -447,6 +447,68 @@
         "Keep MiroFish research-only and Ruflo bounded by file ownership",
         "Require deterministic verification before action"
       ]
+    },
+    {
+      "id": "ai_problem_solver",
+      "name": "AI-Problem-Solver",
+      "repo": "https://github.com/mwpenny/AI-Problem-Solver",
+      "category": "autonomous_problem_solving",
+      "status": "external_reference_methodology",
+      "token_strategy": "Use as a reference for recursive codebase problem solving loops. Map core concepts (recursive file search, LLM proposal, local execution) into GSDProblemSolverAgent.",
+      "use_for": [
+        "Recursive file and codebase analysis",
+        "Automated issue intake and task planning",
+        "LLM-generated code modifications for bugs/features"
+      ],
+      "avoid_for": [
+        "Directly running external problem solver wrappers on production trading code",
+        "Bypassing deterministic local tests"
+      ],
+      "required_guardrails": [
+        "All code changes must run through local pytest suite before acceptance",
+        "Keep the solver execution bounded (max iterations limit)",
+        "Never allow modification of secrets, credentials, or core risk components"
+      ]
+    },
+    {
+      "id": "github_issue_resolver",
+      "name": "OpenClaw GitHub Issue Resolver",
+      "repo": "https://openclawai.io/skills/skill/github-issue-resolver",
+      "category": "autonomous_problem_solving",
+      "status": "external_reference_methodology",
+      "token_strategy": "Use as a reference for automated git-level issue resolution, selecting file context, and submitting PR-ready code modifications.",
+      "use_for": [
+        "Automating issue-to-code workflow mapping",
+        "Context filtering by parsing files and diff summaries"
+      ],
+      "avoid_for": [
+        "Production runtime execution",
+        "Untracked modifications that skip GSD handoff report gates"
+      ],
+      "required_guardrails": [
+        "Verification gate is strictly mandatory",
+        "Ensure any proposed changes are sandboxed, tested, and can be automatically rolled back"
+      ]
+    },
+    {
+      "id": "haystack_issue_resolver",
+      "name": "Haystack GitHub Issue Resolver Agent",
+      "repo": "https://haystack.deepset.ai/cookbook/github_issue_resolver_agent",
+      "category": "autonomous_problem_solving",
+      "status": "external_reference_methodology",
+      "token_strategy": "Use Haystack multi-agent and tool-calling design principles to structure the problem solver agent's planning and context querying tools.",
+      "use_for": [
+        "Structuring tool-calling loops for repository analysis",
+        "Validating reasoning steps using agentic self-reflection"
+      ],
+      "avoid_for": [
+        "Using heavy external frameworks directly in the trading pipeline",
+        "Replacing the local GSD operating system phase-gate verification"
+      ],
+      "required_guardrails": [
+        "Adhere to local GSD context-budget rules (limit loaded tokens per stage)",
+        "Generate a detailed verification report for each resolved issue"
+      ]
     }
   ],
   "local_skills": [
@@ -511,6 +573,159 @@
         "core/performance_attribution.py",
         "continuous_improvement/agents/forensic_postmortem.py",
         "ledger/ledger_db.py"
+      ]
+    },
+    {
+      "id": "vol_surface",
+      "name": "Volatility Surface SSVI (NeuralVol)",
+      "category": "ml_model",
+      "status": "integrated_module",
+      "repo": "https://github.com/anirbanteotia/HYBRID-VOL-FORECASTING-NeuralVol-",
+      "use_for": [
+        "Implied volatility surface reconstruction and forecasting",
+        "SSVI parameterization (theta/rho/eta/gamma)",
+        "Synthetic surface generation for ML training",
+        "Arbitrage violation detection (calendar/butterfly)"
+      ],
+      "avoid_for": [
+        "Real-time options trading without Polymarket CLOB adapter"
+      ],
+      "local_entrypoints": [
+        "models/volatility_surface/",
+        "models/volatility_surface/adapter.py"
+      ]
+    },
+    {
+      "id": "earnings_sentiment",
+      "name": "Earnings Call Sentiment Pipeline",
+      "category": "data_pipeline",
+      "status": "integrated_module",
+      "repo": "https://github.com/jeremiahbohr/earnings-analyzer",
+      "use_for": [
+        "Earnings call transcript sentiment analysis",
+        "Post-earnings stock performance correlation",
+        "Financial NLP with FinBERT/FinancialBERT"
+      ],
+      "avoid_for": [
+        "Real-time intraday sentiment (use crypto_horizon_sentiment instead)"
+      ],
+      "local_entrypoints": [
+        "utils/earnings_sentiment_pipeline.py",
+        "utils/sentiment_ensemble.py"
+      ]
+    },
+    {
+      "id": "chart_pattern_detection",
+      "name": "Chart Pattern Detection YOLOv8",
+      "category": "computer_vision",
+      "status": "integrated_module",
+      "repo": "https://huggingface.co/foduucom/stockmarket-pattern-detection-yolov8",
+      "use_for": [
+        "Detecting Head&Shoulders, Triangles, W-Bottom patterns",
+        "Visual confirmation for VCP/CANSLIM screeners",
+        "Multi-modal signal generation (price + chart patterns)"
+      ],
+      "avoid_for": [
+        "Trading decisions based solely on visual patterns"
+      ],
+      "local_entrypoints": [
+        "utils/chart_pattern_detector.py"
+      ]
+    },
+    {
+      "id": "portfolio_optimization",
+      "name": "Portfolio Optimization (scikit-portfolio/PyPortfolioOpt)",
+      "category": "risk_management",
+      "status": "integrated_module",
+      "repo": "https://scikit-portfolio.github.io/scikit-portfolio/",
+      "use_for": [
+        "Mean-variance efficient frontier optimization",
+        "Risk parity, CVaR, CDaR portfolio construction",
+        "Portfolio weights optimization for multi-asset signals"
+      ],
+      "avoid_for": [
+        "Replacing existing Kelly sizing in portfolio_risk_engine.py"
+      ],
+      "local_entrypoints": [
+        "models/portfolio/",
+        "models/portfolio/optimizer.py"
+      ]
+    },
+    {
+      "id": "macro_intelligence",
+      "name": "Macro Intelligence Layer (AI Economist)",
+      "category": "macro_analysis",
+      "status": "integrated_module",
+      "repo": "https://github.com/garroshub/ai-economist-skill",
+      "use_for": [
+        "Taylor Rule policy rate estimation",
+        "GDP nowcasting from high-frequency indicators",
+        "Macro risk-on/risk-off regime assessment"
+      ],
+      "avoid_for": [
+        "Short-term trading signals (macro is a slow signal)"
+      ],
+      "local_entrypoints": [
+        "utils/macro_intelligence.py"
+      ]
+    },
+    {
+      "id": "deep_hedging",
+      "name": "Deep Hedging RL (rl-hedge-2019)",
+      "category": "reinforcement_learning",
+      "status": "integrated_module",
+      "repo": "https://github.com/tdmdal/rl-hedge-2019",
+      "use_for": [
+        "Deep hedging of options using DDPG agent",
+        "SABR stochastic volatility simulation",
+        "Mean-variance risk-adjusted hedge optimization"
+      ],
+      "avoid_for": [
+        "Production execution without paper trading validation"
+      ],
+      "local_entrypoints": [
+        "models/hedging/",
+        "models/hedging/ddpg_agent.py",
+        "models/hedging/envs.py"
+      ]
+    },
+    {
+      "id": "backtest_engine",
+      "name": "Quant Backtest Engine",
+      "category": "backtesting",
+      "status": "integrated_module",
+      "repo": "https://github.com/ARASH3280ARASH/ai-backtest-engine",
+      "use_for": [
+        "Vectorized long-short strategy backtesting",
+        "Transaction cost modeling",
+        "Performance metrics (Sharpe, Sortino, Calmar, IC)"
+      ],
+      "avoid_for": [
+        "High-frequency tick-level backtesting"
+      ],
+      "local_entrypoints": [
+        "engine/backtest/",
+        "engine/backtest/backtester.py",
+        "engine/backtest/metrics.py"
+      ]
+    },
+    {
+      "id": "feature_factory",
+      "name": "Advanced Feature Engineering (Stock-return-predictor)",
+      "category": "feature_engineering",
+      "status": "integrated_module",
+      "repo": "https://github.com/anirbanteotia/Stock-return-predictor",
+      "use_for": [
+        "40+ technical features (momentum, volatility, mean-reversion, volume)",
+        "Walk-forward cross-validation pipeline",
+        "Feature importance analysis"
+      ],
+      "avoid_for": [
+        "Real-time features (use feature_computed table in FeatureStore)"
+      ],
+      "local_entrypoints": [
+        "utils/feature_factory.py",
+        "user_data/strategies/feature_pipeline.py"
       ]
     }
   ]

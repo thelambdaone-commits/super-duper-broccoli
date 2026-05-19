@@ -1,0 +1,13 @@
+{
+  "n_strikes": 20,
+  "n_expiries": 5,
+  "strike_range": [-0.5, 0.5],
+  "expiry_range": [0.05, 1.0],
+  "model_dir": "models/volatility_surface/weights",
+  "device": "auto",
+  "synthetic_n_surfaces": 1000,
+  "reconstruction_epochs": 100,
+  "forecast_epochs": 100,
+  "ar1": 0.95,
+  "innov_std": 0.02
+}

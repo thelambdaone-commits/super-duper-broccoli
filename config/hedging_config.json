@@ -1,0 +1,26 @@
+{
+  "s0": 100.0,
+  "k": 100.0,
+  "t_days": 20,
+  "sigma": 0.2,
+  "spread": 0.01,
+  "num_contracts": 1,
+  "trade_freq": 1,
+  "ddpg": {
+    "lr_actor": 0.0001,
+    "lr_critic": 0.001,
+    "gamma": 0.99,
+    "tau": 1e-5,
+    "buffer_capacity": 100000,
+    "batch_size": 128,
+    "n_episodes": 5000,
+    "noise_start": 1.0,
+    "noise_end": 0.1,
+    "noise_decay": 0.99994
+  },
+  "sabr": {
+    "beta": 1.0,
+    "rho": -0.4,
+    "nu": 0.6
+  }
+}

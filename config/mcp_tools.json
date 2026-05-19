@@ -9,9 +9,51 @@
     {
       "name": "get_ledger_state",
       "description": "Reads active positions, capital allocation, and available capital from the SQLite ledger.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "set_execution_mode",
+      "description": "Changes the execution mode: REPLAY, PAPER, SHADOW, or PROD.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": { "mode": { "type": "string", "description": "Execution mode: REPLAY, PAPER, SHADOW, or PROD" } },
+        "required": ["mode"]
+      }
+    },
+    {
+      "name": "get_execution_mode",
+      "description": "Returns the current execution mode: REPLAY, PAPER, SHADOW, or PROD.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_paper_positions",
+      "description": "Returns all open paper trading positions from the virtual ledger.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "get_performance_summary",
+      "description": "Returns aggregated PnL metrics (win rate, profit factor, avg win/loss) for a given execution mode.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "mode": { "type": "string", "description": "Execution mode filter (default: PAPER)" } },
+        "required": []
+      }
+    },
+    {
+      "name": "get_pnl_history",
+      "description": "Returns historical closed trade performance data with PnL details.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "limit": { "type": "integer", "description": "Max records to return (default: 50)" } },
+        "required": []
+      }
+    },
+    {
+      "name": "get_closed_paper_positions",
+      "description": "Returns closed paper trading positions with PnL results from the virtual ledger.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "limit": { "type": "integer", "description": "Max positions to return (default: 50)" } },
         "required": []
       }
     },
@@ -21,41 +63,21 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "ticker": {
-            "type": "string",
-            "description": "Asset ticker symbol (default: SOL)"
-          },
-          "returns_json": {
-            "type": "string",
-            "description": "Optional JSON-encoded array of recent returns for live inference"
-          }
+          "ticker": { "type": "string", "description": "Asset ticker symbol (default: SOL)" },
+          "returns_json": { "type": "string", "description": "Optional JSON-encoded array of recent returns for live inference" }
         },
         "required": []
       }
     },
     {
-      "name": "emergency_circuit_breaker",
-      "description": "Instantly freezes or unfreezes all outbound trading operations. Action must be 'ENGAGE' or 'DISENGAGE'.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["ENGAGE", "DISENGAGE"],
-            "description": "ENGAGE to freeze trading, DISENGAGE to resume"
-          }
-        },
-        "required": ["action"]
-      }
+      "name": "get_arbitrage_opportunities",
+      "description": "Returns current arbitrage opportunities detected by ArbitrageScanner.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
     },
     {
       "name": "get_friction_model",
       "description": "Returns the current execution friction cost per contract used in backtest validation.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      }
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
     },
     {
       "name": "lobstar_submit_signal",
@@ -63,79 +85,33 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["BUY", "SELL", "HOLD"]
-          },
-          "asset": {
-            "type": "string",
-            "description": "Asset ticker (e.g., SOL, BTC, ETH)"
-          },
-          "side": {
-            "type": "string",
-            "enum": ["BUY", "SELL"]
-          },
-          "size": {
-            "type": "number",
-            "description": "Order size in units"
-          },
-          "price": {
-            "type": "number",
-            "description": "Limit price"
-          },
-          "confidence": {
-            "type": "number",
-            "description": "Model confidence in [0, 1]",
-            "default": 0.5
-          }
+          "action": { "type": "string", "enum": ["BUY", "SELL", "HOLD"], "description": "Trading action" },
+          "asset": { "type": "string", "description": "Asset ticker (e.g., SOL, BTC, ETH)" },
+          "side": { "type": "string", "enum": ["BUY", "SELL"], "description": "Order side" },
+          "size": { "type": "number", "description": "Order size in units" },
+          "price": { "type": "number", "description": "Limit price" },
+          "confidence": { "type": "number", "description": "Model confidence in [0, 1]", "default": 0.5 }
         },
         "required": ["action", "asset", "side", "size", "price"]
       }
     },
     {
-      "name": "get_circuit_breaker_status",
-      "description": "Returns whether the emergency circuit breaker is currently engaged.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      }
+      "name": "get_feature_store_stats",
+      "description": "Returns row counts for each table in the DuckDB feature store.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
     },
     {
-      "name": "list_project_contexts",
-      "description": "Returns compact IDs and metadata for external project contexts. Use before loading full project docs.",
+      "name": "get_feature_history",
+      "description": "Returns historical feature values for a given ticker and feature name.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "category": {
-            "type": "string",
-            "description": "Optional category filter, e.g. web_scraping, agent_framework, solana_arbitrage"
-          }
+          "ticker": { "type": "string", "description": "Asset ticker" },
+          "feature_name": { "type": "string", "description": "Feature name to query" },
+          "since_timestamp": { "type": "number", "description": "Earliest timestamp (default: 0)" },
+          "limit": { "type": "integer", "description": "Max records to return (default: 100)" }
         },
-        "required": []
-      }
-    },
-    {
-      "name": "get_project_context",
-      "description": "Returns a compact context card for one external project by id, including intended use and guardrails.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "project_id": {
-            "type": "string",
-            "description": "Project context id, e.g. scrapling, praisonai, solana_jupiter_arbitrage_bot"
-          }
-        },
-        "required": ["project_id"]
-      }
-    },
-    {
-      "name": "list_local_skill_contexts",
-      "description": "Returns compact local CI skill contexts and priority files for targeted analysis.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": []
+        "required": ["ticker", "feature_name"]
       }
     },
     {
@@ -143,12 +119,7 @@
       "description": "Returns specialized AI roles for targeted low-token project improvement tasks.",
       "inputSchema": {
         "type": "object",
-        "properties": {
-          "task": {
-            "type": "string",
-            "description": "Optional task filter, e.g. security, execution, provider"
-          }
-        },
+        "properties": { "task": { "type": "string", "description": "Optional task filter, e.g. security, execution, provider" } },
         "required": []
       }
     },
@@ -157,24 +128,7 @@
       "description": "Returns one AI specialist contract with priority files, provider policy, and output contract.",
       "inputSchema": {
         "type": "object",
-        "properties": {
-          "specialist_id": {
-            "type": "string"
-          }
-        },
-        "required": ["specialist_id"]
-      }
-    },
-    {
-      "name": "get_ai_specialist_prompt_context",
-      "description": "Returns compact prompt context for a specialist. Use instead of loading whole-repo context.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "specialist_id": {
-            "type": "string"
-          }
-        },
+        "properties": { "specialist_id": { "type": "string", "description": "Specialist ID" } },
         "required": ["specialist_id"]
       }
     },
@@ -184,46 +138,10 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "task": {
-            "type": "string",
-            "description": "Current task or prompt goal."
-          },
-          "specialist_id": {
-            "type": "string",
-            "description": "Optional specialist id, e.g. security_auditor or mcp_toolsmith."
-          },
-          "component": {
-            "type": "string",
-            "description": "Optional component filter for project memory."
-          },
-          "token_budget": {
-            "type": "integer",
-            "default": 2500
-          },
-          "as_text": {
-            "type": "boolean",
-            "default": false
-          }
-        },
-        "required": []
-      }
-    },
-    {
-      "name": "list_project_memory",
-      "description": "Lists compact persistent memory entries for this project.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "component": {
-            "type": "string"
-          },
-          "tag": {
-            "type": "string"
-          },
-          "limit": {
-            "type": "integer",
-            "default": 10
-          }
+          "task": { "type": "string", "description": "Current task or prompt goal" },
+          "specialist_id": { "type": "string", "description": "Optional specialist id" },
+          "component": { "type": "string", "description": "Optional component filter for project memory" },
+          "token_budget": { "type": "integer", "description": "Max token budget", "default": 2500 }
         },
         "required": []
       }
@@ -234,161 +152,230 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "component": {
-            "type": "string"
-          },
-          "summary": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "default": "note"
-          },
-          "tags_json": {
-            "type": "string",
-            "default": "[]"
-          },
-          "details": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string",
-            "default": "mcp"
-          }
+          "component": { "type": "string", "description": "Component name" },
+          "summary": { "type": "string", "description": "Memory summary" },
+          "kind": { "type": "string", "description": "Entry kind (default: note)" },
+          "tags_json": { "type": "string", "description": "JSON array of tags (default: [])" },
+          "details": { "type": "string", "description": "Optional details" }
         },
         "required": ["component", "summary"]
       }
     },
     {
-      "name": "get_ai_routing_policy",
-      "description": "Returns token-saving and safety policy for specialist routing.",
+      "name": "scan_polymarket",
+      "description": "Scans Polymarket predictive markets for sentiment analysis and activity levels.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": { "limit": { "type": "integer", "description": "Max markets to scan (default: 5)" } },
         "required": []
       }
     },
     {
-      "name": "list_free_ai_provider_sources",
-      "description": "Returns configured public sources for legitimate free-tier/local AI provider discovery.",
+      "name": "calculate_kelly_size",
+      "description": "Computes recommended position sizing based on trade confidence, asset price, and current volatility regime.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "ticker": { "type": "string", "description": "Asset ticker" },
+          "side": { "type": "string", "description": "Trade side (BUY/SELL)" },
+          "price": { "type": "number", "description": "Asset price" },
+          "confidence": { "type": "number", "description": "Trade confidence in [0, 1]", "default": 0.55 },
+          "regime": { "type": "string", "description": "Market regime label", "default": "LOW_VOLATILITY" }
+        },
+        "required": ["ticker", "side", "price"]
+      }
+    },
+    {
+      "name": "run_swarm_backtest",
+      "description": "Orchestrates multi-agent backtesting scenarios on historical quantitative assets.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "asset": { "type": "string", "description": "Asset to backtest" } },
+        "required": ["asset"]
+      }
+    },
+    {
+      "name": "find_arbitrage_opportunities",
+      "description": "Finds crypto and prediction market arbitrage opportunities with high implied spreads.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "min_spread_pct": { "type": "number", "description": "Minimum spread percentage (default: 1.5)" } },
         "required": []
       }
     },
     {
-      "name": "get_llm_council_config",
-      "description": "Returns the local LLM Council configuration without exposing API keys.",
+      "name": "calculate_market_making_spreads",
+      "description": "Calculates skew-adjusted bid and ask quotes for prediction market order-books.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "mid_price": { "type": "number", "description": "Current mid-price" },
+          "volatility": { "type": "number", "description": "Estimated volatility" },
+          "inventory": { "type": "number", "description": "Current inventory position" },
+          "target_inventory": { "type": "number", "description": "Target inventory (default: 0)" }
+        },
+        "required": ["mid_price", "volatility", "inventory"]
+      }
+    },
+    {
+      "name": "search_brave_web",
+      "description": "Executes external web search via Brave API to gather recent market consensus and context.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search query" },
+          "count": { "type": "integer", "description": "Number of results (default: 5)" }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "get_continuous_improvement_report",
+      "description": "Generates a consolidated code quality audit, test gap analysis, and self-improvement suggestions report.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "emergency_circuit_breaker",
+      "description": "Instantly freezes or unfreezes all outbound trading operations. Action must be 'ENGAGE' or 'DISENGAGE'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["ENGAGE", "DISENGAGE"], "description": "ENGAGE to freeze trading, DISENGAGE to resume" }
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "vol_surface_status",
+      "description": "Returns the status of the volatility surface module (SSVI models).",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "vol_surface_synthetic",
+      "description": "Generates synthetic SSVI volatility surfaces for training or analysis.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "n_surfaces": { "type": "integer", "description": "Number of surfaces to generate (default: 10)" },
+          "seed": { "type": "integer", "description": "Random seed (default: 42)" }
+        },
         "required": []
       }
     },
     {
-      "name": "build_llm_council_plan",
-      "description": "Builds a dry-run LLM Council execution plan for a question. Does not call external LLMs.",
+      "name": "sentiment_ensemble",
+      "description": "Analyzes financial text sentiment using an ensemble of VADER + FinBERT.",
       "inputSchema": {
         "type": "object",
-        "properties": {
-          "question": {
-            "type": "string"
-          },
-          "max_models": {
-            "type": "integer",
-            "default": 0
-          }
-        },
-        "required": ["question"]
+        "properties": { "text": { "type": "string", "description": "Financial text to analyze" } },
+        "required": ["text"]
       }
     },
     {
-      "name": "run_llm_council_query",
-      "description": "Runs the LLM Council through OpenRouter. Defaults to dry-run to prevent accidental external calls.",
+      "name": "macro_taylor_rule",
+      "description": "Estimates implied central bank policy rate using Taylor Rule.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "question": {
-            "type": "string"
-          },
-          "max_models": {
-            "type": "integer",
-            "default": 0
-          },
-          "dry_run": {
-            "type": "boolean",
-            "default": true
-          }
+          "inflation": { "type": "number", "description": "Current inflation rate (default: 3.0)" },
+          "unemployment": { "type": "number", "description": "Current unemployment rate (default: 4.0)" },
+          "current_rate": { "type": "number", "description": "Current policy rate (default: 4.5)" },
+          "variant": { "type": "string", "description": "Taylor rule variant: 1993, 1999, 2023, trimmed (default: 1993)" }
         },
-        "required": ["question"]
-      }
-    },
-    {
-      "name": "get_mirofish_config",
-      "description": "Returns the local MiroFish-style swarm simulation configuration.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
         "required": []
       }
     },
     {
-      "name": "build_mirofish_simulation_plan",
-      "description": "Builds a bounded MiroFish-style swarm simulation plan. Planning only; no external execution.",
+      "name": "macro_risk_assessment",
+      "description": "Assesses macro risk-on/risk-off regime using Taylor Rule + GDP + VIX.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "prediction_question": {
-            "type": "string"
-          },
-          "seed_materials_json": {
-            "type": "string",
-            "description": "JSON array of seed material strings",
-            "default": "[]"
-          },
-          "rounds": {
-            "type": "integer",
-            "default": 0
-          },
-          "agents": {
-            "type": "integer",
-            "default": 0
-          },
-          "domain": {
-            "type": "string",
-            "default": "market_prediction"
-          }
+          "inflation": { "type": "number", "description": "Current inflation rate (default: 3.0)" },
+          "unemployment": { "type": "number", "description": "Current unemployment rate (default: 4.0)" },
+          "vix": { "type": "number", "description": "Current VIX level (default: 15.0)" }
         },
-        "required": ["prediction_question"]
+        "required": []
       }
     },
     {
-      "name": "build_mirofish_trading_research_brief",
-      "description": "Builds a MiroFish-style trading research brief with project risk guardrails.",
+      "name": "chart_detect_patterns",
+      "description": "Detects candlestick chart patterns (Head&Shoulders, Triangle, etc.) using YOLOv8.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "ticker": {
-            "type": "string"
-          },
-          "market_context": {
-            "type": "string"
-          },
-          "prediction_question": {
-            "type": "string",
-            "default": ""
-          },
-          "rounds": {
-            "type": "integer",
-            "default": 0
-          },
-          "agents": {
-            "type": "integer",
-            "default": 0
-          }
+          "ohlcv_json": { "type": "string", "description": "JSON-encoded OHLCV array" },
+          "conf_threshold": { "type": "number", "description": "Confidence threshold (default: 0.5)" }
         },
-        "required": ["ticker", "market_context"]
+        "required": ["ohlcv_json"]
+      }
+    },
+    {
+      "name": "portfolio_optimize",
+      "description": "Optimizes portfolio weights using mean-variance, risk-parity, or equal-weight methods.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prices_json": { "type": "string", "description": "JSON-encoded array of price arrays" },
+          "tickers_json": { "type": "string", "description": "JSON-encoded array of ticker strings" },
+          "method": { "type": "string", "description": "Method: equal_weight, mean_variance, risk_parity (default: equal_weight)" }
+        },
+        "required": ["prices_json", "tickers_json"]
+      }
+    },
+    {
+      "name": "hedge_simulate_rl",
+      "description": "Simulates option hedging using a DDPG reinforcement learning agent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "n_episodes": { "type": "integer", "description": "Number of episodes to simulate (default: 20, max: 30)" },
+          "s0": { "type": "number", "description": "Initial spot price (default: 100.0)" },
+          "sigma": { "type": "number", "description": "Volatility (default: 0.2)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "earnings_sentiment_status",
+      "description": "Returns the status of the earnings sentiment pipeline.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    },
+    {
+      "name": "earnings_sentiment_analyze",
+      "description": "Analyzes earnings call transcript sentiment for a given ticker.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticker": { "type": "string", "description": "Stock ticker symbol" },
+          "quarter": { "type": "string", "description": "Fiscal quarter (e.g. Q1 2024)" }
+        },
+        "required": ["ticker"]
+      }
+    },
+    {
+      "name": "backtest_run",
+      "description": "Runs a vectorized backtest on price/signal dataframes with cost model.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prices_json": { "type": "string", "description": "JSON-encoded price DataFrame" },
+          "signals_json": { "type": "string", "description": "JSON-encoded signals DataFrame" },
+          "initial_capital": { "type": "number", "description": "Starting capital (default: 10000.0)" },
+          "spread_bps": { "type": "number", "description": "Spread in basis points (default: 1.0)" }
+        },
+        "required": ["prices_json", "signals_json"]
+      }
+    },
+    {
+      "name": "feature_factory_compute",
+      "description": "Computes 40+ technical features from OHLCV data using FeatureFactory.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ohlcv_json": { "type": "string", "description": "JSON-encoded OHLCV array with Open, High, Low, Close, Volume columns" }
+        },
+        "required": ["ohlcv_json"]
       }
     }
   ]
