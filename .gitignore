@@ -66,3 +66,17 @@ pm2-*.json
 
 # Graphify context-compression outputs
 graphify-out/
+
+# --- Patch Ajouté par l'Audit DevOps : Exclusion IDE & Agents ---
+# Antigravity (Google)
+.antigravity/
+.gemini/
+brain/
+scratch/
+
+# IDEs & Éditeurs Code
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo

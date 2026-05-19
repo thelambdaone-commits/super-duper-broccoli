@@ -611,7 +611,7 @@ quant-agentic-trading-core/
 │   ├── knowledge_base.py
 │   ├── analyzer.py
 │   └── skills/
-├── tests/                     # 224 tests (13 files)
+├── tests/                     # 66+ test files across unit, integration, execution, and services
 ├── .github/workflows/         # GitHub Actions CI
 │   └── ci.yml
 ├── requirements.txt
