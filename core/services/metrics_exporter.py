@@ -20,7 +20,8 @@ class ExecutionMetricsExporter:
     async def log_execution(self, signal: Any, report: dict[str, Any]) -> None:
         try:
             payload = self._build_payload(signal, report)
-            await asyncio.to_thread(self._append_to_file, payload)
+            async with self._lock:
+                self._append_to_file(payload)
         except Exception as exc:
             logger.error("Friction Metrics: unable to export execution report: %s", exc)
 

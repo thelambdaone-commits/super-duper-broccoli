@@ -109,6 +109,32 @@ async def _execute_guarded(
     if price <= 0:
         return {"status": "SKIPPED", "reason": "Invalid price"}
 
+    # Slippage Gate: Reject if current orderbook odds deviate by > 1.5% from signal price
+    try:
+        if mode in ("PAPER", "SHADOW", "PROD") and freqai and hasattr(freqai, "client") and hasattr(freqai.client, "get_order_book"):
+            book = freqai.client.get_order_book(ticker)
+            bids = book.bids if hasattr(book, "bids") else book.get("bids", [])
+            asks = book.asks if hasattr(book, "asks") else book.get("asks", [])
+            if bids and asks:
+                best_bid = float(bids[0].price if hasattr(bids[0], "price") else bids[0].get("price", 0))
+                best_ask = float(asks[0].price if hasattr(asks[0], "price") else asks[0].get("price", 0))
+                if best_bid > 0 and best_ask > 0:
+                    mid_price = (best_bid + best_ask) / 2.0
+                    price_diff = abs(mid_price - price) / price
+                    if price_diff > 0.015:  # 1.5% slippage bound
+                        logger.warning(
+                            f"⚡ [SLIPPAGE GATE] Price deviation too high: mid_price={mid_price:.4f}, "
+                            f"signal_price={price:.4f} (diff={price_diff:.2%}). Rejecting trade."
+                        )
+                        return {
+                            "status": "SKIPPED",
+                            "reason": f"Slippage threshold exceeded (deviation={price_diff:.2%})",
+                            "ticker": ticker,
+                            "side": side,
+                        }
+    except Exception as exc:
+        logger.debug(f"Slippage check bypassed: {exc}")
+
     report_data = {
         "ticker": ticker, "side": side, "price": price,
         "size": size, "executed_size": 0.0, "probability": confidence,

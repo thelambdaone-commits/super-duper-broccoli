@@ -66,5 +66,5 @@ class TrainingPipelinePredictiveAdapter:
 
         row = df_market_ticks.iloc[-1]
         if hasattr(row, "to_frame"):
-            return row.to_frame().T.values
-        return df_market_ticks.values[-1:]
+            return row.to_frame().T
+        return df_market_ticks.iloc[[-1]]

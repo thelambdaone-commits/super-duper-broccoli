@@ -127,7 +127,14 @@ class LobstarOrchestrator:
 
             if result.get("status") == "SUCCESS":
                 logger.info(f"Signal executed successfully: {result.get('trade_id', 'N/A')}")
-                self.container.notifier.send(format_execution_notification(signal, result, self.execution_mode, success=True))
+                ledger = getattr(self.container, "ledger", None)
+                live_mode = self.execution_mode
+                if ledger and hasattr(ledger, "get_execution_mode"):
+                    try:
+                        live_mode = ledger.get_execution_mode()
+                    except Exception:
+                        pass
+                self.container.notifier.send(format_execution_notification(signal, result, live_mode, success=True))
                 exporter = getattr(self.container, "metrics_exporter", None)
                 if exporter:
                     try:
@@ -315,8 +322,26 @@ class LobstarOrchestrator:
             logger.warning("Regime prediction failed, using UNKNOWN: %s", exc)
             label = "UNKNOWN"
 
+        passive_allowed = getattr(self.listener, "passive_executor_allowed", True)
+        if (signal.get("execution_preference") == "PASSIVE_ONLY" or signal.get("passive_only")) and not passive_allowed:
+            logger.warning("Passive execution preference requested but PassiveExecutor is frozen. Skipping signal execution.")
+            return {
+                "status": "SKIPPED",
+                "reason": "PassiveExecutor is frozen (/freeze active)",
+                "ticker": signal.get("ticker", "Unknown"),
+                "side": signal.get("side", "Unknown"),
+            }
+
         current_executor = self.container.executor
         if label == "LOW_VOLATILITY":
+            if not passive_allowed:
+                logger.warning("Regime is LOW_VOLATILITY but PassiveExecutor is frozen. Skipping signal execution.")
+                return {
+                    "status": "SKIPPED",
+                    "reason": "PassiveExecutor is frozen (/freeze active)",
+                    "ticker": signal.get("ticker", "Unknown"),
+                    "side": signal.get("side", "Unknown"),
+                }
             logger.info("Regime is LOW_VOLATILITY: Forcing PassiveExecutor (Maker Mode)")
             current_executor = self.container.executor
         else:

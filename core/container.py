@@ -78,8 +78,61 @@ class ServiceContainer:
             ledger=self.ledger,
             maker_timeout_calibrator=self._make_timeout_calibrator(),
         )
-        
+
+        # New module instances (lazy init with try/except)
+        self.vol_surface: Optional["VolSurfaceAdapter"] = None
+        self.earnings: Optional["EarningsSentimentPipeline"] = None
+        self.chart_detector: Optional["ChartPatternDetector"] = None
+        self.sentiment_ensemble: Optional["SentimentEnsemble"] = None
+        self.portfolio_opt: Optional["PortfolioOptimizer"] = None
+        self.macro: Optional["MacroIntelligence"] = None
+        self.backtester: Optional["Backtester"] = None
+        self.feature_factory: Optional["FeatureFactory"] = None
+        self._init_new_modules()
+
         logger.info("ServiceContainer: All core services initialized.")
+
+    def _init_new_modules(self) -> None:
+        try:
+            from models.volatility_surface import VolSurfaceAdapter
+            self.vol_surface = VolSurfaceAdapter()
+        except Exception as e:
+            logger.warning(f"VolSurfaceAdapter init failed: {e}")
+        try:
+            from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline
+            self.earnings = EarningsSentimentPipeline(use_huggingface=True)
+        except Exception as e:
+            logger.warning(f"EarningsSentimentPipeline init failed: {e}")
+        try:
+            from utils.chart_pattern_detector import ChartPatternDetector
+            self.chart_detector = ChartPatternDetector()
+        except Exception as e:
+            logger.warning(f"ChartPatternDetector init failed: {e}")
+        try:
+            from utils.sentiment_ensemble import SentimentEnsemble
+            self.sentiment_ensemble = SentimentEnsemble(use_vader=True, use_finbert=True)
+        except Exception as e:
+            logger.warning(f"SentimentEnsemble init failed: {e}")
+        try:
+            from models.portfolio import PortfolioOptimizer
+            self.portfolio_opt = PortfolioOptimizer(method="mean_variance")
+        except Exception as e:
+            logger.warning(f"PortfolioOptimizer init failed: {e}")
+        try:
+            from utils.macro_intelligence import MacroIntelligence
+            self.macro = MacroIntelligence()
+        except Exception as e:
+            logger.warning(f"MacroIntelligence init failed: {e}")
+        try:
+            from engine.backtest import Backtester
+            self.backtester = Backtester(initial_capital=10000.0)
+        except Exception as e:
+            logger.warning(f"Backtester init failed: {e}")
+        try:
+            from utils.feature_factory import FeatureFactory
+            self.feature_factory = FeatureFactory
+        except Exception as e:
+            logger.warning(f"FeatureFactory init failed: {e}")
 
     @classmethod
     def get_instance(cls) -> "ServiceContainer":

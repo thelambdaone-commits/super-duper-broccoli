@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import numpy as np
+import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.model_selection import TimeSeriesSplit
 
@@ -386,7 +387,12 @@ class TrainingPipeline:
                 except Exception as e:
                     logger.warning(f"Failed to load calibrated model for {ticker}: {e}")
 
-        proba = calibrated.predict_proba(features) if calibrated is not None else model.predict_proba(features)
+        prediction_input = self._prepare_prediction_input(model, features)
+        proba = (
+            calibrated.predict_proba(prediction_input)
+            if calibrated is not None
+            else model.predict_proba(prediction_input)
+        )
         di = 0.0
         ood_alert = False
         if hasattr(model, "_training_mean") and hasattr(model, "_training_std"):
@@ -425,6 +431,19 @@ class TrainingPipeline:
             "dissimilarity_index": di,
             "ood_alert": ood_alert,
         }
+
+    @staticmethod
+    def _prepare_prediction_input(model: Any, features: np.ndarray) -> Any:
+        feature_names = list(getattr(model, "_feature_names", []) or [])
+        if isinstance(features, pd.DataFrame):
+            if feature_names and list(features.columns) != feature_names and len(feature_names) == features.shape[1]:
+                return features.copy().set_axis(feature_names, axis=1)
+            return features
+
+        arr = np.asarray(features)
+        if arr.ndim == 2 and feature_names and arr.shape[1] == len(feature_names):
+            return pd.DataFrame(arr, columns=feature_names)
+        return arr
 
     def latest_features_as_vector(
         self, ticker: str, max_history: int = 50

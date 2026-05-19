@@ -49,6 +49,7 @@ class LobstarHealthMonitor:
         self.orchestrator = orchestrator
         self.runner = runner
         self.port = port
+        self._server = None
         self._server_task = None
 
     def start(self) -> None:
@@ -63,14 +64,15 @@ class LobstarHealthMonitor:
             log_level="warning",
             loop="asyncio"
         )
-        server = uvicorn.Server(config)
-        
-        self._server_task = asyncio.create_task(server.serve())
+        self._server = uvicorn.Server(config)
+        self._server_task = asyncio.create_task(self._server.serve())
         logger.info(f"🏥 [HEALTH MONITOR] Diagnostic liveness probe listening on HTTP port {self.port}")
 
     async def stop(self) -> None:
+        if self._server:
+            self._server.should_exit = True
+            self._server.force_exit = True
         if self._server_task:
-            self._server_task.cancel()
             try:
                 await self._server_task
             except asyncio.CancelledError:
