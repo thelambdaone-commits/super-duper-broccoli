@@ -65,22 +65,22 @@ class AgentSwarmLauncher:
             self.mlops_engine.set_baseline(ticker, self._generate_baseline(ticker))
 
         self.microfish_agent = MicrofishIngestAgent()
-        asyncio.create_task(self.microfish_agent.start(tickers, interval=2.0))
+        asyncio.create_task(self.microfish_agent.start(tickers, interval=15.0))
 
         self.forensic_agent = ForensicPostMortemAgent()
         await self.forensic_agent.start()
 
         self.drift_monitor_agent = MLDriftMonitorAgent(mlops_engine=self.mlops_engine)
-        await self.drift_monitor_agent.start(tickers=tickers, interval=60.0)
+        await self.drift_monitor_agent.start(tickers=tickers, interval=300.0)
 
         self.retrain_agent = AdaptiveRetrainingAgent(mlops_engine=self.mlops_engine)
-        await self.retrain_agent.start(interval=120.0)
+        await self.retrain_agent.start(interval=600.0)
 
         self.embedding_agent = FeatureEmbeddingArchiverAgent(mlops_engine=self.mlops_engine)
-        await self.embedding_agent.start(tickers=tickers, interval=10.0)
+        await self.embedding_agent.start(tickers=tickers, interval=60.0)
 
         self._running = True
-        logger.info("✅ All 7 agents started")
+        logger.info("✅ All 7 agents started (VPS Optimized Intervals)")
 
     def _generate_baseline(self, ticker: str):
         import numpy as np
