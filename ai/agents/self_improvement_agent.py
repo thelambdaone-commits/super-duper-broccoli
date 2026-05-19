@@ -31,33 +31,47 @@ class SelfImprovementAgent:
             f.write(json.dumps(incident) + "\n")
         logger.info(f"Incident recorded: {category} - {root_cause}")
 
-    def analyze_logs(self, log_file: str = "logs/pm2-out.log"):
-        """Analyzes logs to detect patterns of failure or inefficiency."""
-        if not os.path.exists(log_file):
-            return []
-        
-        findings = []
-        # Simple pattern detection (could be enhanced with LLM)
-        with open(log_file, "r") as f:
-            lines = f.readlines()[-500:] # Last 500 lines
-            
-        latency_hits = [l for l in lines if "latency" in l.lower() and "ms" in l.lower()]
-        if len(latency_hits) > 10:
-            findings.append({
-                "type": "PERFORMANCE",
-                "issue": "Recurring latency spikes detected in execution loop.",
-                "suggestion": "Move orderbook parsing to a dedicated worker thread."
-            })
-            
-        drift_hits = [l for l in lines if "drift" in l.lower() and "detected" in l.lower()]
-        if drift_hits:
-            findings.append({
-                "type": "MODEL_GOVERNANCE",
-                "issue": "Model drift detected for multiple tickers.",
-                "suggestion": "Trigger automatic retraining pipeline with updated hyperparam grid."
-            })
-
-        return findings
+    def analyze_logs(self, log_file: str = "logs/pm2-out.log") -> list:
+        """
+        Delegates log analysis to LobstarAutonomicHealer to avoid dual-scanning
+        and concurrent remediation actions on the same incident.
+        The AutonomicHealer uses seek/tell (incremental scanning) which is more
+        efficient than reading the last N lines each time.
+        """
+        try:
+            from core.autonomic_healer import LobstarAutonomicHealer
+            healer = LobstarAutonomicHealer(log_file_path=log_file)
+            incident_ids = healer.analyser_nouveaux_logs()
+            # Convert incident IDs to the same format used by generate_improvement_report()
+            findings = []
+            for incident_id in incident_ids:
+                findings.append({
+                    "type": incident_id,
+                    "issue": f"Incident detected: {incident_id}",
+                    "suggestion": "Consult LobstarAutonomicHealer remediation actions for details.",
+                })
+            return findings
+        except Exception as e:
+            logger.warning(f"Log analysis via AutonomicHealer failed, falling back: {e}")
+            # Fallback: lightweight local pattern scan (no remediation actions)
+            findings = []
+            if not os.path.exists(log_file):
+                return []
+            with open(log_file, "r") as f:
+                lines = f.readlines()[-500:]
+            if sum(1 for l in lines if "latency" in l.lower() and "ms" in l.lower()) > 10:
+                findings.append({
+                    "type": "PERFORMANCE",
+                    "issue": "Recurring latency spikes detected in execution loop.",
+                    "suggestion": "Move orderbook parsing to a dedicated worker thread.",
+                })
+            if any("drift" in l.lower() and "detected" in l.lower() for l in lines):
+                findings.append({
+                    "type": "MODEL_GOVERNANCE",
+                    "issue": "Model drift detected for multiple tickers.",
+                    "suggestion": "Trigger automatic retraining pipeline with updated hyperparam grid.",
+                })
+            return findings
 
     async def _call_local_coding_tool(self, tool: str, prompt: str) -> Optional[str]:
         """Calls local coding assistants like opencode, copilot, or codex."""
