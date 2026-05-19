@@ -1,0 +1,6 @@
+[submodule "agents/gitagent"]
+	path = agents/gitagent
+	url = https://github.com/open-gitagent/gitagent
+[submodule "agents/mirothinker"]
+	path = agents/mirothinker
+	url = https://github.com/MiroMindAI/MiroThinker

@@ -16,6 +16,8 @@ Lobstar OS partitions cognitive responsibilities across specialized AI agents. T
 | `credential` | Polymarket Credential Specialist | CLOB credential loading, encrypted wallet resolution, proxy wallet linking, balance checking, order placement pipeline. | [vault_handler.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/vault_handler.py), [credential_manager.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/credential_manager.py), [container.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/core/container.py) | [.agents/polymarket_credential_flow_skill.md](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/.agents/polymarket_credential_flow_skill.md) |
 | `tuning` | ML Confidence Tuner | Closed simulated trade outcome resolution, reinforcement autotuning, ML bias mapping. | [rl_feedback_loop.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/scripts/rl_feedback_loop.py) | [.agents/reinforcement_learning_skill.md](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/.agents/reinforcement_learning_skill.md) |
 | `gsd` | GSD Workflow Operator | Spec intake, context budgeting, phase gates, verification reports, durable handoff notes. | [gsd_workflow.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/core/services/gsd_workflow.py), [gsd_operating_system.json](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/config/gsd_operating_system.json) | [.agents/gsd_execution_skill.md](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/.agents/gsd_execution_skill.md) |
+| `gitagent` | GitAgent Specialist | Automated Git workflows, PR management, code review, branch analysis, commit history insights. | [agents/gitagent/](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/agents/gitagent/), [agents/gitagent/skills/](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/agents/gitagent/skills/) | [.agents/gitagent_integration_skill.md](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/.agents/gitagent_integration_skill.md) |
+| `mirothinker` | MiroThinker Reasoning Agent | Complex reasoning, multi-step planning, decision analysis, confidence scoring, transparent thinking chains. | [agents/mirothinker/](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/agents/mirothinker/), [agents/mirothinker/apps/](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/agents/mirothinker/apps/) | [.agents/mirothinker_integration_skill.md](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/.agents/mirothinker_integration_skill.md) |
 
 ---
 
@@ -53,19 +55,25 @@ The LOBSTAR ecosystem integrates best practices and skills from the following re
 | [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | 263+ skills for engineering, marketing, product, compliance | 📋 Reference |
 
 ### System Prompts & Best Practices
-| Repository | Description |
-|---|---|
-| [affaan-m/everything-claude-code](https://github.com/affaan-m/everything-claude-code) | Comprehensive Claude Code resources |
-| [x1xhlol/system-prompts-and-models-of-ai-tools](https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools) | System prompts for AI tools |
-| [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) | Spec-driven, context-engineered workflow adapted locally through `config/gsd_operating_system.json`, `.agents/gsd_execution_skill.md`, and `core/services/gsd_workflow.py` |
-| [garrytan/gstack](https://github.com/garrytan/gstack) | AI agent infrastructure |
-| [shareAI-lab/learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) | Learning resources for Claude Code |
-| [hesreallyhim/awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code) | Curated Claude Code resources |
-| [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) | Templates for Claude Code |
-| [shanraisshan/claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice) | Best practices |
-| [VoltAgent/awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents) | Sub-agents patterns |
-| [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts) | System prompts collection |
-| [Q00/ouroboros](https://github.com/Q00/ouroboros) | Agent OS - specification-first AI coding workflow (requires Python 3.12+) |
+| Repository | Description | Integration |
+|---|---|---|
+| [affaan-m/everything-claude-code](https://github.com/affaan-m/everything-claude-code) | Comprehensive Claude Code resources | 📋 Reference |
+| [x1xhlol/system-prompts-and-models-of-ai-tools](https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools) | System prompts for AI tools | 📋 Reference |
+| [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) | Spec-driven, context-engineered workflow adapted locally through `config/gsd_operating_system.json`, `.agents/gsd_execution_skill.md`, and `core/services/gsd_workflow.py` | ✅ Integrated |
+| [garrytan/gstack](https://github.com/garrytan/gstack) | AI agent infrastructure | 📋 Reference |
+| [shareAI-lab/learn-claude-code](https://github.com/shareAI-lab/learn-claude-code) | Learning resources for Claude Code | 📋 Reference |
+| [hesreallyhim/awesome-claude-code](https://github.com/hesreallyhim/awesome-claude-code) | Curated Claude Code resources | 📋 Reference |
+| [davila7/claude-code-templates](https://github.com/davila7/claude-code-templates) | Templates for Claude Code | 📋 Reference |
+| [shanraisshan/claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice) | Best practices | 📋 Reference |
+| [VoltAgent/awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents) | Sub-agents patterns | 📋 Reference |
+| [Piebald-AI/claude-code-system-prompts](https://github.com/Piebald-AI/claude-code-system-prompts) | System prompts collection | 📋 Reference |
+| [Q00/ouroboros](https://github.com/Q00/ouroboros) | Agent OS - specification-first AI coding workflow (requires Python 3.12+) | 📋 Reference |
+
+### Integrated Agent Specialists (Submodules)
+| Repository | Description | Integration | Location |
+|---|---|---|---|
+| [open-gitagent/gitagent](https://github.com/open-gitagent/gitagent) | Git automation, PR management, code review agent | ✅ **Git Submodule** | `agents/gitagent/` |
+| [MiroMindAI/MiroThinker](https://github.com/MiroMindAI/MiroThinker) | Advanced reasoning engine for AI agents | ✅ **Git Submodule** | `agents/mirothinker/` |
 
 ---
 
