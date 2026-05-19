@@ -12,6 +12,10 @@ Vous êtes un AI Coding Assistant. Voici les règles absolues pour ce projet `Qu
 - Avant d'utiliser ou d'ajouter une dépendance externe (ex: `FastAPI`, `Polymarket CLOB`, `Groq`), utilisez `Context7` (via le serveur MCP ou le CLI `npx ctx7`) pour extraire la documentation à jour. Ne vous fiez pas aveuglément à vos poids d'entraînement datés.
 - Si le user dit "use context7", obéissez immédiatement et requêtez la documentation.
 
+## 2.1 Portée multi-assistants
+- Cette consigne s'applique aussi aux assistants Gemini, Copilot, OpenCode et Codex.
+- C'est une règle de documentation et de workflow, pas une dépendance runtime.
+
 ## 3. Bonnes Pratiques Git & Code
 - Un commit par fichier modifié.
 - Pas de `cat` dans le bash pour écrire de longs fichiers. Utilisez les outils d'édition natifs (`replace_file_content`).

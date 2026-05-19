@@ -15,14 +15,20 @@ async def handle_signals(
     context: ContextTypes.DEFAULT_TYPE,
     signal_generator: SignalGenerator,
 ) -> None:
-    """Handle /signals command."""
+    """Handle /signals command with Lobstar style."""
     try:
         args = context.args
         
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/signals <asset> [timeframe]`\n\nAssets: BTC, SOL, ETH\nTimeframes: 5m, 15m, 1h",
+                text=(
+                    "📊 *FLUX DE SIGNAUX*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "Usage: `/signals <asset> [timeframe]`\n\n"
+                    "💎 *Assets*: `BTC`, `SOL`, `ETH`\n"
+                    "⏱️ *Timeframes*: `5m`, `15m`, `1h`"
+                ),
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -36,7 +42,7 @@ async def handle_signals(
         if not signals:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"No signals available for {asset}",
+                text=f"🔍 *AUCUN SIGNAL*\n\nAucun signal disponible pour `{asset}` actuellement.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -45,7 +51,7 @@ async def handle_signals(
             available = list(signals.keys())
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"Timeframe {timeframe} not found.\nAvailable: {', '.join(available)}",
+                text=f"⚠️ *TIMEFRAME INCORRECT*\n\nL'horizon `{timeframe}` n'est pas disponible.\nDisponibles: `{', '.join(available)}`.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -54,6 +60,14 @@ async def handle_signals(
         signal = signals[timeframe]
         signal_msg = signal.to_markdown()
         
+        if "━━━━━━━━━" not in signal_msg:
+            signal_msg = (
+                f"📡 *SIGNAL DE TRADING DETECTÉ*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{signal_msg}\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+            )
+
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=signal_msg,
@@ -64,7 +78,7 @@ async def handle_signals(
         logger.error(f"Error in signals handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Error: {str(e)[:200]}",
+            text=f"❌ *ERREUR SIGNAL*\n\nÉchec du traitement du signal : `{str(e)[:100]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
 

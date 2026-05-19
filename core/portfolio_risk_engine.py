@@ -162,6 +162,12 @@ class PortfolioRiskEngine:
         regime_multiplier = self._regime_multiplier(regime_label, confidence)
         sized_notional = min(regime_multiplier * base_notional, max(0.0, available))
 
+        # USER CONSTRAINT: Hard cap at $6 for real trades
+        if hasattr(self.ledger, "get_execution_mode"):
+            mode = self.ledger.get_execution_mode()
+            if mode in ("PROD", "SHADOW"):
+                sized_notional = min(sized_notional, 6.0)
+
         ticker_base = ticker.split("-")[0] if "-" in ticker else ticker
         beta = self._beta_to_btc.get(ticker_base, 0.5)
 
@@ -209,6 +215,17 @@ class PortfolioRiskEngine:
             f"Exposure updated: {ticker} -> {self._exposures[ticker]:.2f} "
             f"(net beta exposure: {self.net_beta_exposure_pct:.1f}%)"
         )
+
+    def calculate_max_position_size(self, ticker: str, price: float) -> float:
+        """Alias for compute_position_size with minimal arguments."""
+        res = self.compute_position_size(ticker=ticker, side="BUY", price=price)
+        return res.get("capital_at_risk", 0.0)
+
+    def get_concentration(self, ticker: str) -> float:
+        cap = self.ledger.get_capital_summary().get("total_capital", 10_000.0)
+        if cap <= 0:
+            return 0.0
+        return abs(self._exposures.get(ticker, 0.0)) / cap
 
 
     async def validate_signal_risk(

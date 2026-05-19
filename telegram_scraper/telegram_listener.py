@@ -633,6 +633,7 @@ class TelegramListener:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         wallet_addr = "UNKNOWN"
+        wallet_label = "Unresolved"
         try:
             from utils.credential_manager import CredentialManager
             mgr = CredentialManager()
@@ -640,25 +641,27 @@ class TelegramListener:
             if pk:
                 from eth_account import Account
                 wallet_addr = Account.from_key(pk).address
+                try:
+                    wallet_label = mgr.get_active_wallet_type(str(getattr(update.effective_chat, "id", ""))).upper()
+                except Exception:
+                    wallet_label = "ACTIVE"
         except Exception as exc:
             logger.debug("Unable to resolve active wallet for /start: %s", exc)
+            wallet_label = "ACTIVE"
 
         mode = self._get_mode()
         uptime = self._fmt_uptime()
-
         from datetime import timezone
         current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        regime = "N/A"
+        regime = "READY"
         if self._hmm:
             try:
-                from user_data.strategies.hmm_filter import REGIME_LABELS
-                import numpy as np
-                returns = np.random.randn(100) * 0.01
-                state = self._hmm.predict_regime(returns)
-                regime = REGIME_LABELS.get(state, "UNKNOWN")
-            except Exception:
-                pass
+                labels = self._hmm.get_regime_labels()
+                if labels:
+                    regime = labels[0]
+            except Exception as exc:
+                logger.debug("Unable to resolve regime for /start: %s", exc)
 
         keyboard = [
             [
@@ -674,29 +677,28 @@ class TelegramListener:
                 InlineKeyboardButton("🧪 Mode", callback_data="mode"),
             ],
             [
-                InlineKeyboardButton("🎯 Signal", callback_data="signal"),
-                InlineKeyboardButton("❓ Help", callback_data="help_page_1"),
-            ],
+            InlineKeyboardButton("🎯 Signal", callback_data="signal"),
+            InlineKeyboardButton("❓ Help", callback_data="help_page_1"),
+        ],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        if len(wallet_addr) > 10:
-            wallet_display = f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
-        else:
-            wallet_display = wallet_addr
+        wallet_display = f"{wallet_addr[:6]}...{wallet_addr[-4:]}" if len(wallet_addr) > 10 else wallet_addr
+        if wallet_addr == "UNKNOWN":
+            wallet_display = "unavailable"
 
         welcome = (
             "🦞 *LOBSTAR QUANT CONTROL PANEL*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Welcome to the steering console of the Lobstar Agentic OS. "
-            "Use the control grid below to pilot your autonomous quant operations, "
-            "monitor portfolio metrics, or run diagnostic scans.\n\n"
+            "Welcome to the steering console of the Lobstar Agentic OS.\n"
+            "Use the control grid below to inspect status, markets, risk, and signals.\n\n"
             f"⏰ *System Time* : `{current_time}`\n"
             f"⏱️ *System Uptime* : `{uptime}`\n"
-            f"💬 *Active Wallet* : `{wallet_display}` | `{wallet_addr}`\n"
+            f"💬 *Active Wallet* : `{wallet_label}` | `{wallet_display}`\n"
             f"⚙️ *Execution Mode* : `{mode}`\n"
             f"📊 *System Regime* : `{regime}`\n"
-            "────────────────────────"
+            "────────────────────────\n"
+            "Tip: start with `📡 Status` or `📈 Markets`."
         )
 
         query = getattr(update, "callback_query", None)
@@ -711,7 +713,15 @@ class TelegramListener:
             except Exception as exc:
                 logger.debug("Failed to edit start menu: %s", exc)
 
-        await self.reply_to(welcome, update, reply_markup=reply_markup)
+        sent = await self.reply_to(welcome, update, reply_markup=reply_markup)
+        if not sent:
+            try:
+                msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+                if msg:
+                    await msg.reply_text(welcome, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+            except Exception as exc:
+                logger.error("Failed to deliver /start menu: %s", exc)
+                await self.send_message("❌ Impossible d'ouvrir le cockpit pour le moment.", parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_gen(self, update: Update, _context) -> None:
         if not self._is_authorized_private_message(update):
@@ -1437,7 +1447,10 @@ class TelegramListener:
                 await msg.reply_text(text, **kwargs)
 
         if query.data.startswith("help_page_") or query.data == "help_menu":
-            await query.answer()
+            try:
+                await query.answer()
+            except Exception as exc:
+                logger.debug("Callback answer failed (ignored): %s", exc)
             from utils.help_manager import HelpManager
             if query.data == "help_menu":
                 await HelpManager.send_menu(update, context, is_admin)
@@ -1447,6 +1460,10 @@ class TelegramListener:
             return
 
         if query.data.startswith("wallet_") or query.data == "menu_main":
+            try:
+                await query.answer()
+            except Exception as exc:
+                logger.debug("Callback answer failed (ignored): %s", exc)
             if query.data == "wallet_show_key":
                 await query.answer("La cle privee ne peut pas etre affichee.", show_alert=True)
                 return
@@ -1880,6 +1897,27 @@ class TelegramListener:
                 await query.answer()
             return
 
+        elif query.data.startswith("crypto_asset:"):
+            await query.answer()
+            asset_key = query.data.split(":", 1)[1].lower()
+            context.args = [asset_key]
+            await self.command_router._cmd_crypto_markets(update, context)
+            return
+
+        elif query.data.startswith("crypto_horizon:"):
+            await query.answer()
+            parts = query.data.split(":")
+            if len(parts) == 3:
+                asset, horizon = parts[1].lower(), parts[2]
+                context.args = [asset, horizon]
+                await self.command_router._cmd_crypto_horizon(update, context)
+            return
+
+        elif query.data == "crypto_menu":
+            await query.answer()
+            await self.command_router._cmd_crypto(update, context)
+            return
+
         await query.answer()
 
         if query.data == "scan":
@@ -1977,7 +2015,6 @@ class TelegramListener:
             self.application.add_handler(CommandHandler("h", self._cmd_help))
             self.application.add_handler(CommandHandler("help", self._cmd_help))
             self.application.add_handler(CommandHandler("copy", self._cmd_copy))
-            self.application.add_handler(CommandHandler("start", self._cmd_start))
             self.application.add_handler(CommandHandler("s", self._cmd_status))
             self.application.add_handler(CommandHandler("status", self._cmd_status))
             self.application.add_handler(CommandHandler("m", self._cmd_mode))

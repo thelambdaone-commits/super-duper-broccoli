@@ -1,0 +1,26 @@
+{
+  "auto_discover_only": false,
+  "categories_order": [
+    "crypto",
+    "politics",
+    "technology",
+    "macro"
+  ],
+  "tickers": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "TRUMP",
+    "META",
+    "XRP",
+    "DOGE",
+    "HYPE",
+    "BNB"
+  ],
+  "categories": {
+    "crypto": ["BTC", "ETH", "SOL", "XRP", "DOGE", "HYPE", "BNB"],
+    "politics": ["TRUMP"],
+    "technology": ["META"],
+    "macro": ["BTC", "ETH", "SOL"]
+  }
+}

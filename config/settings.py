@@ -49,10 +49,18 @@ class AppSettings(BaseSettings):
     openrouter_api_key: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    nvidia_api_key: str | None = None
+    mistral_api_key: str | None = None
+    deepseek_api_key: str | None = None
+    huggingface_api_key: str | None = None
+    
+    # Brave Search is deprecated in favor of RSS news feeds
     brave_search_api_key: str | None = None
+    news_feeds: str = ""
     coingecko_api_key: str | None = None
 
-    polygon_rpc_url: str | None = None
+    polygon_rpc_url: str = "wss://polygon-rpc.com/ws"
+    polygon_rpc_url_http: str = "https://polygon-rpc.com"
     eth_rpc_url: str | None = None
     base_rpc_url: str | None = None
     optimism_rpc_url: str | None = None

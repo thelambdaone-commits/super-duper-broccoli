@@ -5,6 +5,7 @@ from typing import Dict, Optional, List
 from cryptography.fernet import Fernet
 from eth_account import Account
 from utils.derive_clob_creds import derive_clob_credentials
+from utils.secret_validation import validate_private_key_or_raise
 
 logger = logging.getLogger("CredentialManager")
 
@@ -63,6 +64,7 @@ class CredentialManager:
         return json.loads(decrypted.decode())
 
     def get_or_generate_creds(self, private_key: str, path: str = DEFAULT_ENC_PATH) -> Dict[str, str]:
+        private_key = validate_private_key_or_raise(private_key, source=path)
         if os.path.exists(path):
             try:
                 creds = self.load_and_decrypt(path)
@@ -87,6 +89,7 @@ class CredentialManager:
         web-first ingestion/execution services that receive secrets from Vault
         at process start.
         """
+        private_key = validate_private_key_or_raise(private_key, source="ephemeral session")
         creds = derive_clob_credentials(private_key)
         creds["CLOB_PRIVATE_KEY"] = private_key
         creds["POLYMARKET_WALLET_ADDRESS"] = (
@@ -106,7 +109,7 @@ class CredentialManager:
             try:
                 data = self.load_and_decrypt(path)
                 logger.info(f"Loaded private key from {path}")
-                pk = data["CLOB_PRIVATE_KEY"]
+                pk = validate_private_key_or_raise(data["CLOB_PRIVATE_KEY"], source=path)
                 try:
                     self.add_wallet(pk)
                 except Exception:
@@ -117,7 +120,7 @@ class CredentialManager:
         
         logger.info("Generating new institutional ETH/POL wallet...")
         new_acc = Account.create()
-        pk = new_acc._private_key.hex()
+        pk = validate_private_key_or_raise(new_acc._private_key.hex(), source="generated wallet")
         self.encrypt_and_save({"CLOB_PRIVATE_KEY": pk, "address": new_acc.address}, path)
         logger.info(f"New wallet saved to {path}: {new_acc.address}")
         try:
@@ -129,6 +132,7 @@ class CredentialManager:
     def save_private_key(self, private_key: str, path: str = WALLET_ENC_PATH) -> str:
         """Manually save and encrypt a provided private key."""
         try:
+            private_key = validate_private_key_or_raise(private_key, source=path)
             acc = Account.from_key(private_key)
             self.encrypt_and_save({"CLOB_PRIVATE_KEY": private_key, "address": acc.address}, path)
             logger.info(f"Wallet imported and saved to {path}: {acc.address}")
@@ -170,6 +174,7 @@ class CredentialManager:
             return []
 
     def add_wallet(self, private_key: str) -> str:
+        private_key = validate_private_key_or_raise(private_key, source="configured wallet")
         acc = Account.from_key(private_key)
         wallets = self.list_wallets()
         for w in wallets:
@@ -241,7 +246,7 @@ class CredentialManager:
         logger.info(f"Generating new wallet for user {chat_id} (profile: {profile_name}, type: {wallet_type})")
         
         new_acc = Account.create()
-        private_key = new_acc._private_key.hex()
+        private_key = validate_private_key_or_raise(new_acc._private_key.hex(), source="user wallet generation")
         address = new_acc.address
         
         creds = derive_clob_credentials(private_key)

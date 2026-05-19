@@ -9,6 +9,29 @@ from telegram.constants import ParseMode
 
 logger = logging.getLogger("CommandRouter")
 
+CRYPTO_ALIAS_MAP = {
+    "btc": "BTC",
+    "bitcoin": "BTC",
+    "eth": "ETH",
+    "ethereum": "ETH",
+    "sol": "SOL",
+    "solana": "SOL",
+    "xrp": "XRP",
+    "ripple": "XRP",
+    "doge": "DOGE",
+    "dogecoin": "DOGE",
+    "bnb": "BNB",
+    "hype": "HYPE",
+    "ada": "ADA",
+    "avax": "AVAX",
+    "link": "LINK",
+    "sui": "SUI",
+    "pepe": "PEPE",
+    "wif": "WIF",
+    "ton": "TON",
+    "near": "NEAR",
+}
+
 # ==============================================================================
 # COMMAND REGISTRY DIRECTORY
 # ==============================================================================
@@ -67,12 +90,12 @@ COMMAND_REGISTRY = {
         "notes": "Recommandé pour obtenir une vue d'ensemble en temps réel."
     },
     "crypto": {
-        "func": "_cmd_all_crypto_markets",
+        "func": "_cmd_crypto",
         "category": "MARKETS",
-        "description": "Rechercher globalement tous les marchés crypto actifs par volume.",
-        "usage": "/crypto",
-        "example": "/crypto",
-        "notes": "Affiche les 10 meilleurs marchés avec leur graphique ASCII de probabilité."
+        "description": "Centre de commande intuitif pour les marchés crypto et leurs horizons.",
+        "usage": "/crypto [asset]",
+        "example": "/crypto BTC",
+        "notes": "Ouvre un menu interactif avec des boutons pour naviguer rapidement."
     },
     "updown": {
         "func": "_cmd_updown",
@@ -229,6 +252,41 @@ class CommandRouter:
     def _add_cmd(self, name, func):
         self.app.add_handler(CommandHandler(name, func))
 
+    async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handler for the /start command - Intuitive Onboarding."""
+        if not await self.listener._check_auth(update): return
+        
+        welcome_text = (
+            f"👋 *Bienvenue sur LOBSTAR Agent v2*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Je suis votre assistant de trading agentique spécialisé sur *Polymarket*.\n\n"
+            f"🔍 *Ce que je peux faire pour vous :*\n"
+            f"• Analyser les marchés avec mon conseil d'IA.\n"
+            f"• Gérer vos wallets et transferts USDC.\n"
+            f"• Exécuter des ordres automatiques ou manuels.\n"
+            f"• Surveiller les baleines et les inefficacités.\n\n"
+            f"🚀 _Utilisez les boutons ci-dessous pour commencer._"
+        )
+        
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = [
+            [
+                InlineKeyboardButton("💼 Wallet", callback_data="help_page_1"),
+                InlineKeyboardButton("📈 Markets", callback_data="help_page_2"),
+            ],
+            [
+                InlineKeyboardButton("⚡ Trading", callback_data="help_page_3"),
+                InlineKeyboardButton("🧭 Crypto", callback_data="crypto_menu"),
+            ],
+            [
+                InlineKeyboardButton("👑 Admin", callback_data="help_page_4"),
+                InlineKeyboardButton("📖 Manuel Complet", callback_data="help_menu"),
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await self.listener.reply_to(welcome_text, update, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+
     def _register_crypto_horizon_commands(self):
         for asset in ("btc", "eth", "sol", "xrp", "hype", "doge", "bnb", "ada", "avax", "link", "sui", "pepe", "wif", "ton", "near"):
             self._add_cmd(asset, self._cmd_crypto_markets)
@@ -237,7 +295,16 @@ class CommandRouter:
 
     async def _cmd_crypto_horizon(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
-        command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+        command = ""
+        if context.args:
+            first = context.args[0].strip().lower()
+            if len(context.args) >= 2 and context.args[1] in ("5", "15", "1h", "4h", "1d"):
+                command = f"{first}{context.args[1]}"
+            else:
+                command = first
+        else:
+            command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+        command = command.replace("bitcoin", "btc").replace("ethereum", "eth").replace("solana", "sol")
         match = None
         import re
         match = re.fullmatch(r"(btc|eth|sol|xrp|hype|doge|bnb|ada|avax|link|sui|pepe|wif|ton|near)(5|15|1h|4h|1d)", command)
@@ -285,8 +352,11 @@ class CommandRouter:
 
     async def _cmd_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
-        command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
-        asset = command.upper()
+        if context.args:
+            asset = CRYPTO_ALIAS_MAP.get(context.args[0].lower(), context.args[0].upper())
+        else:
+            command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
+            asset = CRYPTO_ALIAS_MAP.get(command, command.upper())
 
         logger.info("Crypto markets search command received: asset=%s", asset)
 
@@ -353,6 +423,48 @@ class CommandRouter:
         except Exception as e:
             logger.error(f"Error in crypto markets search handler: {e}")
             await self.listener.reply_to(f"❌ Erreur lors de la recherche des marchés {asset}.", update)
+
+    async def _cmd_crypto(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_auth(update): return
+
+        args = context.args
+        if args:
+            target = args[0].upper()
+            if len(args) > 1 and args[1] in {"5", "15", "1h", "4h", "1d"}:
+                context.args = [target.lower() + args[1]]
+                await self._cmd_crypto_horizon(update, context)
+                return
+            context.args = [target.lower()]
+            await self._cmd_crypto_markets(update, context)
+            return
+
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        assets = [("BTC", "btc"), ("ETH", "eth"), ("SOL", "sol"), ("XRP", "xrp"), ("DOGE", "doge"), ("BNB", "bnb")]
+        horizons = [("5m", "5"), ("15m", "15"), ("1h", "1h"), ("4h", "4h"), ("1d", "1d")]
+
+        asset_rows = []
+        row = []
+        for label, key in assets:
+            row.append(InlineKeyboardButton(label, callback_data=f"crypto_asset:{key}"))
+            if len(row) == 3:
+                asset_rows.append(row)
+                row = []
+        if row:
+            asset_rows.append(row)
+
+        horizon_row = [InlineKeyboardButton(label, callback_data=f"crypto_horizon:btc:{key}") for label, key in horizons]
+        reply_markup = InlineKeyboardMarkup(asset_rows + [horizon_row])
+
+        text = (
+            "🧭 *CENTRE CRYPTO LOBSTAR*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Choisis un actif ou un horizon pour ouvrir le bon écran.\n\n"
+            "• Les boutons d'actif montrent les marchés actifs.\n"
+            "• Les boutons d'horizon ouvrent le sentiment détaillé.\n"
+            "• Les alias `/btc5`, `/eth1h`, etc. restent disponibles.\n"
+            "━━━━━━━━━━━━━━━━━━━━"
+        )
+        await self.listener.reply_to(text, update, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
     async def _cmd_all_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
@@ -569,34 +681,32 @@ class CommandRouter:
         if not prompt or prompt.lower() == "status":
             from utils.ai_specialists import list_ai_specialists
             specialists = list_ai_specialists()
-            msg = "🧠 *AI Agents Status*\n\n"
-            msg += f"• Specialists: {len(specialists)}\n"
-            msg += "• LLM Council: Active (OpenRouter)\n"
-            msg += "• Memory: Persistent (SQLite/DuckDB)\n"
+            msg = (
+                "🧠 *CONSEIL D'IA LOBSTAR*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Spécialistes* : `{len(specialists)} agents` actifs\n"
+                "• *LLM Council* : `OpenRouter / Groq` ✅\n"
+                "• *Mémoire* : `Persistante (SQLite)` ✅\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Posez une question directement : `/ai quel est le sentiment sur SOL ?`"
+            )
             await self.listener.reply_to(msg, update)
         elif prompt.lower() == "errors":
-            # Tail logs/pm2-error.log
             try:
                 with open("logs/pm2-error.log", "r") as f:
                     lines = f.readlines()[-10:]
-                msg = "🚨 *Latest AI/System Errors*\n\n```\n" + "".join(lines) + "\n```"
+                msg = "🚨 *DERNIÈRES ERREURS AI*\n━━━━━━━━━━━━━━━━━━━━\n```\n" + "".join(lines) + "\n```"
                 await self.listener.reply_to(msg, update)
             except Exception as e:
-                await self.listener.reply_to(f"Failed to read logs: {e}", update)
+                await self.listener.reply_to(f"❌ Échec lecture: {e}", update)
         else:
-            # Run the LLM Council
-            status_msg = None
-            try:
-                status_msg = await self.listener.reply_to(
-                    "🤔 *Lobstar AI Council is reflecting...*\n\n"
-                    "• Stage 1: Independent specialist opinions...\n"
-                    "• Stage 2: Anonymized cross-reviews...\n"
-                    "• Stage 3: Synthesis by Chairman...",
-                    update,
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            except Exception as e:
-                logger.error(f"Failed to send initial AI council status msg: {e}")
+            status_msg = await self.listener.reply_to(
+                "🤔 *Le Conseil d'IA Lobstar réfléchit...*\n\n"
+                "• Analyse des signaux de marché...\n"
+                "• Consultation des agents spécialistes...\n"
+                "• Synthèse du Chairman en cours...",
+                update
+            )
 
             try:
                 from utils.llm_council import LLMCouncil, resolve_openrouter_api_key
@@ -604,96 +714,62 @@ class CommandRouter:
                 api_key = resolve_openrouter_api_key(council.config)
 
                 if not api_key:
-                    guardrail = council.config.get("safety", {}).get("trading_guardrail", "LLM Council output is advisory only.")
-                    mock_res = (
-                        "🚨 *OPENROUTER API KEY MISSING*\n"
-                        "To enable live multi-agent LLM Council synthesis, set `OPENROUTER_API_KEY` in your `.env` or Vault.\n\n"
-                        "💡 *Simulated Council Response:*\n"
-                        f"Analyzing prompt: `{prompt}`\n\n"
-                        "• *Market Sentiment (Mock)*: The multi-agent swarm detects strong bullish momentum under high volatility. BTC/USD orderbook imbalance favors makers, with short-term support established at key VWAP levels.\n"
-                        "• *Specialists Consensus*: ML models project a temporary range-bound consolidation before an upward breakout. Positions should be sized conservatively under the current PAPER mode capital preservation guidelines.\n\n"
-                        f"🛡️ _Advisory only: {guardrail}_"
-                    )
-                    if status_msg:
-                        try:
-                            await status_msg.edit_text(mock_res, parse_mode=ParseMode.MARKDOWN)
-                        except Exception:
-                            await self.listener.reply_to(mock_res, update, parse_mode=ParseMode.MARKDOWN)
-                    else:
-                        await self.listener.reply_to(mock_res, update, parse_mode=ParseMode.MARKDOWN)
+                    final_msg = "🚨 *CLEF API MANQUANTE*\n\nLa synthèse multi-agent nécessite une `OPENROUTER_API_KEY`."
+                    await status_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
                     return
 
                 res = await council.ask(prompt)
-                guardrail = council.config.get("safety", {}).get("trading_guardrail", "LLM Council output is advisory only.")
+                guardrail = council.config.get("safety", {}).get("trading_guardrail", "Avis consultatif uniquement.")
                 final_msg = (
-                    "🧠 *LOBSTAR AI COUNCIL SYNTHESIS*\n"
+                    "🧠 *SYNTHÈSE DU CONSEIL D'IA*\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"*Question*: {prompt}\n\n"
+                    f"*Question*: _{prompt}_\n\n"
                     f"{res.final_answer}\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
                     f"🛡️ _{guardrail}_"
                 )
-                if status_msg:
-                    try:
-                        await status_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
-                    except Exception:
-                        await self.listener.reply_to(final_msg, update, parse_mode=ParseMode.MARKDOWN)
-                else:
-                    await self.listener.reply_to(final_msg, update, parse_mode=ParseMode.MARKDOWN)
+                await status_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
             except Exception as e:
                 logger.error(f"Error executing AI council prompt: {e}")
-                err_msg = f"❌ *AI Council Error:* {str(e)}"
-                if status_msg:
-                    try:
-                        await status_msg.edit_text(err_msg, parse_mode=ParseMode.MARKDOWN)
-                    except Exception:
-                        await self.listener.reply_to(err_msg, update, parse_mode=ParseMode.MARKDOWN)
-                else:
-                    await self.listener.reply_to(err_msg, update, parse_mode=ParseMode.MARKDOWN)
+                await status_msg.edit_text(f"❌ *ERREUR AI COUNCIL*\n\nUne erreur est survenue : `{str(e)[:100]}`", parse_mode=ParseMode.MARKDOWN)
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
         if not self.listener._hmm:
-            await self.listener.reply_to("HMM Filter not attached.", update)
+            await self.listener.reply_to("❌ *ERREUR MODÈLE*\n\nLe filtre HMM n'est pas initialisé.", update)
             return
 
         args = context.args
         sub = args[0] if args else "status"
 
         if sub == "status":
-            # Logic from MCP get_market_regime
             from utils.regime_utils import get_regime_label
             label = get_regime_label(self.listener._hmm, "SOL")
-            msg = "📊 *Model Status (HMM Filter)*\n\n"
-            msg += f"• Current Regime: `{label}`\n"
-            msg += f"• Trading Allowed: {'✅' if self.listener._hmm.is_trading_allowed(None)[0] else '❌'}\n"
+            msg = (
+                "📊 *STATUT DES MODÈLES ML*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Régime Actuel* : `{label}`\n"
+                f"• *Autorisation Trading* : {'✅ AUTORISÉ' if self.listener._hmm.is_trading_allowed(None)[0] else '❌ BLOQUÉ'}\n"
+                "━━━━━━━━━━━━━━━━━━━━"
+            )
             await self.listener.reply_to(msg, update)
         elif sub == "metrics":
             if not self.listener._store:
-                await self.listener.reply_to("Feature Store not attached.", update)
+                await self.listener.reply_to("❌ Feature Store non attaché.", update)
                 return
             stats = self.listener._store.get_stats()
-            msg = "📈 *Model Metrics (Feature Store)*\n\n"
+            msg = "📈 *MÉTRIQUES FEATURE STORE*\n━━━━━━━━━━━━━━━━━━━━\n"
             for k, v in stats.items():
-                msg += f"• {k}: `{v}`\n"
-            await self.listener.reply_to(msg, update)
-        elif sub == "validate":
-            from utils.model_validator import ModelValidator
-            validator = ModelValidator(self.listener._store)
-            ticker = args[1] if len(args) > 1 else "SOL"
-            report = validator.run_health_check(ticker, "default_v1")
-            msg = f"🧪 *Model Validation: {ticker}*\n\n"
-            msg += f"• Health: `{report.get('health', 'UNKNOWN')}`\n"
-            msg += f"• P-Value: `{report.get('drift_report', {}).get('p_value', 0):.4f}`\n"
-            msg += f"• Drift: `{'YES' if report.get('drift_report', {}).get('drift_detected') else 'NO'}`\n"
+                msg += f"• {k} : `{v}`\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"Unknown model subcommand: {sub}", update)
+            await self.listener.reply_to(f"❓ Subcommand Model inconnue: `{sub}`", update)
 
     async def _cmd_risk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
         if not self.listener._ledger:
-            await self.listener.reply_to("Ledger not attached.", update)
+            await self.listener.reply_to("❌ Ledger non initialisé.", update)
             return
 
         args = context.args
@@ -701,30 +777,25 @@ class CommandRouter:
 
         if sub == "status":
             cap = self.listener._ledger.get_capital_summary()
-            msg = "🛡️ *Risk & Capital Status*\n\n"
-            msg += f"• Total: `${cap.get('total_capital', 0):,.2f}`\n"
-            msg += f"• Available: `${cap.get('available_capital', 0):,.2f}`\n"
-            msg += f"• Allocated: `{cap.get('allocated_pct', 0)}%`\n"
+            msg = (
+                "🛡️ *SÉCURITÉ & CAPITAL*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Total Portfolio* : `${cap.get('total_capital', 0):,.2f}`\n"
+                f"• *Disponible* : `${cap.get('available_capital', 0):,.2f}`\n"
+                f"• *Allocation* : `{cap.get('allocated_pct', 0)}%` du max\n"
+                "━━━━━━━━━━━━━━━━━━━━"
+            )
             await self.listener.reply_to(msg, update)
         elif sub in ("kill", "freeze"):
-            # Mocking the MCP emergency_circuit_breaker
             from mcp_agents.mcp_server import emergency_circuit_breaker
             res = emergency_circuit_breaker("ENGAGE")
-            await self.listener.reply_to(f"🛑 *CIRCUIT BREAKER ENGAGED*\n\n{res.get('message')}", update)
+            await self.listener.reply_to("🛑 *URGENCE ENGAGÉE*\n\nLe coupe-circuit a été activé. Le trading est suspendu.", update)
         elif sub in ("resume", "unfreeze"):
             from mcp_agents.mcp_server import emergency_circuit_breaker
             res = emergency_circuit_breaker("DISENGAGE")
-            await self.listener.reply_to(f"✅ *CIRCUIT BREAKER DISENGAGED*\n\n{res.get('message')}", update)
-        elif sub == "exposure":
-            if not self.listener._risk:
-                await self.listener.reply_to("Risk Engine not attached.", update)
-                return
-            msg = "📉 *Portfolio Exposure*\n\n"
-            msg += f"• Net Beta Exposure: `{self.listener._risk.net_beta_exposure_pct:.2f}%`\n"
-            msg += f"• Positions: `{len(self.listener._risk._exposures)}`\n"
-            await self.listener.reply_to(msg, update)
+            await self.listener.reply_to("✅ *SÉCURITÉ LEVÉE*\n\nLe bot est de nouveau prêt pour l'exécution.", update)
         else:
-            await self.listener.reply_to(f"Unknown risk subcommand: {sub}", update)
+            await self.listener.reply_to(f"❓ Subcommand Risk inconnue: `{sub}`", update)
 
     async def _cmd_clob(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -732,17 +803,22 @@ class CommandRouter:
         sub = args[0] if args else "arb"
 
         if sub == "arb":
-            # Call MCP get_arbitrage_opportunities
             from mcp_agents.mcp_server import get_arbitrage_opportunities
             res = get_arbitrage_opportunities()
             count = res.get("opportunity_count", 0)
-            msg = f"⚖️ *CLOB Arbitrage Scanner*\n\nFound `{count}` opportunities.\n"
+            msg = (
+                "⚖️ *CLOB ARBITRAGE SCANNER*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Opportunités détectées* : `{count}`\n"
+            )
             if count > 0:
+                msg += "\n*TOP 5 OPPORTUNITIES*:\n"
                 for opp in res.get("opportunities", [])[:5]:
-                    msg += f"• {opp.get('type')}: `{opp.get('market_id')}` (Conf: {opp.get('confidence'):.2f})\n"
+                    msg += f"• {opp.get('type')} : `{opp.get('market_id')[:10]}...` (Conf: `{opp.get('confidence'):.2f}`)\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"Unknown CLOB subcommand: {sub}", update)
+            await self.listener.reply_to(f"❓ Subcommand CLOB inconnue: `{sub}`", update)
 
     async def _cmd_whales(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -750,40 +826,51 @@ class CommandRouter:
         sub = args[0] if args else "leaderboard"
 
         from utils.polymarket_crawler.traders import discover_top_traders
-        from utils.polymarket_crawler.trader_formatters import fmt_expert_leaderboard, fmt_trader_alert_html
+        from utils.polymarket_crawler.trader_formatters import fmt_expert_leaderboard
 
         if sub == "leaderboard":
             cat = args[1].upper() if len(args) > 1 else "OVERALL"
-            msg_wait = await self.listener.reply_to(f"🔍 Fetching {cat} leaderboard...", update)
+            msg_wait = await self.listener.reply_to(f"🔍 *SCAN DES BALEINES* (`{cat}`)...", update)
             results = discover_top_traders(categories=[cat], limit=5)
             traders = results.get(cat, [])
             report = fmt_expert_leaderboard(traders, cat, 5)
-            await self.listener.reply_to(f"🏆 *Top Traders: {cat}*\n\n{report}", update)
+            
+            msg = (
+                f"🐋 *TOP TRADERS : {cat}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{report}\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+            )
+            await self.listener.reply_to(msg, update)
         elif sub == "analyze":
             if len(args) < 2:
-                await self.listener.reply_to("Usage: `/whales analyze <address>`", update)
+                await self.listener.reply_to("💡 Usage: `/whales analyze <adresse>`", update)
                 return
             wallet = args[1]
-            msg_wait = await self.listener.reply_to(f"🔍 Analyzing whale: `{wallet[:10]}...`", update)
+            await self.listener.reply_to(f"🧪 *ANALYSE DE PORTEFEUILLE* : `{wallet[:10]}...`", update)
             from utils.polymarket_crawler.traders import TraderScraper
             scraper = TraderScraper()
-            # Simplified analysis for Telegram
             positions = scraper.fetch_closed_positions(wallet)
             total_pnl = sum(p.realized_pnl for p in positions)
-            msg = f"🐋 *Whale Analysis: {wallet[:10]}...*\n\n"
-            msg += f"• Positions: `{len(positions)}`\n"
-            msg += f"• Total PnL: `${total_pnl:,.2f}`\n\n"
-            msg += "*Recent Wins:*\n"
+            
+            msg = (
+                f"🐋 *WHALE ANALYSIS : {wallet[:10]}...*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Positions Clôturées* : `{len(positions)}`\n"
+                f"• *PnL Total Réalisé* : `${total_pnl:,.2f}`\n\n"
+                f"*Dernières Victoires* :\n"
+            )
             for p in positions[:5]:
                 msg += f"• {p.title[:30]}... | `${p.realized_pnl:,.0f}`\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"Unknown whales subcommand: {sub}. Use `leaderboard` or `analyze`.", update)
+            await self.listener.reply_to(f"❓ Subcommand Whales inconnue: `{sub}`", update)
 
     async def _cmd_trade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
         if not self.listener._ledger:
-            await self.listener.reply_to("Ledger not attached.", update)
+            await self.listener.reply_to("❌ *ERREUR LEDGER*\n\nLe grand livre (ledger) n'est pas initialisé.", update)
             return
 
         args = context.args
@@ -792,34 +879,45 @@ class CommandRouter:
         if sub == "status":
             mode = self.listener._ledger.get_execution_mode()
             metrics = self.listener._executor.get_metrics() if self.listener._executor else {}
-            msg = "🎯 *Trading Engine Status*\n\n"
-            msg += f"• Mode: `{mode}`\n"
-            msg += f"• Fill Rate: `{metrics.get('fill_rate_pct', 0)}%`\n"
-            msg += f"• Queue Depth: `{metrics.get('queue_depth', 0)}`\n"
+            msg = (
+                "🎯 *TRADING ENGINE STATUS*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Mode Actuel* : `{mode}`\n"
+                f"• *Fill Rate* : `{metrics.get('fill_rate_pct', 0)}%`\n"
+                f"• *File d'attente* : `{metrics.get('queue_depth', 0)} ordres`\n"
+                "━━━━━━━━━━━━━━━━━━━━"
+            )
             await self.listener.reply_to(msg, update)
         elif sub in ("paper", "shadow", "prod"):
             if len(args) > 1 and args[1] == "on":
                 new_mode = sub.upper()
+                if new_mode == "PROD":
+                    await self.listener.reply_to("⚠️ *SÉCURITÉ PROD*\n\nLe passage en mode `PROD` nécessite une confirmation manuelle via le fichier de configuration pour des raisons de sécurité.", update)
+                    return
                 self.listener._ledger.set_execution_mode(new_mode)
-                await self.listener.reply_to(f"🔄 Execution mode changed to: `{new_mode}`", update)
+                await self.listener.reply_to(f"🔄 *CHANGEMENT DE MODE*\n\nLe moteur d'exécution est maintenant en mode : `{new_mode}`", update)
             else:
-                await self.listener.reply_to(f"Usage: `/trade {sub} on`", update)
+                await self.listener.reply_to(f"💡 Usage: `/trade {sub} on` pour confirmer.", update)
         elif sub == "pnl":
             perf = self.listener._ledger.get_performance_summary(mode=self.listener._ledger.get_execution_mode())
             if perf and perf.get("total_trades", 0) > 0:
                 wr = perf["win_rate"] * 100
-                msg = "💰 *PnL Report*\n\n"
-                msg += f"• Net PnL: `${perf['total_net_pnl']:,.2f}`\n"
-                msg += f"• Win Rate: `{wr:.1f}%`\n"
-                msg += f"• Trades: `{perf['total_trades']}`\n"
-                msg += f"• Profit Factor: `{perf['profit_factor']:.2f}`\n"
-                msg += f"• Avg Win: `${perf['avg_win']:.2f}`\n"
-                msg += f"• Avg Loss: `${perf['avg_loss']:.2f}`\n"
+                msg = (
+                    "💰 *RAPPORT DE PERFORMANCE*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• *Net PnL* : `${perf['total_net_pnl']:,.2f}`\n"
+                    f"• *Win Rate* : `{wr:.1f}%`\n"
+                    f"• *Total Trades* : `{perf['total_trades']}`\n"
+                    f"• *Profit Factor* : `{perf['profit_factor']:.2f}`\n"
+                    f"• *Gain Moyen* : `${perf['avg_win']:.2f}`\n"
+                    f"• *Perte Moyenne* : `${perf['avg_loss']:.2f}`\n"
+                    "━━━━━━━━━━━━━━━━━━━━"
+                )
             else:
-                msg = "💰 *PnL Report*\n\nNo closed trades yet. Use paper trading to generate PnL data."
+                msg = "💰 *PnL REPORT*\n\nAucun trade clôturé détecté pour le mode actuel."
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"Unknown trade subcommand: {sub}", update)
+            await self.listener.reply_to(f"❓ Subcommand inconnue: `{sub}`", update)
 
     async def _cmd_mcp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -828,20 +926,25 @@ class CommandRouter:
 
         if sub == "status":
             from mcp_agents.mcp_server import mcp
-            msg = "🔌 *MCP Status*\n\n"
-            msg += f"• Server: `quant-agentic-mcp`\n"
-            msg += f"• Transport: `stdio`\n"
-            msg += f"• Tools: `{len(mcp.list_tools())}`\n"
+            msg = (
+                "🔌 *MCP AGENT STATUS*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Serveur* : `quant-agentic-mcp`\n"
+                f"• *Transport* : `stdio` (v2 Standard)\n"
+                f"• *Outils* : `{len(mcp.list_tools())}` actifs\n"
+                "━━━━━━━━━━━━━━━━━━━━"
+            )
             await self.listener.reply_to(msg, update)
         elif sub == "tools":
             from mcp_agents.mcp_server import mcp
             tools = mcp.list_tools()
-            msg = "🛠️ *MCP Tools*\n\n"
+            msg = "🛠️ *OUTILS MCP DISPONIBLES*\n━━━━━━━━━━━━━━━━━━━━\n"
             for t in tools:
-                msg += f"• `{t.name}`: {t.description[:50]}...\n"
+                msg += f"• `{t.name}` : {t.description[:50]}...\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"Unknown MCP subcommand: {sub}", update)
+            await self.listener.reply_to(f"❓ Subcommand MCP inconnue: `{sub}`", update)
 
     async def _cmd_dev(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -849,27 +952,35 @@ class CommandRouter:
         sub = args[0] if args else "metrics"
 
         if sub == "metrics":
-            # System metrics
             import psutil
             cpu = psutil.cpu_percent()
             mem = psutil.virtual_memory().percent
-            msg = "⚙️ *Dev Systems Metrics*\n\n"
-            msg += f"• CPU Usage: `{cpu}%`\n"
-            msg += f"• RAM Usage: `{mem}%`\n"
-            msg += f"• Uptime: `{self.listener._fmt_uptime()}`\n"
+            msg = (
+                "⚙️ *SYSTEM METRICS*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *CPU Usage* : `{cpu}%`\n"
+                f"• *RAM Usage* : `{mem}%`\n"
+                f"• *Uptime* : `{self.listener._fmt_uptime() if hasattr(self.listener, '_fmt_uptime') else 'Active'}`\n"
+            )
             if self.listener._executor:
                 metrics = self.listener._executor.get_metrics()
-                msg += f"• Slippage (Sim): `${metrics.get('simulated_slippage_usd', 0):,.2f}`\n"
-                msg += f"• Spread (Sim): `${metrics.get('simulated_spread_usd', 0):,.2f}`\n"
+                msg += f"• *Slippage (Sim)* : `${metrics.get('simulated_slippage_usd', 0):,.2f}`\n"
+                msg += f"• *Spread (Sim)* : `${metrics.get('simulated_spread_usd', 0):,.2f}`\n"
+            msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         elif sub == "logs":
             try:
-                with open("logs/pm2-out.log", "r") as f:
-                    lines = f.readlines()[-20:]
-                msg = "📜 *System Logs*\n\n```\n" + "".join(lines) + "\n```"
+                # Prioritize PM2 logs
+                log_file = "logs/pm2-out.log"
+                if not os.path.exists(log_file):
+                    log_file = "user_data/logs/app.log"
+                
+                with open(log_file, "r") as f:
+                    lines = f.readlines()[-15:]
+                msg = "📜 *DERNIÈRES LOGS SYSTEM*\n━━━━━━━━━━━━━━━━━━━━\n```\n" + "".join(lines) + "\n```"
                 await self.listener.reply_to(msg, update)
             except Exception as e:
-                await self.listener.reply_to(f"Failed to read logs: {e}", update)
+                await self.listener.reply_to(f"❌ Échec lecture logs: {e}", update)
         elif sub == "cleanup":
             from utils.data_archiver import DataArchiver
             archiver = DataArchiver()

@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS positions (
     take_profit_pct REAL DEFAULT 0.0,
     exit_price REAL,
     pnl REAL,
-    closed_at TIMESTAMP
+    closed_at TIMESTAMP,
+    exchange_order_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     execution_price REAL DEFAULT 0.0,
     notional_usd REAL DEFAULT 0.0,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    exchange_order_id TEXT,
     FOREIGN KEY(position_id) REFERENCES positions(position_id)
 );
 

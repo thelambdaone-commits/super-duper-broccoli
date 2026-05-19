@@ -3,12 +3,14 @@ from typing import Optional
 from eth_account import Account
 from py_clob_client_v2 import ClobClient
 
+from utils.secret_validation import validate_private_key_or_raise
+
 
 class ClobCredentialDeriver:
     def __init__(self, private_key: str, host: str = "https://clob.polymarket.com") -> None:
-        self.private_key = private_key
+        self.private_key = validate_private_key_or_raise(private_key, source="CLOB credential derivation")
         self.host = host
-        self.wallet = Account.from_key(private_key)
+        self.wallet = Account.from_key(self.private_key)
 
     def derive(self) -> dict:
         client = ClobClient(

@@ -72,6 +72,7 @@ class HelpManager:
                 "• `/eth5`, `/eth15`, `/eth1h` ↳ ETH horizons\n"
                 "• `/sol5`, `/sol15`, `/sol1h` ↳ SOL horizons\n"
                 "• `/xrp5`, `/xrp15`, `/xrp1h` ↳ XRP horizons\n"
+                "• `/crypto` ↳ Menu crypto interactif\n"
                 "─────────────────────────"
             )
         },

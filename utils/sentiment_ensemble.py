@@ -12,26 +12,47 @@ class SentimentEnsemble:
         use_finbert: bool = True,
         use_textblob: bool = False,
         finbert_model: str = "ProsusAI/finbert",
+        hf_token: Optional[str] = None,
     ):
         self.use_vader = use_vader
         self.use_finbert = use_finbert
         self.use_textblob = use_textblob
         self.finbert_model = finbert_model
+        self.hf_token = hf_token or os.getenv("HUGGINGFACE_API_KEY", "")
         self._vader: Any = None
         self._finbert: Any = None
+        self._hf_client: Any = None
         self._textblob: Any = None
         self._init_models()
 
     def _init_models(self) -> None:
         if self.use_vader:
             try:
+                import nltk
+                try:
+                    nltk.data.find('sentiment/vader_lexicon.zip')
+                except LookupError:
+                    nltk.download('vader_lexicon', quiet=True)
+                
                 from nltk.sentiment import SentimentIntensityAnalyzer
                 self._vader = SentimentIntensityAnalyzer()
                 logger.info("VADER loaded")
             except Exception as e:
                 logger.warning("VADER init failed: %s", e)
                 self.use_vader = False
+        
         if self.use_finbert:
+            # Try Serverless API first if token is available (Free Tier Optimization)
+            if self.hf_token:
+                try:
+                    from huggingface_hub import InferenceClient
+                    self._hf_client = InferenceClient(model=self.finbert_model, token=self.hf_token)
+                    logger.info("Using HF Inference API for %s", self.finbert_model)
+                    return
+                except Exception as e:
+                    logger.warning("HF InferenceClient init failed: %s", e)
+
+            # Fallback to local transformers
             if not self._allow_remote_models() and not self._is_local_model_path(self.finbert_model):
                 logger.info("FinBERT disabled in offline mode; using non-FinBERT signals only")
                 self.use_finbert = False
@@ -44,10 +65,11 @@ class SentimentEnsemble:
                     model=self.finbert_model,
                     tokenizer=self.finbert_model,
                 )
-                logger.info("FinBERT loaded: %s", self.finbert_model)
+                logger.info("FinBERT loaded locally: %s", self.finbert_model)
             except Exception as e:
-                logger.warning("FinBERT init failed: %s", e)
+                logger.warning("FinBERT local init failed: %s", e)
                 self.use_finbert = False
+
         if self.use_textblob:
             try:
                 from textblob import TextBlob
@@ -66,15 +88,44 @@ class SentimentEnsemble:
             scores["vader"] = v["compound"]
             weights["vader"] = 0.3
 
-        if self._finbert:
-            try:
-                r = self._finbert(text[:512])[0]
-                label, conf = r["label"], r["score"]
-                score = conf if label.upper() == "POSITIVE" else -conf if label.upper() == "NEGATIVE" else 0.0
-                scores[f"finbert_{self.finbert_model.split('/')[-1]}"] = score
+        if self.use_finbert:
+            finbert_score = 0.0
+            finbert_success = False
+
+            # Option A: API
+            if self._hf_client:
+                try:
+                    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_message
+                    @retry(
+                        stop=stop_after_attempt(2),
+                        wait=wait_exponential(multiplier=1, min=2, max=5),
+                        retry=retry_if_exception_message(match=".*loading.*")
+                    )
+                    def query_api(t):
+                        return self._hf_client.text_classification(t[:512])
+                    
+                    res = query_api(text)
+                    if res:
+                        best = max(res, key=lambda x: x["score"])
+                        label, conf = best["label"], best["score"]
+                        finbert_score = conf if label.upper() == "POSITIVE" else -conf if label.upper() == "NEGATIVE" else 0.0
+                        finbert_success = True
+                except Exception as e:
+                    logger.warning("HF API inference error: %s", e)
+
+            # Option B: Local fallback
+            if not finbert_success and self._finbert:
+                try:
+                    r = self._finbert(text[:512])[0]
+                    label, conf = r["label"], r["score"]
+                    finbert_score = conf if label.upper() == "POSITIVE" else -conf if label.upper() == "NEGATIVE" else 0.0
+                    finbert_success = True
+                except Exception as e:
+                    logger.warning("FinBERT local inference error: %s", e)
+
+            if finbert_success:
+                scores[f"finbert_{self.finbert_model.split('/')[-1]}"] = finbert_score
                 weights[f"finbert_{self.finbert_model.split('/')[-1]}"] = 0.5
-            except Exception as e:
-                logger.warning("FinBERT inference error: %s", e)
 
         if self._textblob:
             tb = self._textblob(text)

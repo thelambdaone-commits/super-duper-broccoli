@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -40,10 +41,23 @@ class CLOBListener:
         store: Optional[FeatureStore] = None,
         config: Optional[CLOBListenerConfig] = None,
     ) -> None:
-        self.token_ids = token_ids or []
+        self.token_ids = list(token_ids) if token_ids else []
         self.store = store
         self.config = config or CLOBListenerConfig()
         self._running = False
+        self._subscription_queue: asyncio.Queue[list[str]] = asyncio.Queue()
+
+    def subscribe(self, token_ids: list[str]) -> None:
+        """Schedule a new subscription update."""
+        if not token_ids:
+            return
+        # Add to local list to ensure persistence across reconnects
+        for tid in token_ids:
+            if tid not in self.token_ids:
+                self.token_ids.append(tid)
+        
+        self._subscription_queue.put_nowait(token_ids)
+        logger.info("Dynamic subscription scheduled for %s token IDs", len(token_ids))
 
     @staticmethod
     def subscription_message(token_ids: list[str]) -> str:
@@ -123,10 +137,33 @@ class CLOBListener:
                     self.config.ws_url,
                     ping_interval=self.config.heartbeat_seconds,
                 ) as websocket:
+                    # Initial subscription
                     if self.token_ids:
                         await websocket.send(self.subscription_message(self.token_ids))
-                    async for message in websocket:
-                        await self.handle_message(message, callback=callback)
+                    
+                    # Task to handle dynamic subscriptions
+                    async def subscription_worker():
+                        while True:
+                            new_ids = await self._subscription_queue.get()
+                            try:
+                                await websocket.send(self.subscription_message(new_ids))
+                                logger.info("✅ Sent dynamic subscription for: %s", new_ids)
+                            finally:
+                                self._subscription_queue.task_done()
+
+                    worker_task = asyncio.create_task(subscription_worker())
+                    
+                    try:
+                        async for message in websocket:
+                            await self.handle_message(message, callback=callback)
+                    except Exception as e:
+                        logger.warning("CLOB websocket stream error: %s", e)
+                        raise
+                    finally:
+                        worker_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await worker_task
+                        
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

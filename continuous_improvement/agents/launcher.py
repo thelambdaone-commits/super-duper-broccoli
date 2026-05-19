@@ -9,6 +9,7 @@ import signal
 from typing import List, Optional
 
 from core.mlops_feedback_loop import LobstarMLOpsEngine
+from utils.market_watchlist import get_polymarket_watchlist
 
 from continuous_improvement.agents.microfish_ingest import MicrofishIngestAgent
 from continuous_improvement.agents.forensic_postmortem import ForensicPostMortemAgent
@@ -30,6 +31,7 @@ class AgentSwarmLauncher:
     """
 
     def __init__(self):
+        self.microfish_interval_seconds = 15.0
         self.mlops_engine: Optional[LobstarMLOpsEngine] = None
 
         self.microfish_agent: Optional[MicrofishIngestAgent] = None
@@ -42,7 +44,7 @@ class AgentSwarmLauncher:
 
     async def start_all(self, tickers: List[str] = None):
         if tickers is None:
-            tickers = ["BTC", "ETH", "SOL", "TRUMP", "META"]
+            tickers = get_polymarket_watchlist(limit=100)
 
         logger.info("🚀 Starting Lobstar Agent Swarm (7 agents)...")
 
@@ -65,7 +67,7 @@ class AgentSwarmLauncher:
             self.mlops_engine.set_baseline(ticker, self._generate_baseline(ticker))
 
         self.microfish_agent = MicrofishIngestAgent()
-        asyncio.create_task(self.microfish_agent.start(tickers, interval=15.0))
+        asyncio.create_task(self.microfish_agent.start(tickers, interval=self.microfish_interval_seconds))
 
         self.forensic_agent = ForensicPostMortemAgent()
         await self.forensic_agent.start()

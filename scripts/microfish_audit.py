@@ -8,6 +8,7 @@ import sys
 import asyncio
 import logging
 import json
+import math
 from pathlib import Path
 
 # Add project root to path
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from continuous_improvement.agents.microfish_ingest import MicrofishIngestAgent
 from utils.feature_store import FeatureStore
+from utils.market_watchlist import get_polymarket_watchlist
 
 # Setup structured logging
 logging.basicConfig(
@@ -65,9 +67,22 @@ async def run_audit():
     logger.info("📡 STEP 2: Triggering MicrofishIngestAgent self-test on core tickers...")
     
     agent = MicrofishIngestAgent(storage_path=str(transient_stream))
-    tickers = ["BTC", "ETH", "SOL"]
+    auto_only = str(os.getenv("POLYMARKET_WATCHLIST_AUTO_ONLY", "")).lower() in {"1", "true", "yes", "on"}
+    tickers = get_polymarket_watchlist(limit=100, auto_discover_only=auto_only)
+    interval_seconds = 15.0
+    min_records = int(os.getenv("MICROFISH_MIN_RECORDS", "100"))
+    records_per_cycle = max(len(tickers), 1)
+    cycles_needed = math.ceil(min_records / records_per_cycle)
+    eta_minutes = (cycles_needed * interval_seconds) / 60.0
     
     logger.info(f"Capturing order books for tickers: {tickers}...")
+    logger.info(
+        "  Threshold: %s records, %s tickers/cycle, interval %.1fs -> ~%.1f minutes to fill a fresh stream.",
+        min_records,
+        records_per_cycle,
+        interval_seconds,
+        eta_minutes,
+    )
     for ticker in tickers:
         logger.info(f"  Fetching order book for {ticker} from Polymarket CLOB...")
         record = await agent._capture_orderbook(ticker)

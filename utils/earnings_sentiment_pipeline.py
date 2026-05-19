@@ -30,18 +30,21 @@ class EarningsSentimentPipeline:
         self,
         gemini_api_key: Optional[str] = None,
         fmp_api_key: Optional[str] = None,
+        hf_api_key: Optional[str] = None,
         use_huggingface: bool = True,
         hf_model: str = "ProsusAI/finbert",
         db_path: Optional[str] = None,
     ):
         self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY", "")
         self.fmp_api_key = fmp_api_key or os.getenv("FMP_API_KEY", "")
+        self.hf_api_key = hf_api_key or os.getenv("HUGGINGFACE_API_KEY", "")
         self.use_huggingface = use_huggingface
         self.hf_model = hf_model
         self.db_path = db_path or os.path.join(
             os.path.dirname(os.path.dirname(__file__)), "user_data", "data", "earnings_sentiment.db"
         )
         self._hf_pipeline: Any = None
+        self._hf_client: Any = None
         self._analyzer: Any = None
         self._earnings_analyzer_available = False
         self._init_earnings_analyzer()
@@ -59,6 +62,45 @@ class EarningsSentimentPipeline:
     def _get_hf_sentiment(self, text: str) -> dict:
         if not self.use_huggingface:
             return self._keyword_sentiment(text)
+
+        # Strategy 1: Serverless Inference API (Optimal for RAM/Free Tier)
+        if self.hf_api_key:
+            if self._hf_client is None:
+                try:
+                    from huggingface_hub import InferenceClient
+                    self._hf_client = InferenceClient(model=self.hf_model, token=self.hf_api_key)
+                    logger.info("Using HF Serverless Inference API for %s", self.hf_model)
+                except Exception as e:
+                    logger.warning("Failed to init HF InferenceClient: %s", e)
+            
+            if self._hf_client:
+                try:
+                    # Serverless API can return 503 if model is loading
+                    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_message
+                    
+                    @retry(
+                        stop=stop_after_attempt(3),
+                        wait=wait_exponential(multiplier=1, min=2, max=10),
+                        retry=retry_if_exception_message(match=".*loading.*")
+                    )
+                    def query_api(t):
+                        return self._hf_client.text_classification(t[:512])
+
+                    result = query_api(text)
+                    if result:
+                        # Find highest score label
+                        best = max(result, key=lambda x: x["score"])
+                        label = best["label"].upper()
+                        score = best["score"]
+                        if label == "POSITIVE":
+                            return {"score": score, "label": "POSITIVE", "confidence": score}
+                        elif label == "NEGATIVE":
+                            return {"score": -score, "label": "NEGATIVE", "confidence": score}
+                        return {"score": 0.0, "label": "NEUTRAL", "confidence": score}
+                except Exception as e:
+                    logger.warning("HF API inference failed (falling back to local/keywords): %s", e)
+
+        # Strategy 2: Local Transformers (RAM heavy, backup)
         if self._hf_pipeline is None:
             if not self._allow_remote_models() and not self._is_local_model_path(self.hf_model):
                 logger.info("HF model %s disabled in offline mode; using keyword fallback", self.hf_model)
@@ -70,10 +112,11 @@ class EarningsSentimentPipeline:
                     model=self.hf_model,
                     tokenizer=self.hf_model,
                 )
-                logger.info("Loaded HF model: %s", self.hf_model)
+                logger.info("Loaded HF model locally: %s", self.hf_model)
             except Exception as e:
-                logger.warning("Failed to load HF model %s: %s", self.hf_model, e)
+                logger.warning("Failed to load local HF model %s: %s", self.hf_model, e)
                 return self._keyword_sentiment(text)
+        
         try:
             result = self._hf_pipeline(text[:512])[0]
             label = result["label"].upper()
@@ -84,7 +127,7 @@ class EarningsSentimentPipeline:
                 return {"score": -score, "label": "NEGATIVE", "confidence": score}
             return {"score": 0.0, "label": "NEUTRAL", "confidence": score}
         except Exception as e:
-            logger.warning("HF sentiment error: %s", e)
+            logger.warning("HF local sentiment error: %s", e)
             return self._keyword_sentiment(text)
 
     def analyze_earnings_call(
@@ -166,6 +209,7 @@ class EarningsSentimentPipeline:
         return {
             "hf_model": self.hf_model,
             "use_huggingface": self.use_huggingface,
+            "hf_api_configured": bool(self.hf_api_key),
             "earnings_analyzer_available": self._earnings_analyzer_available,
             "gemini_configured": bool(self.gemini_api_key),
             "fmp_configured": bool(self.fmp_api_key),

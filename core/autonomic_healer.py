@@ -19,7 +19,7 @@ class LobstarAutonomicHealer:
 
     def __init__(
         self,
-        log_file_path: str = "user_data/logs/app.log",
+        log_file_path: str = "logs/pm2-out.log",
         broadcaster: Optional[Any] = None,
     ) -> None:
         """
@@ -32,6 +32,14 @@ class LobstarAutonomicHealer:
         self.log_path = log_file_path
         self.broadcaster = broadcaster
         
+        # Distributed Memory Access
+        self._swarm = None
+        try:
+            from core.swarm_supervisor import get_swarm_supervisor
+            self._swarm = get_swarm_supervisor()
+        except ImportError:
+            logger.warning("SwarmSupervisor not available in Healer, distributed remediation disabled.")
+
         # Index de la dernière ligne lue pour éviter de re-scanner tout le fichier
         self._last_position = 0
         
@@ -128,6 +136,8 @@ class LobstarAutonomicHealer:
             backup_rpc = os.getenv("BACKUP_QUICKNODE_RPC_URL", "")
             if backup_rpc:
                 os.environ["POLYGON_RPC_URL"] = backup_rpc
+                if self._swarm:
+                    asyncio.create_task(self._swarm.publish_event("INFRA_RPC_SWITCH", {"new_rpc": backup_rpc}))
                 logger.info(f"✅ [REMEDIATION] RPC basculé vers: {backup_rpc[:50]}...")
                 return {
                     "statut": "REPAIRED",
@@ -167,6 +177,8 @@ class LobstarAutonomicHealer:
                         logger.warning(f"Impossible de supprimer {file_path}: {e}")
             
             if removed_count > 0:
+                if self._swarm:
+                    asyncio.create_task(self._swarm.publish_event("DB_WAL_FLUSHED", {"files_removed": removed_count}))
                 return {
                     "statut": "REPAIRED",
                     "action": "FLUSHED_WAL_SHARED_MEMORY",
@@ -192,6 +204,10 @@ class LobstarAutonomicHealer:
             os.environ["SCRAPER_RESETS"] = str(reset_count)
             os.environ["MICROFISH_BUFFER_FLUSHED"] = "true"
             
+            if self._swarm:
+                self._swarm.set_shared_value("scraper:resets", reset_count)
+                asyncio.create_task(self._swarm.publish_event("SCRAPER_BUFFER_RESET", {"reset_count": reset_count}))
+
             logger.info(f"✅ [REMEDIATION] Web scraper buffer réinitialisé (réinitialisation #{reset_count})")
             return {
                 "statut": "REPAIRED",
@@ -209,6 +225,8 @@ class LobstarAutonomicHealer:
         try:
             # Forcer un drapeau de réinitialisation
             os.environ["FORCE_CLOB_RECONNECT"] = "true"
+            if self._swarm:
+                asyncio.create_task(self._swarm.publish_event("CLOB_FORCE_RECONNECT", {}))
             logger.info("✅ [REMEDIATION] Reconnexion CLOB demandée")
             return {
                 "statut": "REPAIRED",
@@ -226,6 +244,8 @@ class LobstarAutonomicHealer:
         try:
             import gc
             gc.collect()
+            if self._swarm:
+                asyncio.create_task(self._swarm.publish_event("INFRA_GC_COLLECT", {}))
             logger.info("✅ [REMEDIATION] Garbage collection forcé")
             return {
                 "statut": "REPAIRED",

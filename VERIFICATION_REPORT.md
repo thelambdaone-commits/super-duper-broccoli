@@ -121,5 +121,24 @@ The entire code suite has been validated inside the virtual environment:
 The bot is fully secured, latency-optimized, and structurally protected against slippage.
 
 ---
+## 7. Diagnostic de la Stack Hugging Face (Optimisation Compte Gratuit)
+
+Cette section analyse l'utilisation de l'écosystème Hugging Face pour les briques Sentiment Analysis et NLP, en mettant l'accent sur l'efficacité pour un compte gratuit.
+
+### 1. Statut Actuel : Hybride API/Local (OPTIMISÉ)
+*   **Mode d'Exécution :** Priorité à l'**API d'Inférence Serverless** (déporté). Fallback local uniquement si la clé API est absente.
+*   **Modèles Détectés :** `ProsusAI/finbert` et `microsoft/deberta-v3-base`.
+*   **Impact Ressources :** Consommation RAM locale réduite à **~0 Mo** pour la partie ML (si clé API active).
+*   **Temps de Réponse :**
+    *   *API (Optimal) :* 100-300ms (dépend du réseau).
+    *   *Retry Logic :* Gestion automatique du "Cold Start" (erreur 503) via `tenacity`.
+
+### 2. Améliorations Appliquées (Hardening)
+Nous avons déjà mis à jour les composants suivants pour supporter l'inférence déportée :
+1.  **EarningsSentimentPipeline :** Bascule sur `InferenceClient` si `HUGGINGFACE_API_KEY` est présent.
+2.  **SentimentEnsemble :** Utilisation de l'API pour FinBERT avec fallback local.
+3.  **SentimentAnalyzer :** Support API pour DeBERTa et FinBERT.
+
+---
 > [!TIP]
-> All hardening upgrades have been successfully committed to the active production branch. The system is structurally robust, exceptionally fast, and completely safe for execution.
+> L'optimisation Hugging Face est **terminée et validée**. Le bot est désormais compatible avec les environnements à très faibles ressources (VPS gratuits, instances t2.micro).

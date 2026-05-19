@@ -170,16 +170,24 @@ async def _execute_guarded(
         except Exception as e:
             logger.error(f"Failed to record signal: {e}")
 
-    if mode == "PAPER":
+    # ALWAYS RECORD TO PAPER FOR BENCHMARKING (User request: concurrent logic)
+    # We record paper even in PROD mode to track "theoretical" performance vs real fills
+    paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
+    try:
         ledger.record_paper_order(
             ticker=ticker, side=side, price=price, size=size,
             confidence=confidence, regime_label=regime, signal_source=signal_source,
             tenant_wallet=tenant_wallet,
         )
-        if risk: risk.book_exposure(ticker, size, side)
+        if risk and mode == "PAPER": 
+            risk.book_exposure(ticker, size, side)
+    except Exception as e:
+        logger.error(f"Concurrent Paper recording failed: {e}")
+
+    if mode == "PAPER":
         report_data["status"] = "SUCCESS"
         report_data["executed_size"] = size
-        report_data["trade_id"] = f"paper-{uuid.uuid4().hex[:8]}"
+        report_data["trade_id"] = paper_order_id
         if store:
             try:
                 store.record_decision(
@@ -249,6 +257,7 @@ async def _execute_guarded(
                 filled_qty=executed_size,
                 execution_price=executed_price,
                 notional_usd=executed_size * executed_price,
+                exchange_order_id=fill.get("order_id"),
             )
             if risk: risk.book_exposure(ticker, executed_size, side)
             report_data["status"] = "SUCCESS"

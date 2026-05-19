@@ -6,6 +6,14 @@
 
 Agentic trading bot for Polymarket CLOB — ingests Telegram signals, sizes via Kelly + HMM regime filter, executes maker-first with passive order placement. Backed by a FastAPI REST API, Streamlit dashboard, MCP tool server, and a continuous-improvement agent system.
 
+## Context7 Policy
+
+This project treats Context7 (`https://github.com/upstash/context7`) as a documentation-only rule for all AI assistants used here, including Gemini, Copilot, OpenCode, and Codex.
+
+- Use Context7 before relying on any external API, SDK, or setup/configuration detail.
+- Do not treat Context7 as a runtime dependency.
+- The authoritative local instructions are [`CLAUDE.md`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/CLAUDE.md) and [`.cursorrules`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/.cursorrules).
+
 ## Architecture
 
 ```

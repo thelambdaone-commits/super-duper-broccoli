@@ -229,8 +229,13 @@ class HealthSupervisorAgent:
                 "wallet_reconciliation",
                 "Health check alert. Wallet balance drift detected. "
                 f"On-chain USDC {onchain_usdc:.2f} vs ledger available {ledger_available:.2f}. "
-                f"Drift {drift:.2f}."
+                f"Drift {drift:.2f}. Auto-syncing ledger capital..."
             )
+            # Perform actual sync to adapt strategy
+            if onchain_usdc > 0:
+                self.ledger.sync_capital(onchain_usdc)
+                if hasattr(self.ledger, "risk") and self.ledger.risk:
+                    self.ledger.risk.rehydrate_from_ledger(self.ledger)
 
         return {
             "check": "wallet_reconciliation",

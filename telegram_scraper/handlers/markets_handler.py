@@ -13,7 +13,7 @@ async def handle_markets_list(
     context: ContextTypes.DEFAULT_TYPE,
     market_reader: MarketDataReader,
 ) -> None:
-    """Handle /markets list command."""
+    """Handle /markets list command with Lobstar style."""
     try:
         args = context.args
         limit = 10
@@ -30,13 +30,23 @@ async def handle_markets_list(
         if not markets:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ No markets found",
+                text="🔍 *RECHERCHE MARCHÉS*\n━━━━━━━━━━━━━━━━━━━━\n\nAucun marché actif trouvé pour le moment.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
 
         # Format and send
         markets_msg = market_reader.format_markets_list(markets, limit)
+        
+        # Add Header if missing
+        if "━━━━━━━━━" not in markets_msg:
+            markets_msg = (
+                f"📈 *TOP {limit} MARCHÉS ({sort_by.upper()})*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"{markets_msg}\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+            )
+
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=markets_msg,
@@ -47,7 +57,7 @@ async def handle_markets_list(
         logger.error(f"Error in markets list handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Error: {str(e)[:200]}",
+            text=f"❌ *ERREUR MARCHÉS*\n\nImpossible de lister les marchés : `{str(e)[:100]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
 
@@ -57,14 +67,19 @@ async def handle_markets_info(
     context: ContextTypes.DEFAULT_TYPE,
     market_reader: MarketDataReader,
 ) -> None:
-    """Handle /markets info command."""
+    """Handle /markets info command with Lobstar style."""
     try:
         args = context.args
         
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/markets info <market_id_or_slug>`",
+                text=(
+                    "ℹ️ *DÉTAILS MARCHÉ*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "Usage: `/markets info <slug_ou_id>`\n\n"
+                    "💡 _Exemple: /markets info solana-price-prediction_"
+                ),
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -77,13 +92,22 @@ async def handle_markets_info(
         if not snapshot:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ Market not found: {market_id}",
+                text=f"❌ *MARCHÉ INTROUVABLE*\n\nAucun marché correspondant à `{market_id}` n'a été trouvé.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
 
         # Format and send
         market_msg = market_reader.format_market_snapshot(snapshot)
+        
+        if "━━━━━━━━━" not in market_msg:
+            market_msg = (
+                f"📊 *ANALYSE DE MARCHÉ*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{market_msg}\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+            )
+
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=market_msg,
@@ -94,7 +118,7 @@ async def handle_markets_info(
         logger.error(f"Error in markets info handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Error: {str(e)[:200]}",
+            text=f"❌ *ERREUR ANALYSE*\n\nÉchec de la récupération des détails : `{str(e)[:100]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
 
@@ -284,11 +308,19 @@ async def handle_markets_opportunities(
         
         args = context.args
         min_edge = 5.0
-        if args and args[0].replace(".", "").isdigit():
-            min_edge = float(args[0])
+        limit = 10
+        if args:
+            if args[0].replace(".", "").isdigit():
+                min_edge = float(args[0])
+            if len(args) > 1 and args[1].isdigit():
+                limit = int(args[1])
         
         discovery = MarketDiscovery()
-        opportunities = discovery.find_betting_opportunities(min_edge_percent=min_edge)
+        opportunities = discovery.find_betting_opportunities(
+            min_edge_percent=min_edge,
+            limit=limit,
+            max_days_to_resolution=3.0,
+        )
         
         text = format_betting_opportunities(opportunities)
         
@@ -344,12 +376,15 @@ async def handle_markets_contrarian(
         ]
         
         for i, opp in enumerate(contrarian_opps, 1):
+            horizon = ""
+            if isinstance(opp.get("days_to_resolution"), (int, float)):
+                horizon = f" | T- {opp['days_to_resolution']:.1f}j"
             lines.extend([
                 f"{i}. *{opp['question'][:50]}...*",
                 f"   📊 Current: `{opp['current_odds']}`",
                 f"   🎯 Bet: `{opp['contrarian_bet']}`",
                 f"   💡 {opp['reason']}",
-                f"   💰 Vol: `${opp['volume']:,.0f}`",
+                f"   💰 Vol: `${opp['volume']:,.0f}`{horizon}",
                 "",
             ])
         

@@ -53,6 +53,14 @@ class LobstarOrchestrator:
         self.predictive_gate_service = predictive_gate_service or self._normalize_predictive_gate()
         self.signal_router = signal_router or self._normalize_signal_router()
         
+        # Distributed Memory Access
+        self._swarm = None
+        try:
+            from core.swarm_supervisor import get_swarm_supervisor
+            self._swarm = get_swarm_supervisor()
+        except ImportError:
+            logger.warning("SwarmSupervisor not available in Orchestrator, distributed sync disabled.")
+
         # Initialize channel broadcaster for signal distribution
         self.broadcaster = broadcaster or TelegramChannelBroadcaster(bot_instance)
 
@@ -75,6 +83,25 @@ class LobstarOrchestrator:
 
     async def on_signal(self, signal: dict) -> None:
         logger.info("Signal received: %s", self._safe_signal_for_log(signal))
+
+        if self._swarm:
+            asyncio.create_task(self._swarm.publish_event("SIGNAL_RECEIVED", {
+                "source": signal.get("source", "unknown"),
+                "ticker": signal.get("ticker", "N/A"),
+                "timestamp": time.time()
+            }))
+
+        # ─── Fast Path for On-chain Copy Trading ─────────────────────────────
+        if signal.get("source") == "polymarket_onchain" and self.copy_trading_agent:
+            try:
+                copy_sig = await self.copy_trading_agent.process_onchain_signal(signal)
+                if copy_sig:
+                    # Enqueue the enriched copy signal for full cognitive & risk processing
+                    await self._enqueue_signal(copy_sig)
+                    return 
+            except Exception as e:
+                logger.error(f"Error in copy trading fast-path: {e}")
+        # ─────────────────────────────────────────────────────────────────────
 
         if await self._handle_circuit_breaker(signal):
             return
@@ -127,7 +154,15 @@ class LobstarOrchestrator:
 
             if result.get("status") == "SUCCESS":
                 logger.info(f"Signal executed successfully: {result.get('trade_id', 'N/A')}")
+                if self._swarm:
+                    asyncio.create_task(self._swarm.publish_event("SIGNAL_EXECUTED", {
+                        "trade_id": result.get("trade_id"),
+                        "ticker": signal.get("ticker"),
+                        "side": result.get("side"),
+                        "status": "SUCCESS"
+                    }))
                 ledger = getattr(self.container, "ledger", None)
+
                 live_mode = self.execution_mode
                 if ledger and hasattr(ledger, "get_execution_mode"):
                     try:

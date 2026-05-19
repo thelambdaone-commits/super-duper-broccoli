@@ -9,6 +9,8 @@ import logging
 import os
 from typing import Any
 
+from utils.secret_validation import normalize_private_key
+
 logger = logging.getLogger("ApiKeyCheck")
 
 # Mapping: nom de la clé → criticité (True = bloquante)
@@ -17,15 +19,31 @@ REQUIRED_KEYS: dict[str, bool] = {
     "TELEGRAM_BOT_TOKEN": True,
     "CLOB_PRIVATE_KEY": True,
     "POLYGON_RPC_URL": True,
+    "POLYGON_RPC_URL_HTTP": False,
     "POLYMARKET_CLOB_URL": False,
     "OPENROUTER_API_KEY": False,
-    "BRAVE_API_KEY": False,
+    "COINGECKO_API_KEY": False,
+    "NVIDIA_API_KEY": False,
+    "MISTRAL_API_KEY": False,
+    "DEEPSEEK_API_KEY": False,
+    "HUGGINGFACE_API_KEY": False,
+    "NEWS_FEEDS": False,
     "CHAT_ID": False,
 }
 
 
 class ApiKeyNotifier:
     """Vérifie la présence des clés API critiques et génère des alertes Telegram."""
+
+    @staticmethod
+    def _load_secure_runtime_secrets() -> dict[str, str]:
+        try:
+            from utils.vault_handler import VaultHandler
+
+            return VaultHandler().fetch_quantum_secrets()
+        except Exception as exc:
+            logger.debug("Unable to load secure runtime secrets: %s", exc)
+            return {}
 
     def check_all_keys(self, runtime_secrets: dict[str, Any] | None = None) -> dict:
         """
@@ -37,7 +55,7 @@ class ApiKeyNotifier:
         Returns:
             dict avec les clés 'missing', 'critical', 'ok', 'total'
         """
-        secrets = runtime_secrets or {}
+        secrets = runtime_secrets or self._load_secure_runtime_secrets()
         missing = []
         critical_missing = []
         ok = []
@@ -45,6 +63,10 @@ class ApiKeyNotifier:
         for key, is_critical in REQUIRED_KEYS.items():
             # Vérifie d'abord dans les secrets runtime, puis dans les variables d'environnement
             value = secrets.get(key) or os.getenv(key, "")
+            if key == "POLYMARKET_CLOB_URL" and not value:
+                value = os.getenv(key, "https://clob.polymarket.com")
+            if key == "CLOB_PRIVATE_KEY":
+                value = normalize_private_key(value) or ""
             if not value or value.strip() == "":
                 missing.append(key)
                 if is_critical:

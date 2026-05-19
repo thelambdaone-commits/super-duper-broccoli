@@ -82,7 +82,12 @@ class CryptoMarketIntelligence:
         self.min_liquidity = min_liquidity
 
     def analyze(self, markets: list[Market], source: str = "polymarket_gamma") -> IntelligenceReport:
-        crypto_markets = [market for market in markets if self._classify_asset(market) != "OTHER"]
+        crypto_markets = [
+            market
+            for market in markets
+            if self._classify_asset(market) != "OTHER"
+            and not self._is_noise_market(market)
+        ]
         signals = [self._score_market(market) for market in crypto_markets]
         signals = [signal for signal in signals if signal is not None]
         signals.sort(key=lambda signal: signal.score, reverse=True)
@@ -203,6 +208,12 @@ class CryptoMarketIntelligence:
             if any(self._contains_keyword(text, keyword) for keyword in keywords):
                 return asset
         return "OTHER"
+
+    @staticmethod
+    def _is_noise_market(market: Market) -> bool:
+        text = f"{market.slug} {market.question}".lower()
+        noise_markers = ("dev vs", "test", "dummy", "example", "sandbox")
+        return any(marker in text for marker in noise_markers)
 
     @staticmethod
     def _bounded_log_score(value: float, baseline: float) -> float:

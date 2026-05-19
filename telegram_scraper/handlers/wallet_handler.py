@@ -40,14 +40,19 @@ def get_chat_id(update: Update) -> int:
 async def handle_wallet_balance(
     update: Update, context: ContextTypes.DEFAULT_TYPE, wallet_manager: WalletManager
 ) -> None:
-    """Handle /wallet balance command."""
+    """Handle /wallet balance command with Lobstar intuitive style."""
     try:
         args = context.args
         
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/wallet balance <wallet_address>`",
+                text=(
+                    "💰 *CHECK BALANCE*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "Usage: `/wallet balance <adresse_ou_alias>`\n\n"
+                    "💡 _Exemple: /wallet balance 0x71C...3a9_"
+                ),
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -58,13 +63,23 @@ async def handle_wallet_balance(
         if not wallet_manager.is_valid_address(wallet_address):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ Invalid Ethereum address",
+                text="❌ *ERREUR ADRESSE*\n\nL'adresse fournie n'est pas un format Ethereum/Polygon valide.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
 
         # Get balance report
         report = wallet_manager.format_balance_report(wallet_address)
+        
+        # Wrap report in Lobstar style if it's not already
+        if "━━━━━━━━━" not in report:
+            report = (
+                f"💰 *SOLDE DU WALLET*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{report}\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+            )
+
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=report,
@@ -75,7 +90,7 @@ async def handle_wallet_balance(
         logger.error(f"Error in wallet balance handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Error: {str(e)[:200]}",
+            text=f"❌ *ERREUR SYSTÈME*\n\nUne erreur est survenue lors de la récupération du solde : `{str(e)[:100]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
 
@@ -83,22 +98,26 @@ async def handle_wallet_balance(
 async def handle_wallet_health(
     update: Update, context: ContextTypes.DEFAULT_TYPE, wallet_manager: WalletManager
 ) -> None:
-    """Handle /wallet health command."""
+    """Handle /wallet health command with Lobstar intuitive style."""
     try:
         health = wallet_manager.health_check()
         
-        status_emoji = "✅" if health["connected"] else "❌"
-        status_text = health["status"].upper()
+        status_emoji = "🟢" if health["connected"] else "🔴"
+        status_text = "OPÉRATIONNEL" if health["connected"] else "DÉCONNECTÉ"
         
         lines = [
-            f"{status_emoji} **Wallet Manager Health**",
-            f"• Status: `{status_text}`",
-            f"• Chain ID: `{health['chain_id']}`",
-            f"• Latest Block: `{health.get('latest_block', 'N/A')}`",
+            f"🛡️ *SANTÉ DU WALLET MANAGER*",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"• *Statut* : `{status_text}` {status_emoji}",
+            f"• *Chain ID* : `{health['chain_id']}`",
+            f"• *Bloc Actuel* : `{health.get('latest_block', 'N/A')}`",
+            f"• *Latency* : `{health.get('latency_ms', 'N/A')}ms`",
         ]
         
-        if "error" in health:
-            lines.append(f"• Error: `{health['error'][:100]}`")
+        if not health["connected"] and "error" in health:
+            lines.append(f"• *Erreur* : `{health['error'][:100]}`")
+        
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -110,7 +129,7 @@ async def handle_wallet_health(
         logger.error(f"Error in wallet health handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Error: {str(e)[:200]}",
+            text=f"❌ *ERREUR SANTÉ*\n\nImpossible de vérifier l'état du manager : `{str(e)[:100]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
 

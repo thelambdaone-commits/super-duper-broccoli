@@ -187,6 +187,7 @@ class Ledger:
         filled_qty: Optional[float] = None,
         execution_price: Optional[float] = None,
         notional_usd: Optional[float] = None,
+        exchange_order_id: Optional[str] = None,
     ) -> None:
         if price <= 0 or size <= 0:
             raise QuantFatal("Order persistence failed: price and size must be positive")
@@ -222,7 +223,7 @@ class Ledger:
                     new_capital = existing["capital_engaged"] + capital_engaged
                     cursor.execute(
                         "UPDATE positions SET size = ?, capital_engaged = ?, requested_qty = requested_qty + ?, "
-                        "filled_qty = filled_qty + ?, execution_price = ?, notional_usd = notional_usd + ? "
+                        "filled_qty = filled_qty + ?, execution_price = ?, notional_usd = notional_usd + ?, exchange_order_id = ? "
                         "WHERE position_id = ?",
                         (
                             new_size,
@@ -231,13 +232,14 @@ class Ledger:
                             filled_qty_val,
                             execution_price_val,
                             notional_usd_val,
+                            exchange_order_id,
                             position_id,
                         ),
                     )
                 else:
                     cursor.execute(
-                        "INSERT INTO positions (position_id, ticker, side, entry_price, size, requested_qty, filled_qty, execution_price, notional_usd, capital_engaged, tenant_wallet) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO positions (position_id, ticker, side, entry_price, size, requested_qty, filled_qty, execution_price, notional_usd, capital_engaged, tenant_wallet, exchange_order_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             position_id,
                             ticker,
@@ -250,12 +252,13 @@ class Ledger:
                             notional_usd_val,
                             capital_engaged,
                             tenant_wallet,
+                            exchange_order_id,
                         ),
                     )
 
                 cursor.execute(
-                    "INSERT INTO transactions (position_id, ticker, side, price, size, requested_qty, filled_qty, execution_price, notional_usd) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO transactions (position_id, ticker, side, price, size, requested_qty, filled_qty, execution_price, notional_usd, exchange_order_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         position_id,
                         ticker,
@@ -266,6 +269,7 @@ class Ledger:
                         filled_qty_val,
                         execution_price_val,
                         notional_usd_val,
+                        exchange_order_id,
                     ),
                 )
 
@@ -290,6 +294,37 @@ class Ledger:
             cursor.execute("SELECT * FROM capital_allocation ORDER BY id DESC LIMIT 1")
             row = cursor.fetchone()
             return dict(row) if row else {}
+
+    def sync_capital(self, real_total_capital: float) -> None:
+        """Updates the ledger with the real-world capital from the blockchain."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT allocated_pct, available_capital, total_capital "
+                "FROM capital_allocation ORDER BY id DESC LIMIT 1"
+            )
+            allocation = cursor.fetchone()
+            
+            if not allocation:
+                # Default if none exists: 5% allocation limit
+                cursor.execute(
+                    "INSERT INTO capital_allocation (total_capital, allocated_pct, available_capital) "
+                    "VALUES (?, ?, ?)",
+                    (real_total_capital, 5.0, real_total_capital)
+                )
+            else:
+                # Calculate new available capital by adjusting for current engagement
+                # Engagement is the difference between what we thought we had total and what was available
+                engaged = allocation["total_capital"] - allocation["available_capital"]
+                new_available = real_total_capital - engaged
+                
+                cursor.execute(
+                    "INSERT INTO capital_allocation (total_capital, allocated_pct, available_capital) "
+                    "VALUES (?, ?, ?)",
+                    (real_total_capital, allocation["allocated_pct"], new_available)
+                )
+            self.conn.commit()
+            logger.info(f"Capital synced with real balance: {real_total_capital:.2f} $")
 
     def get_open_positions(self) -> list[dict]:
         with self._lock:
@@ -443,14 +478,50 @@ class Ledger:
             """, (total_trades, winning_trades, losing_trades, total_net_pnl,
                   win_rate, profit_factor, avg_win, avg_loss))
 
-    def close_position(self, position_id: str) -> None:
-        with self._lock:
-            cursor = self.conn.cursor()
-            cursor.execute(
-                "UPDATE positions SET status = 'CLOSED' WHERE position_id = ?",
-                (position_id,),
-            )
-            self.conn.commit()
+    def update_position_fill(
+        self,
+        exchange_order_id: str,
+        filled_qty: float,
+        execution_price: float,
+    ) -> bool:
+        """Met à jour une position ouverte suite à un fill partiel ou total reçu du WebSocket."""
+        try:
+            with self._transaction() as cursor:
+                # Trouver la position par exchange_order_id
+                cursor.execute(
+                    "SELECT position_id, ticker, side, entry_price, size, filled_qty FROM positions "
+                    "WHERE exchange_order_id = ? AND status = 'OPEN'",
+                    (exchange_order_id,),
+                )
+                pos = cursor.fetchone()
+                if not pos:
+                    logger.debug(f"Position not found for exchange_order_id: {exchange_order_id}")
+                    return False
+
+                position_id = pos["position_id"]
+                new_filled_qty = pos["filled_qty"] + filled_qty
+                
+                # Update position
+                cursor.execute(
+                    "UPDATE positions SET filled_qty = ?, execution_price = ? WHERE position_id = ?",
+                    (new_filled_qty, execution_price, position_id),
+                )
+                
+                # Check if fully filled (optional: status update if needed)
+                # On Polymarket, one order can have multiple fills.
+                
+                # Record transaction
+                cursor.execute(
+                    "INSERT INTO transactions (position_id, ticker, side, price, size, filled_qty, execution_price, exchange_order_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (position_id, pos["ticker"], pos["side"], pos["entry_price"], filled_qty, filled_qty, execution_price, exchange_order_id),
+                )
+            
+            logger.info(f"✅ Position {position_id} mise à jour (fill: {filled_qty} @ {execution_price})")
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de la mise à jour du fill: {e}")
+            return False
 
     def get_active_trades(self):
         with self._lock:
@@ -588,7 +659,7 @@ class Ledger:
                 cursor.execute("""
                     SELECT MAX(total_capital) as peak_capital 
                     FROM capital_allocation 
-                    WHERE timestamp >= datetime('now', '-1 day')
+                    WHERE updated_at >= datetime('now', '-1 day')
                 """)
                 peak_row = cursor.fetchone()
                 if not peak_row or not peak_row["peak_capital"]:

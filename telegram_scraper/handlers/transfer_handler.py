@@ -14,20 +14,19 @@ async def handle_transfer(
     context: ContextTypes.DEFAULT_TYPE,
     transfer_manager: TransferManager,
 ) -> None:
-    """Handle /transfer command."""
+    """Handle /transfer command with Lobstar style."""
     try:
         args = context.args
         
         if len(args) < 3:
-            help_text = """
-Usage: `/transfer <amount> <token> <to_address> [--dry-run]`
-
-**Tokens:** MATIC, USDC, POL
-
-**Example:**
-`/transfer 10 USDC 0x742d...f42dE`
-`/transfer 1 MATIC 0x742d...f42dE --dry-run`
-"""
+            help_text = (
+                "📤 *TRANSFERT DE FONDS*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Usage: `/transfer <montant> <token> <adresse_dest>`\n\n"
+                "💎 *Tokens supportés* : `MATIC`, `USDC`, `POL`\n"
+                "⚙️ *Option* : `--dry-run` (simuler)\n\n"
+                "💡 _Exemple: /transfer 10 USDC 0x742...f42dE_"
+            )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=help_text,
@@ -45,7 +44,7 @@ Usage: `/transfer <amount> <token> <to_address> [--dry-run]`
         except ValueError:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ Invalid amount: {amount_str}",
+                text=f"❌ *MONTANT INVALIDE*\n\n`{amount_str}` n'est pas un nombre valide.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -54,7 +53,7 @@ Usage: `/transfer <amount> <token> <to_address> [--dry-run]`
         if not transfer_manager.wallet_manager.is_valid_address(to_address):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ Invalid recipient address",
+                text="❌ *ADRESSE INVALIDE*\n\nL'adresse de destination est incorrecte.",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
@@ -67,24 +66,23 @@ Usage: `/transfer <amount> <token> <to_address> [--dry-run]`
         if "error" in gas_est:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ Gas estimation failed: {gas_est['error']}",
+                text=f"❌ *ESTIMATION ÉCHOUÉE*\n\n{gas_est['error']}",
                 parse_mode=ParseMode.MARKDOWN,
             )
             return
 
         # Show estimate
-        estimate_msg = f"""
-📤 **Transfer Estimate**
-
-• Token: `{token}`
-• Amount: `{amount}`
-• To: `{to_address[:6]}...{to_address[-4:]}`
-• Gas: `{gas_est['gas_estimate']} units`
-• Gas Price: `{gas_est['avg_gas_price_gwei']:.2f} GWEI`
-• Est. Gas Cost: `{gas_est['estimated_gas_cost_gwei']:.4f} GWEI`
-
-Proceeding with transfer...
-"""
+        estimate_msg = (
+            "📤 *DEVIS DE TRANSFERT*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Token* : `{token}`\n"
+            f"• *Montant* : `{amount}`\n"
+            f"• *Vers* : `{to_address[:6]}...{to_address[-4:]}`\n"
+            f"• *Gaz Estimé* : `{gas_est['gas_estimate']} units`\n"
+            f"• *Coût Total* : `{gas_est['estimated_gas_cost_gwei']:.6f} POL`\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "⚡ _Exécution en cours..._"
+        )
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -99,6 +97,14 @@ Proceeding with transfer...
 
         # Send receipt
         receipt_msg = transfer_manager.format_transfer_receipt(receipt)
+        if "━━━━━━━━━" not in receipt_msg:
+            receipt_msg = (
+                "✅ *TRANSFERT TERMINÉ*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"{receipt_msg}\n"
+                "━━━━━━━━━━━━━━━━━━━━"
+            )
+
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=receipt_msg,
@@ -109,7 +115,7 @@ Proceeding with transfer...
         logger.error(f"Error in transfer handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ Error: {str(e)[:200]}",
+            text=f"❌ *ERREUR TRANSFERT*\n\n`{str(e)[:100]}`",
             parse_mode=ParseMode.MARKDOWN,
         )
 

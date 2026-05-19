@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from py_clob_client_v2 import ApiCreds, ClobClient, OrderArgs, OrderType, Side, PartialCreateOrderOptions
 
 from utils.exceptions import QuantFatal
+from utils.secret_validation import validate_private_key_or_raise
 logger = logging.getLogger("FreqAIEngine")
 
 
@@ -22,16 +23,16 @@ class FreqAIEngine:
         signature_type: Optional[int] = None,
     ) -> None:
         from eth_account import Account
-        self._address = Account.from_key(private_key).address
+        self.private_key = validate_private_key_or_raise(private_key, source="FreqAIEngine initialization")
+        self._address = Account.from_key(self.private_key).address
         self.api_url = "https://clob.polymarket.com"
-        self.private_key = private_key
         try:
             if signature_type is None:
                 signature_type = 3 if funder else 0
             
             self.client = ClobClient(
                 host=self.api_url,
-                key=private_key,
+                key=self.private_key,
                 chain_id=chain_id,
                 signature_type=signature_type,
                 funder=funder,
@@ -190,6 +191,49 @@ class FreqAIEngine:
         except Exception as e:
             logger.error(f"Order status check failed for {order_id}: {e}")
             return {"status": "ERROR", "error": str(e)}
+
+    def get_orders(self) -> list:
+        try:
+            return self.client.get_orders()
+        except Exception as e:
+            logger.warning(f"Failed to fetch orders: {e}")
+            return []
+
+    async def get_midpoint(self, token_id: str) -> float:
+        try:
+            # 1. Attempt to get book via client (more direct)
+            book = self.client.get_order_book(token_id)
+            
+            # 2. Extract bids and asks based on object type
+            bids = []
+            asks = []
+            
+            if hasattr(book, "bids"):
+                bids = book.bids
+                asks = book.asks
+            elif isinstance(book, dict):
+                bids = book.get("bids", [])
+                asks = book.get("asks", [])
+            
+            if not bids or not asks:
+                return 0.0
+                
+            # 3. Calculate mid-price
+            def get_price(level):
+                if hasattr(level, "price"): return float(level.price)
+                if isinstance(level, (list, tuple)) and len(level) > 0: return float(level[0])
+                if isinstance(level, dict): return float(level.get("price", 0))
+                return 0.0
+
+            best_bid = get_price(bids[0])
+            best_ask = get_price(asks[0])
+            
+            if best_bid > 0 and best_ask > 0:
+                return (best_bid + best_ask) / 2.0
+            return 0.0
+        except Exception as e:
+            logger.error(f"Failed to get midpoint for {token_id}: {e}")
+            return 0.0
 
     async def stream_ticks_to_duckdb(self) -> None:
         """Reserved hook for live crypto tick streaming.

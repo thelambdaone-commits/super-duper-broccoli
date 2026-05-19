@@ -76,8 +76,14 @@ class SelfImprovementAgent:
     async def _call_local_coding_tool(self, tool: str, prompt: str) -> Optional[str]:
         """Calls local coding assistants like opencode, copilot, or codex."""
         try:
+            import shutil
             import subprocess
-            # Simplified CLI call - adjust based on actual tool usage
+            
+            # 0. Check if tool exists in PATH
+            if not shutil.which(tool):
+                return None
+
+            # 1. Prepare command
             cmd = [tool, "fix", "--prompt", prompt]
             if tool == "codex":
                 cmd = ["codex", "suggest", prompt]
@@ -86,7 +92,7 @@ class SelfImprovementAgent:
                 
             process = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if process.returncode == 0:
-                return process.stdout
+                return process.stdout.strip()
             return None
         except Exception as e:
             logger.debug(f"Local tool {tool} failed: {e}")
@@ -107,11 +113,16 @@ class SelfImprovementAgent:
                 logger.info(f"Generated fix using local tool: {tool}")
                 return patch
 
-        # 2. Fallback to Groq/LLM
+        # 2. Fallback to Cognitive Infrastructure
         try:
-            from mcp_agents.lobstar_agent import LobstarAgent
-            # Reusing the LOBSTAR infrastructure (which now has GROQ_API_KEY)
-            return f"# [AUTO-GENERATED FIX]\n# Pattern: {issue['type']}\n# Suggestion applied: {issue['suggestion']}"
+            # Reusing the LOBSTAR infrastructure if available
+            return (
+                f"# [AUTO-GENERATED PATCH PROPOSAL]\n"
+                f"# Category: {issue.get('type', 'GENERAL')}\n"
+                f"# Issue: {issue['issue']}\n"
+                f"# Implementation: {issue['suggestion']}\n"
+                f"# Note: Autonomous implementation pending manual verification."
+            )
         except Exception as e:
             logger.error(f"Self-coding failed: {e}")
             return None

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from utils.crypto_market_intelligence import CryptoMarketIntelligence, DEFAULT_CRYPTO_KEYWORDS
+from utils.market_watchlist import get_polymarket_watchlist
 from utils.polymarket_client import Market, PolymarketClient
 
 logger = logging.getLogger("MarketScanner")
@@ -20,8 +21,8 @@ BULLISH_KEYWORDS = {"bullish", "moon", "pump", "buy", "long", "accumulate", "bul
 BEARISH_KEYWORDS = {"bearish", "dump", "sell", "short", "bear", "bear trap", "bear market", "bearish reversal", "bearish momentum", "bearish trend", "bearish pattern", "bearish breakout", "bearish divergence", "bearish flag", "bearish engulfing", "bearish hammer", "bearish pennant", "bearish wedge", "bearish channel", "bearish triangle", "bearish flag", "bearish pattern", "bearish setup", "bearish signal", "bearish alert", "bearish call", "bearish recommendation", "bearish advice", "bearish prediction", "bearish forecast", "bearish outlook", "bearish sentiment", "bearish bias", "bearish stance", "bearish position", "bearish exposure", "bearish allocation", "bearish investment", "bearish trade", "bearish position", "bearish holding", "bearish short", "bearish sell", "bearish accumulation", "bearish entry", "bearish exit", "bearish stop", "bearish limit", "bearish take profit", "bearish stop loss", "bearish risk", "bearish reward", "bearish ratio", "bearish risk reward", "bearish risk/reward", "bearish rr", "bearish payoff", "bearish expectancy", "bearish edge", "bearish advantage", "bearish opportunity", "bearish setup", "bearish signal", "bearish alert", "bearish call", "bearish recommendation", "bearish advice", "bearish prediction", "bearish forecast", "bearish outlook", "bearish sentiment", "bearish bias", "bearish stance", "bearish position", "bearish exposure", "bearish allocation", "bearish investment", "bearish trade", "bearish position", "bearish holding", "bearish short", "bearish sell", "bearish accumulation", "bearish entry", "bearish exit", "bearish stop", "bearish limit", "bearish take profit", "bearish stop loss", "bearish risk", "bearish reward", "bearish ratio", "bearish risk reward", "bearish risk/reward", "bearish rr", "bearish payoff", "bearish expectancy", "bearish edge", "bearish advantage", "bearish opportunity"}
 
 SCAN_INTERVAL_SECONDS = 300
-TOP_MARKETS_LIMIT = 30
-MIN_VOLUME_USD = 10_000
+TOP_MARKETS_LIMIT = 100
+MIN_VOLUME_USD = 1_000
 
 
 @dataclass
@@ -115,6 +116,29 @@ class MarketScanner:
         for market in markets:
             if market.volume < MIN_VOLUME_USD:
                 continue
+
+            # USER CONSTRAINT: 3 days max resolution
+            if market.end_date:
+                try:
+                    # Handle different ISO formats from Polymarket
+                    end_dt_str = market.end_date.replace("Z", "+00:00")
+                    end_dt = datetime.fromisoformat(end_dt_str)
+                    
+                    # Ensure end_dt is aware
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=timezone.utc)
+                        
+                    now = datetime.now(timezone.utc)
+                    days_to_res = (end_dt - now).total_seconds() / (24 * 3600)
+                    if days_to_res > 3:
+                        # logger.debug(f"Skipping {market.slug}: resolves in {days_to_res:.1f} days")
+                        continue
+                    if days_to_res < 0:
+                        # logger.debug(f"Skipping {market.slug}: already resolved")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to parse end_date for {market.slug}: {e}")
+
             if not self._is_crypto_market(market):
                 continue
 
@@ -312,8 +336,9 @@ class MarketScanner:
                 pass
         
         # 2. Try search if it looks like a generic asset (BTC, ETH, SOL)
-        if ticker.upper() in ["BTC", "ETH", "SOL", "BITCOIN", "ETHEREUM", "SOLANA"]:
-            markets = self.client.search_markets(ticker, limit=5)
+        watchlist = set(get_polymarket_watchlist(limit=100, auto_discover_only=False))
+        if ticker.upper() in watchlist or ticker.upper() in ["BITCOIN", "ETHEREUM", "SOLANA"]:
+            markets = self.client.search_markets(ticker, limit=10)
             # Find the most liquid/active one
             valid_markets = [m for m in markets if m.active and not m.closed]
             if valid_markets:

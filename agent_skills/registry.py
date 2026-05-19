@@ -14,11 +14,13 @@ class SkillsRegistry:
     def __init__(self, skills_dir: Path = SKILLS_DIR) -> None:
         self.skills_dir = skills_dir
         self.skills: Dict[str, Dict[str, Any]] = {}
+        self._module_cache: Dict[str, Any] = {}
         self.load_skills()
 
     def load_skills(self) -> None:
         """Discovers and hot-reloads all valid skills in the directory."""
         self.skills.clear()
+        self._module_cache.clear()
         if not self.skills_dir.exists():
             return
 
@@ -56,19 +58,23 @@ class SkillsRegistry:
         return definitions
 
     def dispatch_tool(self, skill_id: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
-        """Dynamically imports a skill entrypoint and dispatches arguments to the tool handler."""
+        """Dynamically imports a skill entrypoint (with caching) and dispatches arguments to the tool handler."""
         if skill_id not in self.skills:
             raise ValueError(f"Skill {skill_id} not found in registry.")
 
-        entrypoint_path = self.skills[skill_id]["entrypoint"]
+        if skill_id in self._module_cache:
+            module = self._module_cache[skill_id]
+        else:
+            entrypoint_path = self.skills[skill_id]["entrypoint"]
 
-        # Import entrypoint dynamically
-        spec = importlib.util.spec_from_file_location(f"skills_{skill_id}", entrypoint_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Could not load entrypoint spec for skill {skill_id}")
+            # Import entrypoint dynamically
+            spec = importlib.util.spec_from_file_location(f"skills_{skill_id}", entrypoint_path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Could not load entrypoint spec for skill {skill_id}")
 
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            self._module_cache[skill_id] = module
 
         # Execute target tool function
         if not hasattr(module, tool_name):

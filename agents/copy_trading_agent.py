@@ -225,6 +225,33 @@ class CopyTradingAgent:
 
         return copy_signal
 
+    async def process_onchain_signal(self, signal: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """
+        Traite un signal provenant du WebSocket on-chain (PolymarketMonitor).
+        """
+        if signal.get("source") != "polymarket_onchain":
+            return None
+        
+        # Convert signal to TargetTrade format
+        trade = TargetTrade(
+            id=signal.get("tx_hash", "onchain-" + str(time.time())),
+            wallet=signal.get("maker", ""),
+            token_id=signal.get("token_id", ""),
+            outcome="UNKNOWN", # On-chain match doesn't always specify YES/NO easily
+            side=signal.get("side", "BUY"),
+            size=float(signal.get("maker_amount", 0)) / 1e6, # Assuming USDC 6 decimals
+            price=0.0, # Price is not always in the simple on-chain event without decoding more
+            timestamp=time.time(),
+            market="",
+            condition_id="",
+        )
+        
+        # If we have a target wallet, verify it
+        if self.config.target_wallet and trade.wallet.lower() != self.config.target_wallet.lower():
+            return None
+            
+        return await self.process_trade(trade)
+
     async def start_monitoring(
         self,
         poll_interval: float = 10.0,

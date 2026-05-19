@@ -5,6 +5,8 @@ import httpx
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
+from utils.market_watchlist import get_polymarket_watchlist
+
 logger = logging.getLogger("ArbitrageAnomalyScanner")
 
 
@@ -18,7 +20,7 @@ class ArbitrageAnomalyScannerAgent:
         self.engine = arbitrage_engine
         self._running = False
         self._check_interval = 5
-        self._tickers = ["BTC", "ETH", "SOL", "TRUMP", "META"]
+        self._tickers = get_polymarket_watchlist(limit=50, categories=["crypto", "politics", "technology", "macro"])
         self._client = httpx.AsyncClient(timeout=5.0)
 
     async def start(self, tickers: List[str] = None, interval: float = 5.0):

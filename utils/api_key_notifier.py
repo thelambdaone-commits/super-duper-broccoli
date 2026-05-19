@@ -42,7 +42,7 @@ class APIKeyNotifier:
         ),
         APIKeyRequirement(
             key_name="CLOB_PRIVATE_KEY",
-            description="Polymarket CLOB Private Key (dérive les API credentials)",
+            description="Polymarket CLOB Private Key (stockée de manière sécurisée dans data/*.enc)",
             is_critical=True,
         ),
         APIKeyRequirement(
@@ -61,9 +61,10 @@ class APIKeyNotifier:
             is_critical=False,
         ),
         APIKeyRequirement(
-            key_name="CLOB_PRIVATE_KEY",
-            description="Clé privée wallet trading",
-            is_critical=True,
+            key_name="POLYMARKET_CLOB_URL",
+            description="Endpoint Polymarket CLOB (peut être chargé depuis data/*.enc ou utiliser la valeur par défaut)",
+            is_critical=False,
+            env_fallback="https://clob.polymarket.com",
         ),
     ]
 
@@ -71,6 +72,10 @@ class APIKeyNotifier:
         self._checked = False
         self._missing_keys: List[str] = []
         self._critical_missing: List[str] = []
+        self._loaded_from_vault: List[str] = []
+        self._loaded_from_storage: List[str] = []
+        self._loaded_from_default: List[str] = []
+        self._in_env_file: List[str] = []
         self._env_file = env_file
         self._env_vars: Dict[str, str] = {}
         self._load_env_file()
@@ -83,10 +88,12 @@ class APIKeyNotifier:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        key = key.strip()
-                        value = value.strip().strip('"').strip("'")
-                        self._env_vars[key] = value
+                        res = line.split("=", 1)
+                        if len(res) == 2:
+                            key, value = res
+                            key = key.strip()
+                            value = value.strip().strip('"').strip("'")
+                            self._env_vars[key] = value
 
     def _get_from_env_file(self, key: str) -> Optional[str]:
         """Récupère une valeur directement du fichier .env."""
@@ -97,21 +104,50 @@ class APIKeyNotifier:
         Vérifie les clés API:
         1. D'abord dans .env
         2. Si absent de .env, vérifier si disponible via Vault (runtime_secrets)
-        3. Si absent partout = manquant
+        3. Si absent, vérifier si stocké dans les fichiers chiffrés (data/*.enc)
+        4. Si absent partout = manquant
         """
         self._missing_keys = []
         self._critical_missing = []
         self._loaded_from_vault = []
+        self._loaded_from_storage = []
+        self._loaded_from_default = []
         self._in_env_file = []
+
+        # Chemins des fichiers de stockage sécurisés
+        data_path = os.getenv("DATA_PATH", "data")
+        secure_files = {
+            "CLOB_PRIVATE_KEY": [
+                os.path.join(data_path, "clob_wallet.enc"),
+                os.path.join(data_path, "active_wallet.enc"),
+            ],
+            "POLYMARKET_CLOB_URL": [
+                os.path.join(data_path, "default.enc"),
+                os.path.join(data_path, "configured_wallets.enc"),
+            ],
+        }
 
         for req in self.REQUIRED_KEYS:
             key_value = self._get_from_env_file(req.key_name)
 
-            if key_value and key_value.lower() != "false":
+            # Vérifier si c'est une valeur placeholder
+            is_placeholder = False
+            if key_value:
+                val_low = key_value.lower()
+                if any(x in val_low for x in ["your_", "0x_your", "gsk_your", "sk-your"]):
+                    is_placeholder = True
+
+            if key_value and key_value.lower() != "false" and not is_placeholder:
                 self._in_env_file.append(req.key_name)
             elif runtime_secrets and runtime_secrets.get(req.key_name):
                 self._loaded_from_vault.append(req.key_name)
                 logger.info(f"🔐 {req.key_name} loaded from Vault (runtime)")
+            elif req.key_name in secure_files and any(os.path.exists(f) for f in secure_files[req.key_name]):
+                self._loaded_from_storage.append(req.key_name)
+                logger.info(f"💾 {req.key_name} detected in secure encrypted storage")
+            elif req.env_fallback:
+                self._loaded_from_default.append(req.key_name)
+                logger.info(f"ℹ️ {req.key_name} using fallback/default value")
             else:
                 self._missing_keys.append(req.key_name)
                 if req.is_critical:
@@ -125,6 +161,8 @@ class APIKeyNotifier:
             "critical": self._critical_missing,
             "in_env_file": self._in_env_file,
             "loaded_from_vault": self._loaded_from_vault,
+            "loaded_from_storage": self._loaded_from_storage,
+            "loaded_from_default": self._loaded_from_default,
             "total_required": len(self.REQUIRED_KEYS),
             "total_missing": len(self._missing_keys),
             "has_critical": len(self._critical_missing) > 0,
@@ -164,6 +202,16 @@ class APIKeyNotifier:
         if check_result.get("loaded_from_vault"):
             lines.append("\n🔐 *Chargées depuis Vault:*")
             for key in check_result["loaded_from_vault"]:
+                lines.append(f"   ✅ `{key}`")
+
+        if check_result.get("loaded_from_storage"):
+            lines.append("\n💾 *Détectées dans le stockage chiffré:*")
+            for key in check_result["loaded_from_storage"]:
+                lines.append(f"   ✅ `{key}`")
+
+        if check_result.get("loaded_from_default"):
+            lines.append("\nℹ️ *Valeurs par défaut utilisées:*")
+            for key in check_result["loaded_from_default"]:
                 lines.append(f"   ✅ `{key}`")
 
         if check_result.get("in_env_file"):

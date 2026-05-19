@@ -5,6 +5,8 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
+from utils.market_watchlist import get_polymarket_watchlist
+
 logger = logging.getLogger("MLDriftMonitor")
 
 
@@ -18,7 +20,7 @@ class MLDriftMonitorAgent:
         self.mlops = mlops_engine
         self._running = False
         self._check_interval = 60
-        self._tickers = ["BTC", "ETH", "SOL", "TRUMP", "META"]
+        self._tickers = get_polymarket_watchlist(limit=50, categories=["crypto", "politics", "technology", "macro"])
         self._baseline_window = 500
 
     async def start(self, tickers: List[str] = None, interval: float = 60.0):

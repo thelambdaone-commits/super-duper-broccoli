@@ -16,6 +16,8 @@
 
 ## 🛠️ Outils Recommandés (Best Practices)
 - **Context7** : Si vous devez ajouter une librairie externe (ex: Web3, nouvelles API), utilisez Context7 (via MCP ou CLI) pour obtenir la doc fraîche et éviter les hallucinations.
+- **Portée** : cette règle s'applique aussi à Gemini, Copilot, OpenCode et Codex. C'est une consigne documentaire, pas une dépendance runtime.
+- **Distributed Shared Memory** : `RufloSwarmSupervisor` supporte désormais **Redis** pour la mémoire partagée et le bus d'événements (via `REDIS_URL`). Utile pour les déploiements distribués multi-instances.
 - **Modifications :** Toujours faire un audit avant un gros refactoring, et mettre ce fichier à jour avec les décisions d'architecture.
 
 ---

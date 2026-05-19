@@ -5,6 +5,8 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
+from utils.market_watchlist import get_polymarket_watchlist
+
 logger = logging.getLogger("FeatureEmbeddingArchiver")
 
 
@@ -18,7 +20,7 @@ class FeatureEmbeddingArchiverAgent:
         self.mlops = mlops_engine
         self._running = False
         self._check_interval = 10
-        self._tickers = ["BTC", "ETH", "SOL"]
+        self._tickers = get_polymarket_watchlist(limit=10, categories=["crypto", "macro"])[:3]
         self._embeddings_logged = 0
 
     async def start(self, tickers: List[str] = None, interval: float = 10.0):

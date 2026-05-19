@@ -223,9 +223,10 @@ class HybridQuantModel(BaseEstimator, ClassifierMixin):
 
     def load(self, path: str) -> "HybridQuantModel":
         data = joblib.load(path)
-        self._models = data["models"]
-        self._meta = data["meta"]
-        self._classes = data.get("classes")
+        self._models = data.get("models", {})
+        self._meta = data.get("meta")
+        self._classes = data.get("classes", np.array([0, 1]))
+        self.classes_ = self._classes
         self._feature_names = data.get("feature_names", [])
         cfg = data.get("config", {})
         self.n_estimators = cfg.get("n_estimators", self.n_estimators)
@@ -233,6 +234,7 @@ class HybridQuantModel(BaseEstimator, ClassifierMixin):
         self.learning_rate = cfg.get("learning_rate", self.learning_rate)
         self.random_state = cfg.get("random_state", self.random_state)
         self._meta_type = cfg.get("meta_type", self._meta_type)
+        self.is_fitted_ = True
         logger.info(f"Model loaded from {path}")
         return self
 

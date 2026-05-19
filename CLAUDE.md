@@ -17,6 +17,9 @@ Always use Context7 when needing library/API documentation, code generation, set
 - Utilisez le CLI `ctx7` ou le serveur MCP Context7 pour injecter la documentation officielle dans votre contexte avant de coder.
 - Exemple d'utilisation dans vos prompts internes : `Use context7 to find documentation for py-clob-client`.
 
+## 2.1 Portée multi-assistants
+Cette consigne Context7 s'applique aussi aux assistants Gemini, Copilot, OpenCode et Codex. Il s'agit d'une règle de documentation seulement, pas d'une dépendance runtime.
+
 ## 3. Workflow & Subagents
 (Basé sur les standards *claude-code-best-practice*)
 - Découpez les tâches complexes en sous-tâches (moins de 50% du contexte).

@@ -8,6 +8,7 @@ from hvac.exceptions import VaultError
 
 from utils.exceptions import QuantFatal
 from utils.credential_manager import CredentialManager, DEFAULT_ENC_PATH, DEFAULT_DATA_DIR
+from utils.secret_validation import normalize_private_key, validate_private_key_or_raise
 
 logger = logging.getLogger("VaultHandler")
 
@@ -81,6 +82,49 @@ def _load_env_file() -> None:
         load_dotenv(env_path)
 
 
+def _resolve_private_key(
+    candidate: str | None,
+    source: str,
+) -> str | None:
+    private_key = normalize_private_key(candidate)
+    if candidate and not private_key:
+        logger.warning("Ignoring invalid placeholder/private key from %s.", source)
+    return private_key
+
+
+def _iter_encrypted_wallet_paths() -> list[Path]:
+    data_dir = Path(os.getenv("DATA_PATH", DEFAULT_DATA_DIR))
+    return [
+        data_dir / "default.enc",
+        data_dir / "clob_wallet.enc",
+        data_dir / "active_wallet.enc",
+        data_dir / "configured_wallets.enc",
+        data_dir / "import7413500821.enc",
+    ]
+
+
+def _load_first_valid_encrypted_wallet(mgr: CredentialManager) -> dict[str, str]:
+    last_error: Exception | None = None
+    for path in _iter_encrypted_wallet_paths():
+        if not path.exists():
+            continue
+        try:
+            payload = mgr.load_and_decrypt(str(path))
+            private_key = _resolve_private_key(
+                payload.get("CLOB_PRIVATE_KEY") or payload.get("private_key"),
+                str(path),
+            )
+            if private_key:
+                payload["CLOB_PRIVATE_KEY"] = private_key
+                return payload
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Could not load encrypted wallet from %s: %s", path, exc)
+    if last_error:
+        logger.debug("No valid encrypted wallet could be loaded: %s", last_error)
+    return {}
+
+
 class VaultHandler:
     _env_loaded = False
     _session_wallets: Dict[str, Dict[str, str]] = {}
@@ -136,44 +180,48 @@ class VaultHandler:
                     logger.warning(f"Could not load user credentials: {e}")
             
             enc_secrets = {}
-            if (os.path.exists(DEFAULT_ENC_PATH) or os.path.exists(os.path.join(DEFAULT_DATA_DIR, "defaut.enc"))) and not user_creds:
-                try:
-                    enc_secrets = mgr.load_and_decrypt(DEFAULT_ENC_PATH)
-                    logger.info("Loaded wallet profile secrets from default.enc")
-                except Exception as e:
-                    logger.warning(f"Could not load default.enc: {e}")
+            if not user_creds:
+                enc_secrets = _load_first_valid_encrypted_wallet(mgr)
+                if enc_secrets:
+                    logger.info("Loaded wallet profile secrets from encrypted storage")
             
             for key in REQUIRED_SECRET_KEYS:
                 val = None
-                
                 prefer_env_file = self.secret_source == "env" or os.getenv("VAULT_ADDR", "").lower() == "false"
-                
-                if prefer_env_file:
-                    val = os.getenv(key)
-                else:
-                    if user_creds and key in user_creds:
-                        val = user_creds.get(key)
-                    else:
-                        val = os.getenv(key) or enc_secrets.get(key)
-                
-                if not val and key == "CLOB_PRIVATE_KEY":
-                    if user_creds:
-                        val = user_creds.get("CLOB_PRIVATE_KEY", "")
-                    if not val:
-                        val = enc_secrets.get("CLOB_PRIVATE_KEY", "") or enc_secrets.get("private_key", "")
-                    if not val and prefer_env_file:
-                        val = os.getenv("CLOB_PRIVATE_KEY", "")
+
+                if key == "CLOB_PRIVATE_KEY":
+                    private_key_sources = [
+                        ("user credentials", user_creds.get("CLOB_PRIVATE_KEY") if user_creds else None),
+                        ("encrypted wallet", enc_secrets.get("CLOB_PRIVATE_KEY") or enc_secrets.get("private_key")),
+                        (".env", os.getenv("CLOB_PRIVATE_KEY")),
+                    ]
+                    for source_name, candidate in private_key_sources:
+                        val = _resolve_private_key(candidate, source_name)
+                        if val:
+                            break
                     if not val:
                         raise QuantFatal("CLOB_PRIVATE_KEY is missing from environment, user credentials, and encrypted vault.")
+                else:
+                    if key in user_creds:
+                        val = user_creds.get(key)
+                    if not val and not prefer_env_file:
+                        val = os.getenv(key) or enc_secrets.get(key)
+                    if not val and prefer_env_file:
+                        val = os.getenv(key)
+                    if not val:
+                        val = enc_secrets.get(key)
                 
                 if not val and key in ["CLOB_API_KEY", "CLOB_API_SECRET", "CLOB_API_PASSPHRASE"]:
                     pk = validated_secrets.get("CLOB_PRIVATE_KEY", "")
                     if not pk:
-                        pk = user_creds.get("CLOB_PRIVATE_KEY", "") if user_creds else ""
+                        pk = _resolve_private_key(user_creds.get("CLOB_PRIVATE_KEY"), "user credentials") if user_creds else ""
                     if not pk:
-                        pk = enc_secrets.get("CLOB_PRIVATE_KEY", "") or enc_secrets.get("private_key", "")
+                        pk = _resolve_private_key(
+                            enc_secrets.get("CLOB_PRIVATE_KEY") or enc_secrets.get("private_key"),
+                            "encrypted wallet",
+                        )
                     if not pk:
-                        pk = os.getenv("CLOB_PRIVATE_KEY", "")
+                        pk = _resolve_private_key(os.getenv("CLOB_PRIVATE_KEY"), ".env")
                     
                     if not pk:
                         raise QuantFatal("CLOB_PRIVATE_KEY is missing. Cannot derive API credentials.")
@@ -183,7 +231,7 @@ class VaultHandler:
                         validated_secrets["CLOB_API_SECRET"] = user_creds.get("CLOB_API_SECRET", "")
                         validated_secrets["CLOB_API_PASSPHRASE"] = user_creds.get("CLOB_API_PASSPHRASE", "")
                     else:
-                        creds = mgr.get_or_generate_creds(pk)
+                        creds = mgr.get_or_generate_creds(validate_private_key_or_raise(pk, source="secret resolution"))
                         validated_secrets.update(creds)
                     if key in validated_secrets:
                         continue
@@ -307,9 +355,8 @@ class VaultHandler:
                         raise ValueError("Invalid JSON-RPC response format")
                 logger.info(f"🌐 [RPC PING] Connection to RPC node ({rpc_url[:35]}...) validated successfully.")
             except Exception as e:
-                logger.critical(f"🚨 [RPC FATAL] Dynamic RPC node connection test failed for url {rpc_url}: {e}")
-                if not is_testing:
-                    sys.exit(1)
+                logger.warning(f"⚠️ [RPC NON-FATAL] Dynamic RPC node connection test failed for url {rpc_url}: {e}")
+                # Keep booting: RPC availability is a runtime concern, not a startup blocker.
 
     def patch_optional_secrets(self, secrets: Dict[str, str]) -> list[str]:
         """Patch allowlisted optional provider keys into Vault without logging values."""

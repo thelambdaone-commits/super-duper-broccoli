@@ -77,6 +77,11 @@ class HMMRegimeFilter:
     def get_regime_label(self, state: int) -> str:
         return self._label_map.get(state, REGIME_LABELS.get(state, "UNKNOWN"))
 
+    def get_regime_labels(self) -> list[str]:
+        if not self._fitted:
+            return list(REGIME_LABELS.values())
+        return list(self._label_map.values())
+
     def predict_with_label(self, returns: np.ndarray) -> Tuple[int, str]:
         state = self.predict_regime(returns)
         return state, self.get_regime_label(state)

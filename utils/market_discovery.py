@@ -40,9 +40,28 @@ class MarketDiscovery:
     MIN_VOLUME = 1000
     MIN_LIQUIDITY = 500
     IDEAL_PRICE_RANGE = (0.25, 0.75)
+    MAX_DAYS_TO_RESOLUTION = 3.0
     
     def __init__(self, client: Optional[PolymarketClient] = None):
         self.client = client or PolymarketClient()
+
+    @staticmethod
+    def _days_to_resolution(market: Market) -> float | None:
+        if not market.end_date:
+            return None
+        try:
+            end_dt = datetime.fromisoformat(market.end_date.replace("Z", "+00:00"))
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            return (end_dt - datetime.now(timezone.utc)).total_seconds() / 86400.0
+        except Exception as e:
+            logger.warning(f"Failed to parse end_date for {market.slug}: {e}")
+            return None
+
+    def _is_short_horizon(self, market: Market, max_days: float | None = None) -> bool:
+        max_days = self.MAX_DAYS_TO_RESOLUTION if max_days is None else max_days
+        days = self._days_to_resolution(market)
+        return days is not None and 0.0 <= days <= max_days
     
     def _score_liquidity(self, market: Market) -> float:
         if market.liquidity < self.MIN_LIQUIDITY:
@@ -159,38 +178,51 @@ class MarketDiscovery:
         limit: int = 20,
         min_score: float = 50.0,
         category: Optional[str] = None,
+        max_days_to_resolution: float | None = None,
     ) -> list[MarketScoring]:
-        
+        search_limit = max(limit * 10, 100)
         if category:
-            markets = self.client.get_markets_by_tag(category, limit=limit * 2)
+            markets = self.client.get_markets_by_tag(category, limit=search_limit)
         else:
-            markets = self.client.list_markets(limit=limit * 2, sort_by="volume")
-        
+            markets = self.client.list_markets(limit=search_limit, sort_by="volume")
+
         scored_markets = []
         for market in markets:
             if not market.active or market.closed:
                 continue
+            if not self._is_short_horizon(market, max_days_to_resolution):
+                continue
             
             scoring = self.score_market(market)
-            if scoring.score >= min_score:
-                scored_markets.append(scoring)
-        
+            scored_markets.append(scoring)
+
         scored_markets.sort(key=lambda x: x.score, reverse=True)
-        return scored_markets[:limit]
+        strong_matches = [sm for sm in scored_markets if sm.score >= min_score]
+        if len(strong_matches) >= limit:
+            return strong_matches[:limit]
+
+        seen = {sm.market.condition_id for sm in strong_matches}
+        fallback_matches = [sm for sm in scored_markets if sm.market.condition_id not in seen]
+        combined = strong_matches + fallback_matches
+        return combined[:limit]
     
     def find_betting_opportunities(
         self,
         min_edge_percent: float = 5.0,
-        min_volume: float = 5000,
+        min_volume: float = 500,
+        limit: int = 10,
+        max_days_to_resolution: float | None = None,
     ) -> list[dict]:
         
-        markets = self.client.list_markets(limit=100, sort_by="volume")
-        opportunities = []
+        markets = self.client.list_markets(limit=200, sort_by="volume")
+        candidates = []
         
         for market in markets:
             if not market.active or market.closed:
                 continue
             if market.volume < min_volume:
+                continue
+            if not self._is_short_horizon(market, max_days_to_resolution):
                 continue
             
             yes_price = market.yes_price
@@ -200,24 +232,45 @@ class MarketDiscovery:
             if total == 0:
                 continue
             
-            spread = abs(1.0 - total) * 100
+            pricing_edge = abs(yes_price - no_price) * 100
+            mispricing = abs(1.0 - total) * 100
+            side_bias = "YES" if yes_price < no_price else "NO"
+            signal_strength = max(pricing_edge, mispricing)
             
-            if spread >= min_edge_percent:
-                opportunities.append({
-                    "condition_id": market.condition_id,
-                    "slug": market.slug,
-                    "question": market.question,
-                    "yes_price": yes_price,
-                    "no_price": no_price,
-                    "spread_percent": round(spread, 2),
-                    "volume": market.volume,
-                    "liquidity": market.liquidity,
-                    "recommended_side": "YES" if yes_price < no_price else "NO",
-                    "edge": round(abs(yes_price - no_price), 4),
-                })
+            entry = {
+                "condition_id": market.condition_id,
+                "slug": market.slug,
+                "question": market.question,
+                "yes_price": yes_price,
+                "no_price": no_price,
+                "spread_percent": round(pricing_edge, 2),
+                "mispricing_percent": round(mispricing, 2),
+                "signal_strength": round(signal_strength, 2),
+                "volume": market.volume,
+                "liquidity": market.liquidity,
+                "recommended_side": side_bias,
+                "edge": round(abs(yes_price - no_price), 4),
+                "end_date": market.end_date,
+                "days_to_resolution": round(self._days_to_resolution(market) or 0.0, 2),
+            }
+            candidates.append(entry)
         
-        opportunities.sort(key=lambda x: x["spread_percent"], reverse=True)
-        return opportunities
+        candidates.sort(
+            key=lambda x: (
+                x["signal_strength"] >= min_edge_percent,
+                x["signal_strength"],
+                x["volume"],
+            ),
+            reverse=True,
+        )
+
+        selected = candidates[:limit]
+        if not selected:
+            return []
+
+        strong = [item for item in selected if item["signal_strength"] >= min_edge_percent]
+        weak = [item for item in selected if item["signal_strength"] < min_edge_percent]
+        return strong + weak
     
     def get_top_crypto_markets(self, limit: int = 10) -> list[MarketScoring]:
         return self.discover_markets(
@@ -243,6 +296,8 @@ class MarketDiscovery:
                 continue
             if market.volume < 5000:
                 continue
+            if not self._is_short_horizon(market):
+                continue
             
             yes_price = market.yes_price
             
@@ -255,6 +310,8 @@ class MarketDiscovery:
                     "contrarian_bet": "NO",
                     "reason": "Market too bullish, potential overvaluation",
                     "volume": market.volume,
+                    "end_date": market.end_date,
+                    "days_to_resolution": round(self._days_to_resolution(market) or 0.0, 2),
                 })
             elif yes_price <= 0.20:
                 contrarian.append({
@@ -265,6 +322,8 @@ class MarketDiscovery:
                     "contrarian_bet": "YES",
                     "reason": "Market too bearish, potential undervaluation",
                     "volume": market.volume,
+                    "end_date": market.end_date,
+                    "days_to_resolution": round(self._days_to_resolution(market) or 0.0, 2),
                 })
         
         contrarian.sort(key=lambda x: x["volume"], reverse=True)
@@ -316,11 +375,12 @@ def format_betting_opportunities(opportunities: list[dict]) -> str:
     ]
     
     for i, opp in enumerate(opportunities[:10], 1):
+        mispricing = opp.get("mispricing_percent", opp.get("spread_percent", 0.0))
         lines.append(
             f"{i}. *{opp['question'][:50]}...*\n"
             f"   Side: `{opp['recommended_side']}` @ "
             f"{opp.get('yes_price', 0):.1%} / {opp.get('no_price', 0):.1%}\n"
-            f"   Edge: `{opp['spread_percent']:.1f}%` | Vol: `${opp['volume']:,.0f}`"
+            f"   Edge: `{opp['spread_percent']:.1f}%` | Mispricing: `{mispricing:.1f}%` | Vol: `${opp['volume']:,.0f}`"
         )
     
     lines.append("────────────────────────")

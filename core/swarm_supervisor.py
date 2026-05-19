@@ -24,6 +24,11 @@ from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
+try:
+    import redis.asyncio as redis
+except ImportError:
+    redis = None
+
 logger = logging.getLogger("RufloSwarmSupervisor")
 
 
@@ -70,7 +75,7 @@ class RufloSwarmSupervisor:
     RETRAIN_INTERVAL_HOURS = 4
 
     # Data gap thresholds
-    MICROFISH_MIN_RECORDS = 100
+    MICROFISH_MIN_RECORDS = int(os.getenv("MICROFISH_MIN_RECORDS", "100"))
     DUCKBDB_MIN_RECORDS = 500
     SENTIMENT_FALLBACK_EDGE = 0.09
 
@@ -82,6 +87,30 @@ class RufloSwarmSupervisor:
         # Shared memory bus pour inter-agent communication
         self._shared_memory: Dict[str, Any] = {}
         self._event_bus: asyncio.Queue = asyncio.Queue(maxsize=1000)
+
+        # Redis distributed memory
+        self._redis_url = os.getenv("REDIS_URL")
+        self._redis: Optional[redis.Redis] = None
+        self._redis_namespace = "quant_core_v2"
+        
+        try:
+            config_path = Path("ruflo_config.json")
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    config = json.load(f)
+                    self._redis_namespace = config.get("shared_memory_namespace", "quant_core_v2")
+        except Exception as e:
+            logger.debug(f"Failed to load ruflo_config.json for Redis namespace: {e}")
+
+        self._redis_pubsub_task: Optional[asyncio.Task] = None
+
+        if redis and self._redis_url:
+            try:
+                self._redis = redis.from_url(self._redis_url, decode_responses=True)
+                logger.info(f"🌐 Redis connected: {self._redis_url}")
+            except Exception as e:
+                logger.warning(f"⚠️ Redis connection failed: {e}. Falling back to local memory.")
+                self._redis = None
 
         # Telemetry
         self._mlops_telemetry_path = TELEMETRY_DIR / "mlops_telemetry.jsonl"
@@ -374,7 +403,40 @@ class RufloSwarmSupervisor:
         """Démarre le loop de surveillance continue."""
         self._state = SwarmState.HEALTHY
         self._monitoring_task = asyncio.create_task(self._monitoring_loop())
+        
+        if self._redis:
+            self._redis_pubsub_task = asyncio.create_task(self._redis_pubsub_listener())
+            
         logger.info("✅ Swarm supervisor monitoring started")
+
+    async def _redis_pubsub_listener(self) -> None:
+        """Listen to Redis Pub/Sub and inject into local event bus/shared memory."""
+        if not self._redis:
+            return
+
+        pubsub = self._redis.pubsub()
+        events_channel = f"{self._redis_namespace}:events"
+        mem_channel = f"{self._redis_namespace}:mem_updates"
+        await pubsub.subscribe(events_channel, mem_channel)
+
+        try:
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        if message["channel"] == events_channel:
+                            await self._event_bus.put(data)
+                        elif message["channel"] == mem_channel:
+                            key = data.get("key")
+                            value = data.get("value")
+                            if key:
+                                self._shared_memory[key] = value
+                    except Exception as e:
+                        logger.error(f"Failed to parse Redis message: {e}")
+        except asyncio.CancelledError:
+            await pubsub.unsubscribe(events_channel, mem_channel)
+        except Exception as e:
+            logger.error(f"Redis Pub/Sub error: {e}")
 
     async def _monitoring_loop(self) -> None:
         """Loop de surveillance continue."""
@@ -407,6 +469,17 @@ class RufloSwarmSupervisor:
                 await self._monitoring_task
             except asyncio.CancelledError:
                 pass
+        
+        if self._redis_pubsub_task:
+            self._redis_pubsub_task.cancel()
+            try:
+                await self._redis_pubsub_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._redis:
+            await self._redis.close()
+            
         logger.info("🛑 Swarm supervisor stopped")
 
     def get_status(self) -> Dict[str, Any]:
@@ -438,25 +511,70 @@ class RufloSwarmSupervisor:
         }
 
     async def publish_event(self, event_type: str, data: Dict[str, Any]) -> None:
-        """Publie un événement sur le bus."""
+        """Publie un événement sur le bus (local + distribué)."""
         event = {
             "type": event_type,
             "timestamp": time.time(),
             "data": data,
         }
+        
+        # Ingestion locale
         await self._event_bus.put(event)
+
+        # Diffusion distribuée
+        if self._redis:
+            try:
+                channel = f"{self._redis_namespace}:events"
+                await self._redis.publish(channel, json.dumps(event))
+            except Exception as e:
+                logger.error(f"📡 Redis publish failed: {e}")
 
     async def subscribe_events(self) -> asyncio.Queue:
         """Retourne la queue des événements pour écoute."""
         return self._event_bus
 
     def set_shared_value(self, key: str, value: Any) -> None:
-        """Écrit dans la mémoire partagée."""
+        """Écrit dans la mémoire partagée (locale + sync-fire-and-forget Redis)."""
         self._shared_memory[key] = value
+        
+        if self._redis:
+            try:
+                # 1. Persistence de la valeur
+                asyncio.create_task(self._redis.set(
+                    f"{self._redis_namespace}:mem:{key}", 
+                    json.dumps(value)
+                ))
+                # 2. Notification de mise à jour pour les autres instances
+                asyncio.create_task(self._redis.publish(
+                    f"{self._redis_namespace}:mem_updates",
+                    json.dumps({"key": key, "value": value})
+                ))
+            except Exception as e:
+                logger.error(f"💾 Redis set/publish failed for {key}: {e}")
 
     def get_shared_value(self, key: str, default: Any = None) -> Any:
-        """Lit dans la mémoire partagée."""
+        """Lit dans la mémoire partagée (locale uniquement pour performance sync)."""
         return self._shared_memory.get(key, default)
+
+    async def get_shared_value_async(self, key: str, default: Any = None) -> Any:
+        """Lit dans la mémoire partagée avec accès distribué Redis."""
+        # 1. Priorité au cache local
+        if key in self._shared_memory:
+            return self._shared_memory[key]
+
+        # 2. Fallback Redis
+        if self._redis:
+            try:
+                data = await self._redis.get(f"{self._redis_namespace}:mem:{key}")
+                if data:
+                    val = json.loads(data)
+                    # On met en cache pour les prochains accès sync
+                    self._shared_memory[key] = val
+                    return val
+            except Exception as e:
+                logger.error(f"💾 Redis get failed for {key}: {e}")
+        
+        return default
 
 
 _supervisor_instance: Optional[RufloSwarmSupervisor] = None

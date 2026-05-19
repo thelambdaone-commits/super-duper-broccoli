@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from typing import Any, Dict, List
 
@@ -203,7 +203,34 @@ def format_winning_bets_alert(signals) -> str:
 def format_unified_feed_report(markets_general: list, intelligence_report) -> str:
     """Format combined general feed and crypto intelligence report."""
     parts = ["📡 LIVE MARKET FEED\n"]
-    for m in markets_general[:8]:
+
+    def _days_to_resolution(market: Any) -> float | None:
+        end_date = getattr(market, "end_date", "") or ""
+        if not end_date:
+            return None
+        try:
+            end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
+            return (end_dt - datetime.now(timezone.utc)).total_seconds() / 86400.0
+        except Exception:
+            return None
+
+    filtered_markets = []
+    for market in markets_general:
+        question = getattr(market, "question", "") or ""
+        slug = getattr(market, "slug", "") or ""
+        if question.lower().startswith("dev vs") or slug.lower().startswith("dev-"):
+            continue
+        days = _days_to_resolution(market)
+        if days is not None and days > 3.0:
+            continue
+        filtered_markets.append(market)
+
+    if not filtered_markets:
+        filtered_markets = markets_general[:8]
+
+    for m in filtered_markets[:8]:
         try:
             # Check if probability_pct or yes_price is present
             pct = getattr(m, 'probability_pct', None)
@@ -212,9 +239,11 @@ def format_unified_feed_report(markets_general: list, intelligence_report) -> st
             
             yes_price = getattr(m, 'yes_price', 0.0)
             question = getattr(m, 'question', 'Unknown Market')
+            days = _days_to_resolution(m)
+            horizon = f" | T- {days:.1f}j" if isinstance(days, (int, float)) else ""
             
             bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
-            parts.append(f"  • {question[:50]}\n    {bar} {pct:.0f}% | ${yes_price:.3f}\n")
+            parts.append(f"  • {question[:52]}\n    {bar} {pct:.0f}% | ${yes_price:.3f}{horizon}\n")
         except Exception:
             question = getattr(m, 'question', 'Unknown Market')
             parts.append(f"  • {question[:50]}\n")

@@ -2,6 +2,14 @@
 
 This guide details how to integrate the **Lobstar Quant Agentic OS** with **OpenClaw**, the state-of-the-art, open-source, self-hosted AI gateway and autonomous agent platform. By aligning our modular skills with the OpenClaw directory structures, you can run Lobstar 24/7 on your local hardware/VPS and pilot it seamlessly through omnichannel messaging (Telegram, WhatsApp, Slack, Discord, Signal).
 
+## Context7 Policy
+
+Context7 (`https://github.com/upstash/context7`) is a documentation-only rule for all AI assistants used in this project, including Gemini, Copilot, OpenCode, and Codex.
+
+- Use Context7 before relying on any external API, SDK, or setup/configuration detail.
+- Do not treat Context7 as a runtime dependency.
+- The authoritative local instructions are [`CLAUDE.md`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/CLAUDE.md) and [`.cursorrules`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/.cursorrules).
+
 ---
 
 ## 🏗️ 1. OpenClaw Skill Structure Compliance
