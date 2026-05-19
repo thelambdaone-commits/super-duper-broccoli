@@ -41,6 +41,17 @@ class PassiveExecutor:
             "simulated_slippage_usd": 0.0,
             "simulated_spread_usd": 0.0,
         }
+        self._consecutive_high_latency_ticks = 0
+        self._latency_freeze_until = 0.0
+
+    def _record_latency(self, duration: float) -> None:
+        if duration > 2.0:
+            self._consecutive_high_latency_ticks += 1
+            if self._consecutive_high_latency_ticks >= 3:
+                self._latency_freeze_until = time.time() + 60.0
+                logger.critical(f"API Latency Watchdog: 3 appels lents consécutifs ({duration:.2f}s). FREEZE activé pendant 60s.")
+        else:
+            self._consecutive_high_latency_ticks = 0
 
     def _get_maker_timeout(self, ticker: str) -> float:
         if self.maker_timeout_calibrator is not None:
@@ -77,12 +88,36 @@ class PassiveExecutor:
         side: str,
         price: float,
         size: float,
+        override_strict_maker: bool = False,
     ) -> dict[str, Any]:
-        if self.post_only:
-            result = await self._maker_first(ticker, side, price, size)
-        else:
-            result = await self._taker(ticker, side, price, size)
+        if time.time() < self._latency_freeze_until:
+            logger.warning(f"PassiveExecutor is frozen due to high latency. Refusing order for {ticker}.")
+            return {"status": "REJECTED_API_LAG", "reason": "API Latency Watchdog Freeze", "ticker": ticker}
+
+        self._override_strict = override_strict_maker
+        try:
+            if self.post_only:
+                result = await self._maker_first(ticker, side, price, size)
+            else:
+                result = await self._taker(ticker, side, price, size)
+        finally:
+            self._override_strict = False
         return result
+
+    def _is_strict_maker_only(self) -> bool:
+        if getattr(self, "_override_strict", False):
+            return False
+        import os
+        if os.getenv("STRICT_MAKER_ONLY", "").lower() == "true":
+            return True
+        if self.ledger:
+            try:
+                flags = self.ledger.get_safety_flags()
+                if flags and flags.get("strict_maker_only"):
+                    return bool(flags["strict_maker_only"])
+            except Exception:
+                pass
+        return False
 
     async def _maker_first(
         self,
@@ -91,22 +126,61 @@ class PassiveExecutor:
         price: float,
         size: float,
     ) -> dict[str, Any]:
+        start_t = time.time()
         try:
             post_result = await self.freqai.post_order(
                 ticker=ticker, side=side, price=price, size=size,
             )
+            self._record_latency(time.time() - start_t)
         except Exception as e:
+            self._record_latency(time.time() - start_t)
             logger.warning(f"Maker post_order raised exception: {e}")
+            if self._is_strict_maker_only():
+                logger.warning(f"strict_maker_only is active. Refusing taker fallback on exception for {ticker}.")
+                self._reject_count += 1
+                return {
+                    "status": "POST_ONLY_REJECTED",
+                    "error": f"Maker post_order failed: {e}. Taker fallback denied by strict_maker_only.",
+                    "ticker": ticker,
+                    "side": side,
+                    "price": price,
+                    "size": size,
+                    "execution_path": "maker",
+                }
             self._reject_count += 1
             return await self._taker(ticker, side, price, size)
 
         if post_result.get("status") == "POST_ONLY_REJECTED":
+            if self._is_strict_maker_only():
+                logger.warning(f"strict_maker_only is active. Refusing taker fallback for {ticker}.")
+                self._reject_count += 1
+                return {
+                    "status": "POST_ONLY_REJECTED",
+                    "error": "Maker order would match immediately. Taker fallback denied by strict_maker_only.",
+                    "ticker": ticker,
+                    "side": side,
+                    "price": price,
+                    "size": size,
+                    "execution_path": "maker",
+                }
             logger.info(f"Maker rejected for {ticker} (would match immediately), trying taker")
             self._reject_count += 1
             return await self._taker(ticker, side, price, size)
 
         order_id = post_result.get("orderID") or post_result.get("id")
         if not order_id:
+            if self._is_strict_maker_only():
+                logger.warning(f"strict_maker_only is active. Refusing taker fallback for {ticker} (no order ID).")
+                self._reject_count += 1
+                return {
+                    "status": "POST_ONLY_REJECTED",
+                    "error": "No order ID from maker post. Taker fallback denied by strict_maker_only.",
+                    "ticker": ticker,
+                    "side": side,
+                    "price": price,
+                    "size": size,
+                    "execution_path": "maker",
+                }
             logger.warning(f"No order ID from maker post for {ticker}, falling back to taker")
             self._reject_count += 1
             return await self._taker(ticker, side, price, size)
@@ -142,12 +216,36 @@ class PassiveExecutor:
             else:
                 logger.info(f"Maker order {order_id} not filled within timeout, cancelling")
                 await self.freqai.cancel_order(order_id)
+                if self._is_strict_maker_only():
+                    logger.warning(f"strict_maker_only is active. Refusing taker fallback for {ticker} on timeout.")
+                    self._reject_count += 1
+                    return {
+                        "status": "CANCELLED",
+                        "error": "Maker order timed out and was cancelled. Taker fallback denied by strict_maker_only.",
+                        "ticker": ticker,
+                        "side": side,
+                        "price": price,
+                        "size": size,
+                        "execution_path": "maker",
+                    }
                 self._taker_fallback_count += 1
                 return await self._taker(ticker, side, price, size)
 
         except Exception as e:
             self._order_queue.pop(t_qid, None)
             logger.warning(f"Queue tracking error for {order_id}: {e}")
+            if self._is_strict_maker_only():
+                logger.warning(f"strict_maker_only is active. Refusing taker fallback for {ticker} on tracking error.")
+                self._reject_count += 1
+                return {
+                    "status": "ERROR",
+                    "error": f"Queue tracking error: {e}. Taker fallback denied by strict_maker_only.",
+                    "ticker": ticker,
+                    "side": side,
+                    "price": price,
+                    "size": size,
+                    "execution_path": "maker",
+                }
             self._taker_fallback_count += 1
             return await self._taker(ticker, side, price, size)
 
@@ -160,15 +258,17 @@ class PassiveExecutor:
             if t_qid not in self._order_queue:
                 return False
 
-            status = await self.freqai.get_order_status(order_id)
-
-            order_data = status.get("order", {})
-            if isinstance(order_data, dict):
-                remaining = order_data.get("remaining_size", order_data.get("size", 0))
-                if remaining == 0:
+            try:
+                status = await self.freqai.get_order_status(order_id)
+                order_data = status.get("order", {})
+                if isinstance(order_data, dict):
+                    remaining = order_data.get("remaining_size", order_data.get("size", 0))
+                    if remaining == 0:
+                        return True
+                elif status.get("status") == "FILLED":
                     return True
-            elif status.get("status") == "FILLED":
-                return True
+            except Exception as e:
+                logger.warning(f"Failed to check order status for {order_id} (retrying): {e}")
 
             await asyncio.sleep(self.poll_interval)
 
