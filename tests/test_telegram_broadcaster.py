@@ -317,3 +317,44 @@ async def test_broadcast_memory_rehydrates_from_feature_store() -> None:
     assert memory.last_for_ticker("SOL") is not None
     assert memory.last_for_ticker("SOL").market_slug == "sol-above-200"
 
+
+@pytest.mark.asyncio
+async def test_broadcaster_persistent_memory_save_and_rehydrate() -> None:
+    from unittest.mock import MagicMock, AsyncMock
+    from scrapers.telegram_broadcaster import TelegramBroadcaster, BroadcastSignal
+
+    mock_store = MagicMock()
+    mock_notifier = MagicMock()
+    mock_notifier.enabled = True
+    mock_notifier.send_async = AsyncMock(return_value=True)
+
+    broadcaster = TelegramBroadcaster(
+        notifier=mock_notifier,
+        training_pipeline=MagicMock(),
+        tickers=["SOL"],
+        feature_store=mock_store,
+    )
+
+    test_signal = BroadcastSignal(
+        ticker="SOL",
+        market_slug="sol-above-200",
+        market_question="Will SOL exceed $200?",
+        calibrated_probability=0.85,
+        market_probability=0.70,
+        edge=0.15,
+        action="BUY",
+    )
+
+    # Broadcast the opportunity
+    ok = await broadcaster.broadcast_opportunity(test_signal)
+    assert ok is True
+
+    # Verify it recorded the signal into the FeatureStore
+    assert mock_store.record_signal.called
+    call_kwargs = mock_store.record_signal.call_args[1]
+    assert call_kwargs["source"] == "telegram_broadcaster"
+    assert call_kwargs["ticker"] == "SOL"
+    assert call_kwargs["side"] == "BUY"
+    assert call_kwargs["price"] == 0.70
+    assert call_kwargs["confidence"] == 0.85
+    assert call_kwargs["decision_json"] == {"market_slug": "sol-above-200"}

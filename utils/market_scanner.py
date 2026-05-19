@@ -37,6 +37,7 @@ class MarketSignal:
     volume: float
     sentiment: str  # BULLISH or BEARISH
     direction: str  # 📈 UP or 📉 DOWN
+    fee_rate_bps: int = 0
 
 
 @dataclass
@@ -139,6 +140,7 @@ class MarketScanner:
                     volume=market.volume,
                     sentiment=sentiment,
                     direction=direction,
+                    fee_rate_bps=getattr(market, "fee_rate_bps", 0),
                 ))
 
             # Check for trending markets (sharp moves)
@@ -159,6 +161,7 @@ class MarketScanner:
                         volume=market.volume,
                         sentiment=sentiment,
                         direction=direction,
+                        fee_rate_bps=getattr(market, "fee_rate_bps", 0),
                     ))
 
             # Check for competitive markets (tight spreads)
@@ -178,6 +181,7 @@ class MarketScanner:
                     volume=market.volume,
                     sentiment=sentiment,
                     direction=direction,
+                    fee_rate_bps=getattr(market, "fee_rate_bps", 0),
                 ))
 
             # Check for arbitrage opportunities (surebets)
@@ -200,6 +204,7 @@ class MarketScanner:
                             volume=market.volume,
                             sentiment="ARBITRAGE",
                             direction="📈 UP" if yes_price < no_price else "📉 DOWN",
+                            fee_rate_bps=getattr(market, "fee_rate_bps", 0),
                         ))
 
             self._known_markets[slug] = market.probability_pct
@@ -325,10 +330,11 @@ class MarketScanner:
 
 
 def _fmt_signal(s: MarketSignal) -> str:
+    fees_str = f" | Fees: {s.fee_rate_bps} bps" if getattr(s, "fee_rate_bps", 0) > 0 else ""
     return (
         f"\U0001f3c6 *{s.reason}*"
         f"\n\U0001f4c8 {s.market_question[:80]}"
-        f"\n\U0001f4b0 Vol: ${s.volume:,.0f} | Prob: {s.current_prob:.0f}%"
+        f"\n\U0001f4b0 Vol: ${s.volume:,.0f} | Prob: {s.current_prob:.0f}%{fees_str}"
         f"\n\U0001f4c8 Signal: `{s.side} @ {s.price}` (conf: {s.confidence:.0%})"
         f"\n\U0001f4a1 Sentiment: {s.sentiment} | Direction: {s.direction}"
     )

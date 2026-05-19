@@ -9,77 +9,91 @@ class HelpManager:
         1: {
             "title": "💼 WALLET",
             "icon": "💼",
-            "content": """💼 *WALLET — Gestion des portefeuille*
-─────────────────────────────────────────
-• `/wallet add` ↳ Créer wallet généré (default)
-• `/wallet import` ↳ Importer wallet existant
-• `/wallet use [default|import]` ↳ Choisir wallet actif
-• `/wallet swap` ↳ Permuter wallet actif
-• `/wallet backup` ↳ Sauvegarder wallet actif
-• `/wallet status` ↳ Status wallet actif
-• `/wallet delete [default|import]` ↳ Supprimer wallet
-
-• `/transfer [adresse] [montant]` ↳ Transférer USDC
-• `/polymarket [id] [montant]` ↳ Parier sur marché
-• `/signals` ↳ Voir signaux actifs
-─────────────────────────────────────────"""
+            "content": (
+                "```\n"
+                "┌─────────────────────────┐\n"
+                "│    💼 WALLET MANUAL     │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                "• `/wallet add` ↳ Créer wallet généré\n"
+                "• `/wallet import` ↳ Importer wallet existant\n"
+                "• `/wallet use [default|import]` ↳ Activer\n"
+                "• `/wallet swap` ↳ Permuter wallet actif\n"
+                "• `/wallet backup` ↳ Sauvegarder wallet\n"
+                "• `/wallet status` ↳ Status wallet actif\n"
+                "• `/wallet delete` ↳ Supprimer un wallet\n\n"
+                "• `/transfer [adresse] [montant]` ↳ USDC\n"
+                "• `/polymarket [id] [montant]` ↳ Parier\n"
+                "• `/signals` ↳ Voir signaux actifs\n"
+                "─────────────────────────"
+            )
         },
         2: {
             "title": "📈 MARKETS",
             "icon": "📈",
-            "content": """📈 *MARKETS — Analyse de marché*
-─────────────────────────────────────────
-*AI Scoring:*
-• `/markets discover [limit]` ↳ Meilleurs marchés IA
-• `/markets opportunities [min_edge]` ↳ Paris edge %
-• `/markets contrarian [limit]` ↳ Setup contrarien
-
-*Screening:*
-• `/markets vcp [limit]` ↳ Volatility Contraction
-• `/markets canslim [limit]` ↳ CANSLIM patterns
-
-*Market Info:*
-• `/markets list [limit]` ↳ Top markets volume
-• `/markets feed` ↳ Feed + crypto intel
-• `/markets info <id>` ↳ Détails marché
-• `/markets search <query>` ↳ Rechercher
-
-• `/feed` ↳ Feed unifié
-• `/whales` ↳ Suivi baleines
-─────────────────────────────────────────"""
+            "content": (
+                "```\n"
+                "┌─────────────────────────┐\n"
+                "│    📈 MARKETS MANUAL    │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                "*AI Scoring:*\n"
+                "• `/markets discover` ↳ Meilleurs marchés IA\n"
+                "• `/markets opportunities` ↳ Paris edge %\n"
+                "• `/markets contrarian` ↳ Setup contrarien\n\n"
+                "*Screening:*\n"
+                "• `/markets vcp` ↳ Volatility Contraction\n"
+                "• `/markets canslim` ↳ CANSLIM patterns\n\n"
+                "*Market Info:*\n"
+                "• `/markets list` ↳ Top markets volume\n"
+                "• `/markets feed` ↳ Feed + crypto intel\n"
+                "• `/markets info <id>` ↳ Détails marché\n"
+                "• `/markets search <q>` ↳ Rechercher\n\n"
+                "• `/feed` ↳ Feed unifié\n"
+                "• `/whales` ↳ Suivi baleines\n"
+                "─────────────────────────"
+            )
         },
         3: {
             "title": "⚡ TRADING",
             "icon": "⚡",
-            "content": """⚡ *TRADING — Exécution & Signaux*
-─────────────────────────────────────────
-• `/trade [ticker] [size] [side]` ↳ Executer trade
-• `/paper [ticker]` ↳ Tester paper engine
-• `/clob [ticker]` ↳ Statut CLOB
-• `/ai [prompt]` ↳ Question IA trading
-• `/model [action]` ↳ Gestion modèle ML
-
-• `/btc5`, `/btc15`, `/btc1h` ↳ BTC horizons
-• `/eth5`, `/eth15`, `/eth1h` ↳ ETH horizons
-• `/sol5`, `/sol15`, `/sol1h` ↳ SOL horizons
-• `/xrp5`, `/xrp15`, `/xrp1h` ↳ XRP horizons
-─────────────────────────────────────────"""
+            "content": (
+                "```\n"
+                "┌─────────────────────────┐\n"
+                "│    ⚡ TRADING MANUAL    │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                "• `/trade [ticker] [size] [side]` ↳ Exécuter\n"
+                "• `/paper [ticker]` ↳ Paper engine\n"
+                "• `/clob [ticker]` ↳ Statut CLOB\n"
+                "• `/ai [prompt]` ↳ Question IA trading\n"
+                "• `/model [action]` ↳ Gestion modèle ML\n\n"
+                "• `/btc5`, `/btc15`, `/btc1h` ↳ BTC horizons\n"
+                "• `/eth5`, `/eth15`, `/eth1h` ↳ ETH horizons\n"
+                "• `/sol5`, `/sol15`, `/sol1h` ↳ SOL horizons\n"
+                "• `/xrp5`, `/xrp15`, `/xrp1h` ↳ XRP horizons\n"
+                "─────────────────────────"
+            )
         },
         4: {
             "title": "👑 ADMIN",
             "icon": "👑",
-            "content": """👑 *ADMIN — Contrôle système*
-─────────────────────────────────────────
-• `/risk` ↳ Stats risque portfolio
-• `/risk freeze` ↳ BloquerTrading
-• `/risk resume` ↳ ReprendreTrading
-• `/risk kill` ↳ Kill switch global
-
-• `/liquidate [user]` ↳ Liquider position
-• `/audit` ↳ Audit système complet
-• `/mcp [cmd]` ↳ Commands MCP
-• `/dev [cmd]` ↳ Commands dev
-─────────────────────────────────────────"""
+            "content": (
+                "```\n"
+                "┌─────────────────────────┐\n"
+                "│     👑 ADMIN MANUAL     │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                "• `/risk` ↳ Stats risque portfolio\n"
+                "• `/risk freeze` ↳ Bloquer trading\n"
+                "• `/risk resume` ↳ Reprendre trading\n"
+                "• `/risk kill` ↳ Kill switch global\n\n"
+                "• `/liquidate [user]` ↳ Liquider position\n"
+                "• `/audit` ↳ Audit système complet\n"
+                "• `/mcp [cmd]` ↳ Commandes MCP\n"
+                "• `/dev [cmd]` ↳ Commandes dev\n"
+                "─────────────────────────"
+            )
         }
     }
 
@@ -123,12 +137,19 @@ class HelpManager:
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=page_data["content"],
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text=page_data["content"],
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=page_data["content"],
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
 
     @staticmethod
     async def send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, is_admin: bool = False) -> None:
@@ -147,9 +168,16 @@ class HelpManager:
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="📖 *MANUEL — Menu principal*\n\nChoisis une catégorie:",
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text="📖 *MANUEL — Menu principal*\n\nChoisis une catégorie :",
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="📖 *MANUEL — Menu principal*\n\nChoisis une catégorie :",
+                parse_mode="Markdown",
+                reply_markup=reply_markup
+            )

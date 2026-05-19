@@ -87,14 +87,30 @@ class CryptoMarketIntelligence:
         signals = [signal for signal in signals if signal is not None]
         signals.sort(key=lambda signal: signal.score, reverse=True)
 
-        opportunities = [
-            signal for signal in signals
-            if signal.signal_type in {"momentum", "mispricing", "liquidity_focus"}
-        ][:10]
-        risk_flags = [
-            signal for signal in signals
-            if signal.signal_type in {"thin_liquidity", "crowded_probability"}
-        ][:10]
+        # Deduplicate signals by asset to prevent spam/clutter
+        seen_opps = set()
+        opportunities = []
+        for signal in signals:
+            if signal.signal_type in {"momentum", "mispricing", "liquidity_focus"}:
+                # Limit to 2 opportunities per asset to avoid spam
+                key = (signal.asset, signal.signal_type)
+                opp_count = sum(1 for s in opportunities if s.asset == signal.asset)
+                if key not in seen_opps and opp_count < 2:
+                    opportunities.append(signal)
+                    seen_opps.add(key)
+        opportunities = opportunities[:5]
+
+        seen_risks = set()
+        risk_flags = []
+        for signal in signals:
+            if signal.signal_type in {"thin_liquidity", "crowded_probability"}:
+                # Limit to 2 risks per asset to avoid spam
+                key = (signal.asset, signal.signal_type)
+                risk_count = sum(1 for s in risk_flags if s.asset == signal.asset)
+                if key not in seen_risks and risk_count < 2:
+                    risk_flags.append(signal)
+                    seen_risks.add(key)
+        risk_flags = risk_flags[:5]
 
         avg_confidence = (
             sum(signal.confidence for signal in signals) / len(signals)
@@ -208,42 +224,47 @@ def format_intelligence_report(report: IntelligenceReport) -> str:
     
     bias_emoji = {"BULLISH": "📈 BULLISH", "BEARISH": "📉 BEARISH", "NEUTRAL": "⚖️ NEUTRE", "NEUTRE": "⚖️ NEUTRE"}.get(bias, bias)
     
+    vol = summary['total_crypto_volume']
+    liq = summary['total_crypto_liquidity']
+    
+    vol_str = f"${vol/1_000_000:.2f}M" if vol >= 1_000_000 else f"${vol/1_000:.1f}K" if vol >= 1_000 else f"${vol:.0f}"
+    liq_str = f"${liq/1_000_000:.2f}M" if liq >= 1_000_000 else f"${liq/1_000:.1f}K" if liq >= 1_000 else f"${liq:.0f}"
+
     lines = [
         "🤖 Lobstar Crypto Intelligence",
-        f"  Biais marché: {bias_emoji} | confiance moyenne {avg_confidence:.0%}",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"  Biais marché: {bias_emoji} | Confiance {avg_confidence:.0%}",
         f"  Couverture: {data['crypto_market_count']} crypto / {data['market_count']} marchés",
-        f"  Flux: ${summary['total_crypto_volume']:,.0f} volume | ${summary['total_crypto_liquidity']:,.0f} liquidité",
+        f"  Flux: {vol_str} Volume | {liq_str} Liquidité",
         "",
+        "🔍 OPPORTUNITÉS À SURVEILLER"
     ]
 
     if report.opportunities:
-        lines.append("  A surveiller")
-        for signal in report.opportunities[:5]:
-            label = _direction_label(signal.direction)
+        for signal in report.opportunities[:4]:
             reason = _signal_reason(signal)
+            slug = signal.market_slug
             lines.append(
-                f"  - {signal.asset} {label} | YES {signal.yes_price:.0%} / NO {signal.no_price:.0%} | score {signal.score:.0%}\n"
-                f"    {signal.market_slug}\n"
-                f"    Lecture: {reason}"
+                f" • [{signal.asset}] {slug}\n"
+                f"   └─ YES {signal.yes_price:.0%} / NO {signal.no_price:.0%} | Score: {signal.score:.0%} ({reason})"
             )
     else:
-        lines.append("  A surveiller: aucun signal liquide prioritaire")
+        lines.append(" • Aucun signal liquide prioritaire")
 
     if report.risk_flags:
-        lines.extend(["", "  Risques"])
-        for signal in report.risk_flags[:5]:
-            label = _risk_label(signal.signal_type)
+        lines.extend(["", "⚠️ VECTEURS DE RISQUE"])
+        for signal in report.risk_flags[:4]:
             reason = _signal_reason(signal)
+            slug = signal.market_slug
             lines.append(
-                f"  - {signal.asset} {label} | confiance {signal.confidence:.0%}\n"
-                f"    {signal.market_slug}\n"
-                f"    Lecture: {reason}"
+                f" • [{signal.asset}] {slug}\n"
+                f"   └─ Conf: {signal.confidence:.0%} ({reason})"
             )
 
     lines.extend([
-        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5",
-        "  Avis consultatif. Pas d'exécution sans parser, risque, ledger et mode valide.",
+        "  Avis consultatif. Pas d'exécution sans parser, risque, ledger et mode valide."
     ])
     return "\n".join(lines)
 

@@ -20,6 +20,7 @@ from telegram.ext import (
     filters,
 )
 from telegram_scraper.command_router import CommandRouter
+from core.command_router import LobstarCommandRouter
 from utils.telegram_helpers import split_telegram_message, parse_private_chat_ids
 
 from config.constants import EXECUTION_MODES
@@ -43,23 +44,30 @@ def _callback_user_id(query: Any) -> int | None:
     return getattr(user, "id", None) if user else None
 
 CMD_HELP = (
-    "🤖 *QUANT AGENTIC OS v2*\n"
-    "━━━━━━━━━━━━━━━━━━━━\n"
-    "/h — Show help\n"
-    "/help — Show help\n"
-    "/s — System health\n"
-    "/m [MODE] — Set mode (PAPER/PROD)\n"
-    "/b — Capital & Funds\n"
-    "/p — Open positions\n"
-    "/risk — Portfolio exposure\n"
-    "/r — Market regime (HMM)\n"
-    "/cb — Circuit breaker state\n"
-    "/ck — API/RPC diagnostic\n"
-    "/whales — Top traders discovery\n"
-    "/copy [start|stop|set <wallet>] — Copy trading control\n"
-    "/gen — New Wallet (Encrypted)\n"
-    "/import [PK] — Import wallet\n\n"
-    "💬 *Signal:* `BUY BTC @ 0.50`"
+    "```\n"
+    "┌─────────────────────────┐\n"
+    "│   🤖 SYSTEM MANUAL V2   │\n"
+    "└─────────────────────────┘\n"
+    "```\n"
+    "⚙️ *Contrôles Système :*\n"
+    "  • `/help` | `/h` ↳ Aide & Commandes\n"
+    "  • `/s` ↳ État de santé du système\n"
+    "  • `/m [MODE]` ↳ Mode d'exécution `[PAPER/PROD]`\n"
+    "  • `/ck` ↳ Diagnostic API & RPC endpoints\n\n"
+    "📈 *Gestion des Positions & Risques :*\n"
+    "  • `/b` ↳ Capital & Répartition des fonds\n"
+    "  • `/p` ↳ Positions de trading ouvertes\n"
+    "  • `/risk` ↳ Exposition totale du portefeuille\n"
+    "  • `/cb` ↳ État des disjoncteurs (Circuit Breaker)\n\n"
+    "🧠 *Intelligence & Régimes :*\n"
+    "  • `/r` ↳ Régime de marché en direct (HMM)\n"
+    "  • `/whales` ↳ Leaderboard des traders baleines\n"
+    "  • `/copy [start|stop|set]` ↳ Contrôle du copy trading\n\n"
+    "🔐 *Sécurité & Comptes :*\n"
+    "  • `/gen` ↳ Créer un nouveau portefeuille chiffré\n"
+    "  • `/import [PK]` ↳ Importer une clé privée Polygon\n\n"
+    "💬 *Signal:* `BUY BTC @ 0.50`\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━"
 )
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
@@ -107,6 +115,9 @@ class TelegramListener:
         self._start_time: Optional[datetime] = None
         self._trade_count = 0
         self._wallet_vault = None
+        self._market_reader = None
+        self.command_router = LobstarCommandRouter(platform_core=self)
+        self.passive_executor_allowed = True
 
     def attach_components(
         self,
@@ -117,6 +128,8 @@ class TelegramListener:
         executor=None,
         scanner=None,
         copy_agent=None,
+        market_reader=None,
+        order_manager=None,
     ) -> None:
         self._ledger = ledger
         self._risk = risk
@@ -125,6 +138,25 @@ class TelegramListener:
         self._executor = executor
         self._scanner = scanner
         self._copy_agent = copy_agent
+        self._market_reader = market_reader
+        self._order_manager = order_manager
+
+    @property
+    def wallet_manager(self):
+        return self._get_wallet_manager()
+
+    @property
+    def wallet_address(self) -> str:
+        try:
+            from utils.credential_manager import CredentialManager
+            mgr = CredentialManager()
+            pk = mgr.get_or_generate_private_key()
+            if pk:
+                from eth_account import Account
+                return Account.from_key(pk).address
+        except Exception:
+            pass
+        return "0x0000000000000000000000000000000000000000"
 
     def set_services(
         self,
@@ -239,15 +271,15 @@ class TelegramListener:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
         if not msg:
             return False
-        
+
         user_id = _effective_user_id(update)
-        
+
         if self.chat_id is None:
             return True
-            
+
         if msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id) or self._is_admin_chat(update):
             return True
-            
+
         await self.reply_to("Unauthorized.", update)
         return False
 
@@ -335,7 +367,7 @@ class TelegramListener:
                     f"📋 *COPY TRADE*\n{signal['side']} ${signal['copy_size']:.2f} @ {signal['price']:.2f}\n"
                     f"Market: {signal.get('market', 'N/A')}"
                 )
-            
+
             asyncio.create_task(
                 self._copy_agent.start_monitoring(poll_interval=10.0, on_new_trade=on_copy_signal)
             )
@@ -599,7 +631,7 @@ class TelegramListener:
 
     async def _cmd_start(self, update: Update, _context) -> None:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        
+
         wallet_addr = "UNKNOWN"
         try:
             from utils.credential_manager import CredentialManager
@@ -610,13 +642,13 @@ class TelegramListener:
                 wallet_addr = Account.from_key(pk).address
         except Exception as exc:
             logger.debug("Unable to resolve active wallet for /start: %s", exc)
-        
+
         mode = self._get_mode()
         uptime = self._fmt_uptime()
-        
+
         from datetime import timezone
         current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        
+
         regime = "N/A"
         if self._hmm:
             try:
@@ -627,7 +659,7 @@ class TelegramListener:
                 regime = REGIME_LABELS.get(state, "UNKNOWN")
             except Exception:
                 pass
-        
+
         keyboard = [
             [
                 InlineKeyboardButton("📡 Status", callback_data="start_status"),
@@ -647,35 +679,55 @@ class TelegramListener:
             ],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        welcome = "🦞 *LOBSTAR QUANT CONTROL PANEL*\n"
-        welcome += "━━━━━━━━━━━━━━━━━━━━\n"
-        welcome += "Welcome to the steering console of the Lobstar Agentic OS. "
-        welcome += "Use the control grid below to pilot your autonomous quant operations, "
-        welcome += "monitor portfolio metrics, or run diagnostic scans.\n\n"
-        welcome += f"⏰ *System Time*: `{current_time}`\n"
-        welcome += f"⏱️ *System Uptime*: `{uptime}`\n"
-        welcome += f"💬 *Active Wallet*: `{wallet_addr}`\n"
-        welcome += f"⚙️ *Execution Mode*: `{mode}`\n"
-        welcome += f"📊 *System Regime*: `{regime}`"
-        
+
+        if len(wallet_addr) > 10:
+            wallet_display = f"{wallet_addr[:6]}...{wallet_addr[-4:]}"
+        else:
+            wallet_display = wallet_addr
+
+        welcome = (
+            "🦞 *LOBSTAR QUANT CONTROL PANEL*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Welcome to the steering console of the Lobstar Agentic OS. "
+            "Use the control grid below to pilot your autonomous quant operations, "
+            "monitor portfolio metrics, or run diagnostic scans.\n\n"
+            f"⏰ *System Time* : `{current_time}`\n"
+            f"⏱️ *System Uptime* : `{uptime}`\n"
+            f"💬 *Active Wallet* : `{wallet_display}` | `{wallet_addr}`\n"
+            f"⚙️ *Execution Mode* : `{mode}`\n"
+            f"📊 *System Regime* : `{regime}`\n"
+            "────────────────────────"
+        )
+
+        query = getattr(update, "callback_query", None)
+        if query:
+            try:
+                await query.edit_message_text(
+                    welcome,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+            except Exception as exc:
+                logger.debug("Failed to edit start menu: %s", exc)
+
         await self.reply_to(welcome, update, reply_markup=reply_markup)
 
     async def _cmd_gen(self, update: Update, _context) -> None:
         if not self._is_authorized_private_message(update):
             await self.reply_to("Unauthorized.", update)
             return
-        
+
         try:
             from utils.credential_manager import CredentialManager
             mgr = CredentialManager()
             pk = mgr.get_or_generate_private_key()
             mgr.get_or_generate_creds(pk)
-            
+
             from eth_account import Account
             from web3 import Web3
             acc = Account.from_key(pk)
-            
+
             # Fetch balance if RPC available
             balance_text = ""
             rpc_url = os.getenv("POLYGON_RPC_URL") or os.getenv("RPC_URL")
@@ -687,7 +739,7 @@ class TelegramListener:
                 except Exception as exc:
                     logger.debug("Unable to fetch wallet balance: %s", exc)
                     balance_text = "Balance: `Error fetching`"
-            
+
             text = (
                 "✅ *Institutional Wallet*\n"
                 f"Address: `{acc.address}`\n"
@@ -703,35 +755,35 @@ class TelegramListener:
         if not self._is_authorized_private_message(update):
             await self.reply_to("Unauthorized.", update)
             return
-        
+
         args = context.args
         if not args:
             await self.reply_to("Usage: `/import <PRIVATE_KEY>`", update, parse_mode=ParseMode.MARKDOWN)
             return
-        
+
         pk = args[0].strip()
         try:
             from utils.credential_manager import CredentialManager
             mgr = CredentialManager()
             addr = mgr.save_private_key(pk)
-            
+
             # Security: Try to delete the message containing the PK
             try:
                 await update.message.delete()
             except Exception as exc:
                 logger.warning("Could not delete Telegram private-key import message: %s", exc)
-            
+
             text = (
                 "✅ *Wallet Imported Successfully*\n"
                 f"Address: `{addr}`\n\n"
                 "The private key has been encrypted. *The bot will now restart* to apply the new credentials."
             )
             await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
-            
+
             # Trigger restart
             logger.info(f"Wallet imported ({addr}). Restarting bot...")
             os._exit(0) # PM2 will restart it
-            
+
         except Exception as e:
             await self.reply_to(f"❌ *Import Failed:* {e}", update, parse_mode=ParseMode.MARKDOWN)
 
@@ -745,18 +797,23 @@ class TelegramListener:
             returns = np.random.randn(100) * 0.01
             state = self._hmm.predict_regime(returns)
             regime = REGIME_LABELS.get(state, "UNKNOWN")
-            
+
             sentiment_text = ""
             if self._scanner:
                 agg = self._scanner.get_aggregate_sentiment()
                 emoji = "📈" if agg["sentiment"] == "BULLISH" else "📉" if agg["sentiment"] == "BEARISH" else "⚖️"
-                sentiment_text = f"\n*Market Sentiment:* {emoji} {agg['sentiment']} ({agg['bullish_pct']}% Bullish)"
-            
+                sentiment_text = f"\n📊 *Market Sentiment* : {emoji} `{agg['sentiment']}` (`{agg['bullish_pct']:.1f}%` Bullish)"
+
             text = (
-                f"📊 *MARKET STATE ANALYSIS*\n\n"
-                f"*Regime:* `{regime}`\n"
-                f"{sentiment_text}\n\n"
-                f"_Analysis based on HMM volatility clusters and Polymarket signal aggregation._"
+                "```\n"
+                "┌─────────────────────────┐\n"
+                "│  🧠 VOLATILITY REGIME   │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                f"📈 *HMM Regime* : `{regime}`\n"
+                f"{sentiment_text}\n"
+                "────────────────────────\n"
+                f"ℹ️ _Analyse temps réel basée sur le modèle HMM et l'agrégation des signaux de sentiment Polymarket._"
             )
             await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
         except Exception as e:
@@ -793,7 +850,14 @@ class TelegramListener:
         from datetime import timezone
         now = datetime.now(timezone.utc)
         current_time = now.strftime("%Y-%m-%d %H:%M:%S UTC")
-        
+
+        start_str = self._start_time.strftime("%Y-%m-%d %H:%M:%S UTC") if self._start_time else "N/A"
+
+        if isinstance(total, (int, float)):
+            total_str = f"${total:,.2f}"
+        else:
+            total_str = f"${total}"
+
         swarm_status = ""
         try:
             from core.swarm_supervisor import get_swarm_supervisor
@@ -801,35 +865,50 @@ class TelegramListener:
             status = sup.get_status()
             avg_brier = status["metrics"].get("avg_brier")
             avg_brier_text = f"{avg_brier:.4f}" if avg_brier is not None else "N/A"
+
+            ticks = status['paper_ticks']
+            req = status['paper_ticks_required']
+            pct_prog = (ticks / req * 100) if req > 0 else 0
+            if pct_prog > 100: pct_prog = 100
+            tick_bar_len = min(max(int(pct_prog / 10), 0), 10)
+            tick_bar = "█" * tick_bar_len + "░" * (10 - tick_bar_len)
+
             swarm_status = (
-                f"\n━━━━━━━━━━━━━━━━━━━━\n"
-                f"🐙 *RUFLO SWARM*\n"
+                f"\n\n🐙 *RUFLO SWARM STATUS*\n"
+                "────────────────────────\n"
                 f"• State: `{status['state']}`\n"
-                f"• Paper Ticks: `{status['paper_ticks']}/{status['paper_ticks_required']}`\n"
                 f"• Production Ready: `{status['production_ready']}`\n"
-                f"• Avg Brier: `{avg_brier_text}`\n"
+                f"• Avg Brier Score: `{avg_brier_text}`\n"
+                f"• Ticks Requis: `{ticks}/{req}`\n"
+                f"• Progression PROD: `{pct_prog:.1f}%`\n"
+                f"  `{tick_bar}`\n"
             )
             if status['data_gaps']:
                 gaps = [k for k, v in status['data_gaps'].items() if v]
                 if gaps:
                     swarm_status += f"• ⚠️ Gaps: `{', '.join(gaps)}`\n"
             if status.get('edge_override'):
-                swarm_status += f"• Edge Threshold: `{status['edge_override']:.1%}`\n"
+                swarm_status += f"• Edge Override: `{status['edge_override']:.1%}`\n"
+            swarm_status += "────────────────────────"
         except Exception as e:
-            swarm_status = f"\n• Swarm: Error ({e})"
+            swarm_status = f"\n\n🐙 *RUFLO SWARM* : Error (`{e}`)"
 
         text = (
-            f"🤖 *QUANT COCKPIT*\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ `{current_time}`\n"
-            f"• Uptime: `{uptime}`\n"
-            f"• Mode: `{mode}`\n"
-            f"• Cap: `${total:,.2f}`\n"
-            f"• Risk: `{net_beta}` Beta\n"
-            f"• Market: `{regime}`"
-            + swarm_status
+            "```\n"
+            "┌─────────────────────────┐\n"
+            "│   🤖 QUANT COCKPIT V2   │\n"
+            "└─────────────────────────┘\n"
+            "```\n"
+            f"🟢 *Status* : `Active`\n"
+            f"⏰ *Time* : `{current_time}`\n"
+            f"⏱️ *Uptime* : `{uptime}` (Boot: `{start_str}`)\n"
+            f"🎯 *Mode* : `{mode}`\n"
+            f"💰 *Capital* : `{total_str}`\n"
+            f"🛡️ *Risk Exposure* : `{net_beta} Beta`\n"
+            f"📈 *HMM Regime* : `{regime}`"
+            f"{swarm_status}"
         )
-        
+
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = [
             [
@@ -845,6 +924,19 @@ class TelegramListener:
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+
+        query = getattr(update, "callback_query", None)
+        if query:
+            try:
+                await query.edit_message_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+            except Exception as exc:
+                logger.debug("Failed to edit status cockpit: %s", exc)
+
         await self.reply_to(
             text,
             update,
@@ -853,6 +945,8 @@ class TelegramListener:
         )
 
     async def _cmd_mode(self, update: Update, context) -> None:
+        if not await self._check_auth(update):
+            return
         current = self._get_mode()
         args = context.args
         if not args:
@@ -891,14 +985,45 @@ class TelegramListener:
             available = cap.get("available_capital", 0)
             allocated = cap.get("allocated_pct", 0)
             engaged = total - available
+
+            pct = float(allocated)
+            bar_len = min(max(int(pct / 10), 0), 10)
+            bar = "█" * bar_len + "░" * (10 - bar_len)
+
+            total_str = f"{total:,.2f}"
+            available_str = f"{available:,.2f}"
+            engaged_str = f"{engaged:,.2f}"
+
             text = (
-                f"*Capital Allocation*\n"
-                f"Total: {total:.2f}\n"
-                f"Available: {available:.2f}\n"
-                f"Engaged: {engaged:.2f}\n"
-                f"Allocated: {allocated}%"
+                "```\n"
+                "┌────────────────────────────────┐\n"
+                "│     💎 PORTFOLIO VALUATION     │\n"
+                "└────────────────────────────────┘\n"
+                "```\n"
+                f"💰 *Capital Total* : `{total_str} USD`\n"
+                f"💵 *Liquidités* : `{available_str} USD`\n"
+                f"🔒 *Fonds Engagés* : `{engaged_str} USD`\n\n"
+                f"📊 *Allocation Risque* : `{pct:.1f}%`\n"
+                f"`[{bar}]`\n"
+                "────────────────────────"
             )
-            await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = [[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            query = getattr(update, "callback_query", None)
+            if query:
+                try:
+                    await query.edit_message_text(
+                        text,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                    return
+                except Exception as exc:
+                    logger.debug("Failed to edit balance: %s", exc)
+
+            await self.reply_to(text, update, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
         except Exception as e:
             await self.reply_to(f"Error: {e}", update)
 
@@ -913,26 +1038,35 @@ class TelegramListener:
             else:
                 positions = self._ledger.get_open_positions()
             if not positions:
-                await self.reply_to("No open positions.", update)
+                await self.reply_to("🔍 Aucune position ouverte.", update)
                 return
-            lines = [f"*Open Positions ({len(positions)})*"]
+            lines = [
+                "```\n"
+                "┌─────────────────────────┐\n"
+                f"│   💼 OPEN POSITIONS     │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                f"💼 *Positions Ouvertes ({len(positions)})*",
+                "────────────────────────"
+            ]
             for p in positions[:10]:
                 ticker = p.get("ticker", "?")
-                side = p.get("side", "?")
+                side = p.get("side", "?").upper()
+                side_emoji = "🟢 BUY" if side == "BUY" else "🔴 SELL"
                 size = p.get("size", 0)
+                entry = p.get("entry_price", 0)
                 if mode in ("PAPER", "REPLAY"):
-                    entry = p.get("entry_price", 0)
                     lines.append(
-                        f"  {side} {size} {ticker} @ {entry}"
+                        f"  {side_emoji} `{size:.2f}` {ticker} @ `${entry:.3f}`"
                     )
                 else:
-                    entry = p.get("entry_price", 0)
                     cap = p.get("capital_engaged", 0)
                     lines.append(
-                        f"  {side} {size:.2f} {ticker} @ {entry} (${cap:.2f})"
+                        f"  {side_emoji} `{size:.2f}` {ticker} @ `${entry:.3f}` (`${cap:.2f}`)"
                     )
             if len(positions) > 10:
                 lines.append(f"  ... and {len(positions) - 10} more")
+            lines.append("────────────────────────")
             await self.reply_to(
                 "\n".join(lines),
                 update,
@@ -1023,87 +1157,103 @@ class TelegramListener:
             engaged = total - available
             ratio = (engaged / hard_cap_pct * 100) if hard_cap_pct > 0 else 0
             status = "HEALTHY" if ratio < 80 else "WARNING" if ratio < 95 else "BREACHED"
+
+            status_emoji = "🟢 HEALTHY" if status == "HEALTHY" else "⚠️ WARNING" if status == "WARNING" else "🚨 BREACHED"
             text = (
-                f"*Circuit Breaker*\n"
-                f"Status: {status}\n"
-                f"Total Capital: ${total:.2f}\n"
-                f"Allocated: {allocated_pct}%\n"
-                f"Hard Cap: ${hard_cap_pct:.2f}\n"
-                f"Engaged: ${engaged:.2f} ({ratio:.1f}% of cap)\n"
-                f"Available: ${available:.2f}"
+                "```\n"
+                "┌─────────────────────────┐\n"
+                "│  ⚡ CIRCUIT BREAKER OS  │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                f"🛡️ *Breaker Status* : `{status_emoji}`\n"
+                f"💰 *Total Capital* : `{total:.2f} $`\n"
+                f"📈 *Allocated Limit* : `{allocated_pct:.1f}%`\n"
+                f"🛑 *Hard Cap Limit* : `{hard_cap_pct:.2f} $`\n"
+                f"🔒 *Engaged Funds* : `{engaged:.2f} $` (`{ratio:.1f}%` du Cap)\n"
+                f"💵 *Available Funds* : `{available:.2f} $`\n"
+                "────────────────────────"
             )
             await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
         except Exception as e:
             await self.reply_to(f"Error: {e}", update)
 
     async def _cmd_check(self, update: Update, _context) -> None:
-        results: list[str] = ["*API Connectivity Check*"]
+        lines = [
+            "```\n"
+            "┌─────────────────────────┐\n"
+            "│  🛠️ CONNECTIVITY CHECK  │\n"
+            "└─────────────────────────┘\n"
+            "```\n"
+            "────────────────────────"
+        ]
         timeout = httpx.Timeout(5.0, connect=3.0)
         client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
 
         try:
             telegram_token_prefix = self.bot_token[:8] + "..."
-            results.append(f"\n*Telegram:* token={telegram_token_prefix} | bot={'RUNNING' if self.application else 'STOPPED'}")
+            bot_state = "RUNNING" if self.application else "STOPPED"
+            lines.append(f"💬 *Telegram* : `token={telegram_token_prefix}` | `{bot_state}`")
 
             vault_ok = bool(os.getenv("VAULT_TOKEN"))
-            results.append(f"*Vault:* {'OK' if vault_ok else 'MISSING TOKEN'}")
+            lines.append(f"🛡️ *HashiCorp Vault* : `{'CONNECTED 🟢' if vault_ok else 'MISSING TOKEN 🔴'}`")
 
             clob_url = "https://clob.polymarket.com"
             try:
                 r = await client.get(f"{clob_url}/", timeout=3.0)
-                clob_status = "OK" if r.status_code < 500 else f"HTTP {r.status_code}"
+                clob_status = "ONLINE 🟢" if r.status_code < 500 else f"HTTP {r.status_code} 🟡"
             except Exception as e:
-                clob_status = f"FAIL ({e.__class__.__name__})"
-            results.append(f"*Polymarket CLOB:* {clob_status}")
+                clob_status = f"OFFLINE 🔴 ({e.__class__.__name__})"
+            lines.append(f"🌐 *Polymarket CLOB* : `{clob_status}`")
 
             gamma_url = "https://gamma-api.polymarket.com"
             try:
                 r = await client.get(f"{gamma_url}/tags?limit=1", timeout=3.0)
-                gamma_status = "OK" if r.status_code < 500 else f"HTTP {r.status_code}"
+                gamma_status = "ONLINE 🟢" if r.status_code < 500 else f"HTTP {r.status_code} 🟡"
             except Exception as e:
-                gamma_status = f"FAIL ({e.__class__.__name__})"
-            results.append(f"*Polymarket Gamma:* {gamma_status}")
+                gamma_status = f"OFFLINE 🔴 ({e.__class__.__name__})"
+            lines.append(f"📈 *Polymarket Gamma* : `{gamma_status}`")
 
             coingecko_key = os.getenv("COINGECKO_API_KEY", "")
-            if coingecko_key:
-                results.append("*Coingecko:* KEY CONFIGURED")
-            else:
-                results.append("*Coingecko:* NOT CONFIGURED")
+            cg_status = "CONFIGURED 🟢" if coingecko_key else "NOT CONFIGURED 🟡"
+            lines.append(f"💰 *CoinGecko API* : `{cg_status}`")
 
             ws_url = os.getenv("WS_URL", "")
-            if ws_url:
-                results.append(f"*WebSocket:* CONFIGURED ({ws_url[:40]}...)")
-            else:
-                results.append("*WebSocket:* NOT CONFIGURED")
+            ws_status = f"ONLINE 🟢 ({ws_url[:20]}...)" if ws_url else "NOT CONFIGURED 🟡"
+            lines.append(f"🔌 *Websocket Feed* : `{ws_status}`")
 
             chains = []
             for chain_key in ("polygon", "eth", "sol", "arb", "opt", "base"):
                 primary = get_rpc_url(chain_key)
                 fallback = resolve_rpc_with_fallback(chain_key)
                 if primary:
-                    chains.append(f"  {chain_key.capitalize()}: env ({primary[:30]}...)")
+                    chains.append(f"  • {chain_key.capitalize()} : `env` ({primary[:15]}...)")
                 elif fallback:
-                    chains.append(f"  {chain_key.capitalize()}: fallback ({fallback[:30]}...)")
+                    chains.append(f"  • {chain_key.capitalize()} : `fallback` ({fallback[:15]}...)")
                 else:
-                    chains.append(f"  {chain_key.capitalize()}: not configured")
+                    chains.append(f"  • {chain_key.capitalize()} : `not configured` 🔴")
             if chains:
-                results.append("\n*RPC Endpoints:*")
-                results.extend(chains)
+                lines.append("\n⛓️ *RPC Endpoints :*")
+                lines.extend(chains)
 
+            explorers = []
             for asset_key in ("btc", "ltc", "bch"):
                 url = os.getenv(f"{asset_key.upper()}_API_URL", "")
                 if url:
                     try:
                         r = await client.get(url, timeout=3.0)
-                        explorer_status = "OK" if r.status_code < 500 else f"HTTP {r.status_code}"
+                        explorer_status = "ONLINE 🟢" if r.status_code < 500 else f"HTTP {r.status_code} 🟡"
                     except Exception as e:
-                        explorer_status = f"FAIL ({e.__class__.__name__})"
-                    results.append(f"*{asset_key.upper()} Explorer:* {explorer_status}")
+                        explorer_status = f"OFFLINE 🔴 ({e.__class__.__name__})"
+                    explorers.append(f"  • {asset_key.upper()} Explorer : `{explorer_status}`")
+            if explorers:
+                lines.append("\n🔍 *Block Explorers :*")
+                lines.extend(explorers)
 
         finally:
             await client.aclose()
 
-        text = "\n".join(results)
+        lines.append("────────────────────────")
+        text = "\n".join(lines)
         if len(text) > 4096:
             text = text[:4080] + "\n... (truncated)"
         await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
@@ -1112,16 +1262,16 @@ class TelegramListener:
         if not self._is_authorized_private_message(update):
             await self.reply_to("Unauthorized.", update)
             return
-        
+
         try:
             from utils.credential_manager import CredentialManager
             mgr = CredentialManager()
             pk = mgr.get_or_generate_private_key()
             mgr.get_or_generate_creds(pk)
-            
+
             from eth_account import Account
             acc = Account.from_key(pk)
-            
+
             text = (
                 "✅ *Institutional Wallet Generated*\n"
                 f"Address: `{acc.address}`\n\n"
@@ -1145,15 +1295,15 @@ class TelegramListener:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
         if not msg:
             return False
-        
+
         user_id = _effective_user_id(update)
-        
+
         if self.chat_id is not None and (msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)):
             return True
 
         if self.access_control:
             return self.access_control.est_admin(msg.chat_id) or (user_id is not None and self.access_control.est_admin(user_id))
-            
+
         return msg.chat_id in self.admin_chat_ids or (user_id is not None and user_id in self.admin_chat_ids)
 
     async def _handle_photo(self, update: Update, _context) -> bool:
@@ -1250,11 +1400,12 @@ class TelegramListener:
             return False
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         query = update.callback_query
         chat_id = query.message.chat_id
-        
+
         user_id = _callback_user_id(query)
-        
+
         is_admin = False
         if self.chat_id is not None and (chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)):
             is_admin = True
@@ -1262,7 +1413,29 @@ class TelegramListener:
             is_admin = self.access_control.est_admin(chat_id) or (user_id is not None and self.access_control.est_admin(user_id))
         else:
             is_admin = chat_id in self.admin_chat_ids or (user_id is not None and user_id in self.admin_chat_ids)
-        
+
+        async def safe_edit_callback(q, text, reply_markup=None, parse_mode=None):
+            if hasattr(q, "edit_message_text"):
+                try:
+                    kwargs = {}
+                    if reply_markup is not None:
+                        kwargs["reply_markup"] = reply_markup
+                    if parse_mode is not None:
+                        kwargs["parse_mode"] = parse_mode
+                    await q.edit_message_text(text, **kwargs)
+                    return
+                except Exception as exc:
+                    logger.debug("edit_message_text failed, falling back: %s", exc)
+
+            msg = getattr(q, "message", None)
+            if msg and hasattr(msg, "reply_text"):
+                kwargs = {}
+                if reply_markup is not None:
+                    kwargs["reply_markup"] = reply_markup
+                if parse_mode is not None:
+                    kwargs["parse_mode"] = parse_mode
+                await msg.reply_text(text, **kwargs)
+
         if query.data.startswith("help_page_") or query.data == "help_menu":
             await query.answer()
             from utils.help_manager import HelpManager
@@ -1312,7 +1485,7 @@ class TelegramListener:
                     wallet_name = "session"
                     active_address = ""
                     proxy_address = ""
-                    
+
                     if session_wallet:
                         active_address = session_wallet.get("POLYMARKET_WALLET_ADDRESS", "")
                         proxy_address = session_wallet.get("proxy_wallet", "")
@@ -1349,9 +1522,9 @@ class TelegramListener:
                                         pass
                         except Exception:
                             pass
-                            
+
                     target_address = proxy_address if proxy_address else active_address
-                    
+
                     if not target_address:
                         no_wallet_text = (
                             "🎯 *Polymarket Cockpit*\n"
@@ -1370,7 +1543,7 @@ class TelegramListener:
                         open_pos = []
                         closed_pos = []
                         activity = []
-                        
+
                         try:
                             async with httpx.AsyncClient(timeout=8.0) as client:
                                 r_open = await client.get(f"https://data-api.polymarket.com/positions?user={target_address}&limit=50")
@@ -1400,7 +1573,7 @@ class TelegramListener:
                                             volume_total += float(sz) * float(pr)
                                 except Exception:
                                     pass
-                                    
+
                         realized_pnl = 0.0
                         if isinstance(closed_pos, list):
                             for x in closed_pos:
@@ -1410,13 +1583,17 @@ class TelegramListener:
                                         realized_pnl += float(val)
                                 except Exception:
                                     pass
-                        
+
                         pnl_emoji = "🟢" if realized_pnl >= 0 else "🔴"
                         pnl_sign = "+" if realized_pnl > 0 else ""
-                        
+
                         # Layout exactly matching user format
                         lines = [
-                            "📜 *Historique Polymarket*",
+                            "```\n"
+                            "┌─────────────────────────┐\n"
+                            "│  📜 POLYMARKET HISTORY  │\n"
+                            "└─────────────────────────┘\n"
+                            "```\n"
                             f"Page 1/1 - Trades {len(activity)}/{len(activity)}" if isinstance(activity, list) else "Page 1/1 - Trades 0/0",
                             f"⭐ *Wallet {wallet_name.capitalize()}*",
                             f"Adresse: `{target_address}`",
@@ -1427,7 +1604,7 @@ class TelegramListener:
                             f"{pnl_emoji} *Total estimé* : `{pnl_sign}${realized_pnl:.2f}`",
                             "━━━━━━━━━━━━"
                         ]
-                        
+
                         if not activity or not isinstance(activity, list):
                             lines.append("\nAucune transaction récente sur pUSD détectée.")
                         else:
@@ -1437,13 +1614,13 @@ class TelegramListener:
                                     title = act.get("title", "Unknown Market")
                                     side = str(act.get("side", "BUY")).upper()
                                     outcome = act.get("outcome", "YES")
-                                    
+
                                     size_val = act.get("size", 0.0)
                                     size = float(size_val) if size_val is not None else 0.0
-                                    
+
                                     price_val = act.get("price", 0.0)
                                     price = float(price_val) if price_val is not None else 0.0
-                                    
+
                                     ts = act.get("timestamp", 0)
                                     date_str = ""
                                     if ts:
@@ -1452,9 +1629,8 @@ class TelegramListener:
                                             date_str = datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
                                         except Exception:
                                             pass
-                                    
+
                                     lines.extend([
-                                        f"⭐ *Wallet {wallet_name.capitalize()}*",
                                         f"🎯 *{title}*",
                                         f"• Side: `{side}`",
                                         f"• Outcome: `{outcome}`",
@@ -1466,7 +1642,7 @@ class TelegramListener:
                                     lines.append("")
                                 except Exception:
                                     pass
-                        
+
                         lines.append("━━━━━━━━━━━━")
                         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
                         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
@@ -1494,13 +1670,13 @@ class TelegramListener:
                                     open_pos = r_open.json()
                         except Exception as e:
                             logger.error("Failed to query open positions: %s", e)
-                            
+
                         lines = [
                             "🎯 *Polymarket Cockpit*",
                             "────────────────────────",
                             "📊 *Open Positions*:"
                         ]
-                        
+
                         if not open_pos or not isinstance(open_pos, list):
                             lines.append("No active open positions on Polymarket found.")
                         else:
@@ -1508,26 +1684,26 @@ class TelegramListener:
                                 try:
                                     title = pos.get("title", "Unknown Market")
                                     outcome = pos.get("outcome", "YES")
-                                    
+
                                     size_val = pos.get("size", 0.0)
                                     size = float(size_val) if size_val is not None else 0.0
-                                    
+
                                     avg_val = pos.get("avgPrice", 0.0)
                                     avg_price = float(avg_val) if avg_val is not None else 0.0
-                                    
+
                                     cur_val = pos.get("curPrice", 0.0)
                                     cur_price = float(cur_val) if cur_val is not None else 0.0
-                                    
+
                                     cash_pnl = 0.0
                                     pnl_val = pos.get("cashPnl")
                                     if pnl_val is None:
                                         pnl_val = pos.get("unrealizedPnl")
                                     if pnl_val is not None:
                                         cash_pnl = float(pnl_val)
-                                    
+
                                     pnl_emoji = "🟢" if cash_pnl >= 0 else "🔴"
                                     pnl_sign = "+" if cash_pnl > 0 else ""
-                                    
+
                                     lines.extend([
                                         f"🎯 *{title}*",
                                         f"• Outcome: `{outcome}`",
@@ -1539,7 +1715,7 @@ class TelegramListener:
                                     ])
                                 except Exception:
                                     pass
-                                
+
                         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
                         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
                         await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
@@ -1558,13 +1734,13 @@ class TelegramListener:
                                     closed_pos = r_closed.json()
                         except Exception as e:
                             logger.error("Failed to query closed positions for PnL: %s", e)
-                            
+
                         total_wins = 0
                         total_losses = 0
                         total_realized_pnl = 0.0
                         open_cash_pnl = 0.0
                         open_current_value = 0.0
-                        
+
                         if isinstance(closed_pos, list):
                             for x in closed_pos:
                                 try:
@@ -1607,14 +1783,14 @@ class TelegramListener:
                             proxy_address=proxy_address or target_address,
                         )
                         net_capital_pnl = total_capital - reference_capital if reference_capital is not None else None
-                                    
+
                         total_trades = len(closed_pos) if isinstance(closed_pos, list) else 0
                         win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0.0
                         closed_emoji = "🟢" if total_realized_pnl >= 0 else "🔴"
                         closed_sign = "+" if total_realized_pnl > 0 else ""
                         net_emoji = "🟢" if (net_capital_pnl or 0.0) >= 0 else "🔴"
                         net_sign = "+" if net_capital_pnl is not None and net_capital_pnl > 0 else ""
-                        
+
                         lines = [
                             "🎯 *Polymarket Cockpit*",
                             "────────────────────────",
@@ -1645,12 +1821,12 @@ class TelegramListener:
                             "`Net Capital PnL = Total Capital - Reference Capital`",
                             "`Closed Trading PnL = Polymarket closed-positions realizedPnl`",
                         ])
-                        
+
                         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
                         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
                         await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
                 return
-        
+
         if not is_admin:
             logger.warning(f"🚨 [SECURITY WARNING: Unauthorized Admin Query Attempt] Chat ID: {chat_id} (callback: {query.data})")
             await query.answer("Unauthorized.", show_alert=True)
@@ -1679,7 +1855,7 @@ class TelegramListener:
                 client = self._scanner.client if self._scanner else None
                 analyzer = CryptoHorizonSentiment(client=client)
                 sentiment = analyzer.analyze(asset, horizon)
-                
+
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                 keyboard = []
                 row = []
@@ -1691,7 +1867,7 @@ class TelegramListener:
                     row.append(InlineKeyboardButton(label, callback_data=f"horizon:{asset.lower()}:{h}"))
                 keyboard.append(row)
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                
+
                 try:
                     await query.edit_message_text(
                         text=format_horizon_sentiment(sentiment, asset, horizon),
@@ -1705,22 +1881,24 @@ class TelegramListener:
             return
 
         await query.answer()
-        
+
         if query.data == "scan":
-            # Trigger a manual scan report
+            # Trigger a manual scan report in-place
+            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]])
             if self._scanner:
                 result = self._scanner.scan_markets()
                 from utils.message_formatter import format_scan_report
                 text = format_scan_report(result)
-                await self.send_message(text, parse_mode=ParseMode.MARKDOWN)
+                await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
             else:
-                await self._reply_to_callback(update, "Scanner not available.")
+                await safe_edit_callback(query, "Scanner not available.", reply_markup=reply_markup)
         elif query.data == "improve":
-            # Trigger self-improvement agent
+            # Trigger self-improvement agent in-place
             from ai.agents.self_improvement_agent import SelfImprovementAgent
             agent = SelfImprovementAgent()
             report = agent.generate_improvement_report()
-            await self.send_message(report, parse_mode=ParseMode.MARKDOWN)
+            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]])
+            await safe_edit_callback(query, report, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
         elif query.data == "balance":
             await self._cmd_balance(update, context)
         elif query.data == "wallet":
@@ -1728,11 +1906,17 @@ class TelegramListener:
         elif query.data == "settings":
             mode = self._get_mode()
             msg = (
-                f"⚙️ *Settings Interface*\n\n"
-                f"Mode: `{mode}`\n"
-                f"Use /mode to change."
+                "```\n"
+                "┌─────────────────────────┐\n"
+                "│    ⚙️ SYSTEM SETTINGS   │\n"
+                "└─────────────────────────┘\n"
+                "```\n"
+                f"📂 *Mode actif* : `{mode}`\n\n"
+                "⚡ Pour changer de mode, utilisez la commande :\n"
+                "`/mode PAPER` ou `/mode PROD`"
             )
-            await self.send_message(msg, parse_mode=ParseMode.MARKDOWN)
+            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]])
+            await safe_edit_callback(query, msg, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
         elif query.data == "start_status":
             await self._cmd_status(update, context)
         elif query.data == "start_positions":
@@ -1742,7 +1926,18 @@ class TelegramListener:
         elif query.data == "mode":
             await self._cmd_mode(update, context)
         elif query.data == "signal":
-            await self.reply_to("📡 *Signal Interface*\n\nSend a trading signal in format:\n`BUY BTC 0.50`", update, parse_mode=ParseMode.MARKDOWN)
+            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]])
+            await safe_edit_callback(
+                query,
+                "📡 *Signal Interface*\n\nSend a trading signal in format:\n`BUY BTC 0.50`",
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+    async def _handle_command_router(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._check_auth(update):
+            return
+        await self.command_router.route_telegram_command(update, context)
 
     async def start(self) -> None:
         self._running = True
@@ -1804,10 +1999,19 @@ class TelegramListener:
             self.application.add_handler(CommandHandler("import", self._cmd_import))
             self.application.add_handler(CommandHandler("wallets", self._cmd_wallets))
             self.application.add_handler(CommandHandler("wallet", self._cmd_wallet_cockpit))
-        
+
             # Register new institutional command router
-            router = CommandRouter(self)
+            router = CommandRouter(self, market_reader=self._market_reader, order_manager=getattr(self, '_order_manager', None))
             router.register_all()
+
+            # Register new Lobstar Command Router MessageHandler
+            self.application.add_handler(
+                MessageHandler(
+                    (chat_filter | filters.ChatType.PRIVATE) & filters.TEXT & filters.Regex(r"^/"),
+                    self._handle_command_router
+                ),
+                group=0,
+            )
 
             self.application.add_handler(
                 MessageHandler(chat_filter & filters.TEXT & ~filters.COMMAND, self._handle_message),
@@ -1825,7 +2029,7 @@ class TelegramListener:
                     ),
                     group=1,
                 )
-            
+
             self.application.add_handler(CallbackQueryHandler(self._handle_callback))
 
             await self.application.initialize()

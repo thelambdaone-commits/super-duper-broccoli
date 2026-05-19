@@ -57,6 +57,43 @@ result = workflow.verify_report({
 assert result.ok
 ```
 
+## Autonomous Problem Solving Agent
+
+The repository features a fully integrated **GSD Autonomous Problem Solver Agent** inspired by frameworks like `AI-Problem-Solver`, OpenClaw's `github-issue-resolver`, and Haystack's `github_issue_resolver_agent`. It takes any bug description or feature ticket, parses the GSD spec, semantically selects relevant files, plans modifications, applies them, executes `pytest` tests, and automatically rolls back changes if validation checks fail.
+
+### CLI Usage
+
+Execute the solver directly in your terminal to fix any issue autonomously:
+
+```bash
+# Run intake and planning without changing any files (Dry-Run)
+python scripts/gsd_problem_solver.py --issue "Fix timing delay in binance websocket client" --dry-run
+
+# Run full autonomous loop with up to 3 iterative attempts and test verification
+python scripts/gsd_problem_solver.py --issue "Fix formatting anomalies in Telegram logger" --max-iterations 3
+```
+
+### Python API
+
+```python
+import asyncio
+from core.services.gsd_problem_solver import GSDProblemSolverAgent
+
+async def run_solver():
+    solver = GSDProblemSolverAgent()
+    report = await solver.solve_issue(
+        issue_text="Fix formatting anomalies in Telegram logger",
+        dry_run=False
+    )
+    if report.ok:
+        print("Issue resolved and validated!")
+        print("Changed files:", report.changed_files)
+    else:
+        print("Failed to resolve safely. State rolled back.")
+
+asyncio.run(run_solver())
+```
+
 ## Source
 
 Reference project: `https://github.com/gsd-build/get-shit-done`.

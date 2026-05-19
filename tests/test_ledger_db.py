@@ -1,6 +1,7 @@
 import os
 import pytest
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from ledger.ledger_db import Ledger
 from utils.exceptions import QuantFatal
 
@@ -26,6 +27,15 @@ def test_execution_mode_persistence(temp_ledger):
     
     temp_ledger.set_execution_mode("PROD")
     assert temp_ledger.get_execution_mode() == "PROD"
+
+
+def test_execution_mode_can_be_read_from_worker_threads(temp_ledger):
+    temp_ledger.set_execution_mode("SHADOW")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        modes = list(executor.map(lambda _: temp_ledger.get_execution_mode(), range(32)))
+
+    assert modes == ["SHADOW"] * 32
 
 def test_capital_allocation_and_reserve(temp_ledger):
     # Initialize allocation

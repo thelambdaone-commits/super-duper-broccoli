@@ -1,7 +1,7 @@
 import asyncio
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, ANY
 
 import pytest
 
@@ -291,11 +291,11 @@ async def test_cmd_check_reports_statuses() -> None:
 
     message.reply_text.assert_awaited_once()
     text = message.reply_text.call_args[0][0]
-    assert "*API Connectivity Check*" in text
-    assert "*Telegram:* token=12345678..." in text
-    assert "*Vault:* OK" in text
-    assert "*Polymarket CLOB:* OK" in text
-    assert "*WebSocket:* CONFIGURED" in text
+    assert "🛠️ CONNECTIVITY CHECK" in text
+    assert "*Telegram* : `token=12345678...`" in text
+    assert "*HashiCorp Vault* : `CONNECTED 🟢`" in text
+    assert "*Polymarket CLOB* : `ONLINE 🟢`" in text
+    assert "*Websocket Feed* : `ONLINE 🟢" in text
 
 
 @pytest.mark.asyncio
@@ -344,7 +344,7 @@ async def test_callback_without_scanner_replies_instead_of_crashing() -> None:
     await listener._handle_callback(update, None)
 
     query.answer.assert_awaited_once_with()
-    reply_text.assert_awaited_once_with("Scanner not available.")
+    reply_text.assert_awaited_once_with("Scanner not available.", reply_markup=ANY)
 
 
 @pytest.mark.asyncio

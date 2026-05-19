@@ -1,0 +1,18 @@
+[run]
+branch = True
+source = .
+omit =
+    .venv/*
+    graphify-out/*
+    logs/*
+    scratch/*
+    tests/*
+
+[report]
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+

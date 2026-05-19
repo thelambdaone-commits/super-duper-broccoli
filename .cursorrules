@@ -1,0 +1,18 @@
+# Règles Cursor / Maintien du Contexte
+
+Vous êtes un AI Coding Assistant. Voici les règles absolues pour ce projet `Quant Agentic Trading Core V2` :
+
+## 1. Contexte & Mémoire
+- Lisez TOUJOURS les fichiers `CONFIGURATION_AUDIT.md`, `DEEP_AUDIT_REPORT.md` ou `MEMORY.md` en arrivant sur le projet pour assimiler le contexte.
+- Ne prenez jamais de décisions d'architecture (nouvel agent, refonte DB) sans proposer un Plan d'Implémentation et obtenir validation.
+- Écrivez le code final en documentant scrupuleusement toute logique métier.
+
+## 2. Utilisation de Context7 (Anti-Hallucination)
+- Vous êtes connecté à **Context7** (Upstash).
+- Avant d'utiliser ou d'ajouter une dépendance externe (ex: `FastAPI`, `Polymarket CLOB`, `Groq`), utilisez `Context7` (via le serveur MCP ou le CLI `npx ctx7`) pour extraire la documentation à jour. Ne vous fiez pas aveuglément à vos poids d'entraînement datés.
+- Si le user dit "use context7", obéissez immédiatement et requêtez la documentation.
+
+## 3. Bonnes Pratiques Git & Code
+- Un commit par fichier modifié.
+- Pas de `cat` dans le bash pour écrire de longs fichiers. Utilisez les outils d'édition natifs (`replace_file_content`).
+- Suivez l'architecture asynchrone triple couche (Calcul, IA, ML).

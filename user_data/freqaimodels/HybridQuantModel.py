@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import numpy as np
 import joblib
+import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression
@@ -108,12 +109,13 @@ class HybridQuantModel(BaseEstimator, ClassifierMixin):
         self.classes_ = self._classes
         self._init_learners()
 
+        X = self._ensure_feature_frame(X)
         if self._tft_hook is not None:
-            X = self._tft_hook.extract_embeddings(X)
+            X = self._tft_hook.extract_embeddings(np.asarray(X))
 
         for name, model in self._models.items():
             model.fit(X, y)
-            logger.debug(f"{name} trained (score={model.score(X, y):.4f})")
+            logger.debug("%s trained", name)
 
         meta_X = np.column_stack([
             model.predict_proba(X)[:, 1] for model in self._models.values()
@@ -126,9 +128,9 @@ class HybridQuantModel(BaseEstimator, ClassifierMixin):
         self._meta.fit(meta_X, y)
 
         logger.info(
-            f"HybridQuantModel trained — base: {list(self._models.keys())} "
-            f"meta: {self._meta_type} "
-            f"(train accuracy: {self.score(X, y):.4f})"
+            "HybridQuantModel trained -- base: %s meta: %s",
+            list(self._models.keys()),
+            self._meta_type,
         )
         self.is_fitted_ = True
         return self
@@ -140,8 +142,9 @@ class HybridQuantModel(BaseEstimator, ClassifierMixin):
         if not self._models or self._meta is None:
             raise RuntimeError("Model not fitted. Call fit() first.")
 
+        X = self._ensure_feature_frame(X)
         if self._tft_hook is not None:
-            X = self._tft_hook.extract_embeddings(X)
+            X = self._tft_hook.extract_embeddings(np.asarray(X))
 
         meta_X = np.column_stack([
             model.predict_proba(X)[:, 1] for model in self._models.values()
@@ -159,6 +162,17 @@ class HybridQuantModel(BaseEstimator, ClassifierMixin):
     def score(self, X: np.ndarray, y: np.ndarray) -> float:
         from sklearn.metrics import accuracy_score
         return float(accuracy_score(y, self.predict(X)))
+
+    def _ensure_feature_frame(self, X: np.ndarray) -> Any:
+        if isinstance(X, pd.DataFrame):
+            if self._feature_names and list(X.columns) != self._feature_names and len(self._feature_names) == X.shape[1]:
+                return X.copy().set_axis(self._feature_names, axis=1)
+            return X
+
+        arr = np.asarray(X)
+        if arr.ndim == 2 and self._feature_names and arr.shape[1] == len(self._feature_names):
+            return pd.DataFrame(arr, columns=self._feature_names)
+        return arr
 
     def feature_importance(self) -> dict[str, float]:
         if not self._models:

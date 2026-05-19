@@ -284,3 +284,61 @@ class TestEdgeCases:
         result = await executor.execute("SOL", "BUY", 0.50, 100.0)
 
         assert result["execution_path"] == "taker"
+
+
+class TestStrictMakerOnly:
+    @pytest.mark.asyncio
+    async def test_strict_maker_only_rejects_taker_fallback_on_post_only_rejection(
+        self, executor: PassiveExecutor, mock_freqai: AsyncMock,
+    ) -> None:
+        with patch.object(executor, "_is_strict_maker_only", return_value=True):
+            mock_freqai.post_order.return_value = {
+                "status": "POST_ONLY_REJECTED",
+                "error": "post only would match",
+            }
+            
+            result = await executor.execute("SOL", "BUY", 0.50, 100.0)
+            
+            assert result["status"] == "POST_ONLY_REJECTED"
+            assert "Taker fallback denied" in result["error"]
+            mock_freqai.create_order.assert_not_called()
+            assert executor.reject_count == 1
+
+    @pytest.mark.asyncio
+    async def test_strict_maker_only_rejects_taker_fallback_on_timeout(
+        self, executor: PassiveExecutor, mock_freqai: AsyncMock,
+    ) -> None:
+        with patch.object(executor, "_is_strict_maker_only", return_value=True):
+            mock_freqai.post_order.return_value = {"status": "OK", "orderID": "ord-strict-timeout"}
+            mock_freqai.get_order_status.return_value = {
+                "status": "OK",
+                "order": {"remaining_size": 100, "size": 100},
+            }
+            mock_freqai.cancel_order.return_value = {"status": "CANCELLED"}
+            
+            result = await executor.execute("SOL", "BUY", 0.50, 100.0)
+            
+            assert result["status"] == "CANCELLED"
+            assert "Taker fallback denied" in result["error"]
+            mock_freqai.create_order.assert_not_called()
+            mock_freqai.cancel_order.assert_called_once_with("ord-strict-timeout")
+
+    @pytest.mark.asyncio
+    async def test_strict_maker_only_bypassed_when_override_set(
+        self, executor: PassiveExecutor, mock_freqai: AsyncMock,
+    ) -> None:
+        mock_ledger = MagicMock()
+        mock_ledger.get_safety_flags.return_value = {"strict_maker_only": True}
+        executor.ledger = mock_ledger
+
+        mock_freqai.post_order.return_value = {
+            "status": "POST_ONLY_REJECTED",
+            "error": "post only would match",
+        }
+        mock_freqai.create_order.return_value = {"status": "FILLED", "orderID": "ord-taker"}
+
+        result = await executor.execute("SOL", "BUY", 0.50, 100.0, override_strict_maker=True)
+
+        assert result["status"] == "TAKER_FILLED"
+        assert result["execution_path"] == "taker"
+        mock_freqai.create_order.assert_called_once()

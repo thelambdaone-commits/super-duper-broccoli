@@ -18,6 +18,107 @@ def compute_sentiment_features_from_dict(
     return analyzer.to_feature_vector(result)
 
 
+# ── Advanced Feature Engineering (Stock-return-predictor enriched) ──
+
+def compute_momentum_features(close: pd.Series) -> pd.DataFrame:
+    df = pd.DataFrame(index=close.index, dtype=np.float32)
+    for p in [1, 2, 3, 5, 10, 21, 63]:
+        df[f"mom_ret_{p}d"] = close.pct_change(p).fillna(0).astype(np.float32)
+    for p in [5, 10, 21, 63]:
+        ma = close.rolling(p).mean().fillna(close)
+        df[f"mom_ma_ratio_{p}d"] = (close / ma - 1).fillna(0).astype(np.float32)
+    return df
+
+
+def compute_volatility_features(close: pd.Series, high: pd.Series, low: pd.Series) -> pd.DataFrame:
+    df = pd.DataFrame(index=close.index, dtype=np.float32)
+    ret = close.pct_change().fillna(0)
+    for p in [5, 10, 21, 63]:
+        df[f"vol_realized_{p}d"] = ret.rolling(p).std().fillna(0).astype(np.float32)
+        downside = ret[ret < 0].rolling(p).std().fillna(0)
+        upside = ret[ret > 0].rolling(p).std().fillna(0)
+        df[f"vol_downside_{p}d"] = downside.astype(np.float32)
+        df[f"vol_upside_{p}d"] = upside.astype(np.float32)
+    df["vol_skew_21d"] = (
+        df["vol_downside_21d"] / (df["vol_upside_21d"] + 1e-8) - 1
+    ).fillna(0).astype(np.float32)
+    typical = (high + low + close) / 3
+    df["atr_14"] = typical.diff().abs().rolling(14).mean().fillna(0).astype(np.float32)
+    df["atr_pct"] = (df["atr_14"] / close).fillna(0).astype(np.float32)
+    df["vol_regime"] = pd.qcut(
+        df["vol_realized_21d"].rank(method="first"),
+        q=[0, 0.33, 0.67, 1.0], labels=[0, 1, 2], duplicates="drop",
+    ).astype(float).fillna(1).astype(np.float32)
+    return df
+
+
+def compute_mean_reversion_features(close: pd.Series, high: pd.Series, low: pd.Series) -> pd.DataFrame:
+    df = pd.DataFrame(index=close.index, dtype=np.float32)
+    for p in [5, 14, 21]:
+        ma = close.rolling(p).mean()
+        std = close.rolling(p).std()
+        df[f"bb_pct_b_{p}"] = ((close - ma) / (2 * std + 1e-8)).fillna(0).astype(np.float32)
+        df[f"bb_width_{p}"] = (2 * std / ma).fillna(0).astype(np.float32)
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / (loss + 1e-8)
+    df["rsi_14"] = (100 - 100 / (1 + rs)).fillna(50).astype(np.float32)
+    df["rsi_regime"] = pd.cut(
+        df["rsi_14"], bins=[0, 30, 70, 100], labels=[-1, 0, 1],
+    ).astype(float).fillna(0).astype(np.float32)
+    fast_ma = close.ewm(span=12).mean()
+    slow_ma = close.ewm(span=26).mean()
+    df["macd"] = (fast_ma - slow_ma).fillna(0).astype(np.float32)
+    df["macd_signal"] = df["macd"].ewm(span=9).mean().fillna(0).astype(np.float32)
+    df["macd_hist"] = (df["macd"] - df["macd_signal"]).fillna(0).astype(np.float32)
+    df["stoch_k_14"] = ((close - low.rolling(14).min()) / (high.rolling(14).max() - low.rolling(14).min() + 1e-8) * 100).fillna(50).astype(np.float32)
+    return df
+
+
+def compute_volume_features(close: pd.Series, volume: pd.Series) -> pd.DataFrame:
+    df = pd.DataFrame(index=close.index, dtype=np.float32)
+    df["volume_zscore_21"] = ((volume - volume.rolling(21).mean()) / (volume.rolling(21).std() + 1e-8)).fillna(0).astype(np.float32)
+    for p in [5, 10, 21]:
+        df[f"volume_ma_ratio_{p}d"] = (volume / volume.rolling(p).mean()).fillna(1).astype(np.float32)
+    obv = (volume * ((close.diff() > 0).astype(int) * 2 - 1)).cumsum()
+    df["obv_ma_ratio_21"] = (obv / obv.rolling(21).mean()).fillna(1).astype(np.float32)
+    return df
+
+
+def compute_calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
+    df = pd.DataFrame(index=index, dtype=np.float32)
+    df["day_of_week"] = index.dayofweek.astype(np.float32)
+    df["month"] = index.month.astype(np.float32)
+    df["quarter"] = index.quarter.astype(np.float32)
+    for d in range(5):
+        df[f"dow_{d}"] = (df["day_of_week"] == d).astype(np.float32)
+    return df
+
+
+def compute_advanced_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
+    close = ohlcv["Close"] if "Close" in ohlcv else ohlcv["close"]
+    high = ohlcv["High"] if "High" in ohlcv else ohlcv["high"]
+    low = ohlcv["Low"] if "Low" in ohlcv else ohlcv["low"]
+    volume = ohlcv["Volume"] if "Volume" in ohlcv else ohlcv["volume"]
+    feats = [compute_momentum_features(close)]
+    feats.append(compute_volatility_features(close, high, low))
+    feats.append(compute_mean_reversion_features(close, high, low))
+    feats.append(compute_volume_features(close, volume))
+    if isinstance(ohlcv.index, pd.DatetimeIndex):
+        feats.append(compute_calendar_features(ohlcv.index))
+    result = pd.concat(feats, axis=1)
+    result.fillna(0.0, inplace=True)
+    return result.astype(np.float32)
+
+
+def compute_sentiment_features(
+    result: dict[str, float],
+    analyzer: Any,
+) -> np.ndarray:
+    return analyzer.to_feature_vector(result)
+
+
 def compute_order_imbalance(
     bid_volumes: np.ndarray, ask_volumes: np.ndarray
 ) -> np.ndarray:

@@ -1,45 +1,97 @@
-# Telegram Ingestion
+# 🤖 Lobstar Telegram Subsystem Guide
 
-The Telegram path is still part of the runtime, even as the repository moves
-toward more web-first market data ingestion.
+This document outlines the architecture, directory structure, dynamic command registry, and instructions for adding new commands to the institutional Telegram Bot.
 
-## Listener
+## 📂 Subsystem Directory Layout
 
-[`telegram_scraper/telegram_listener.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/telegram_scraper/telegram_listener.py)
-handles:
+The Telegram subsystem is strictly organized for high modularity to prevent files from growing too large:
 
-- channel messages
-- private chat messages
-- command routing
-- signal parsing
-- message splitting and retry behavior
+```text
+telegram_scraper/
+├── __init__.py
+├── telegram_listener.py       # Core Telegram bot bootstrap, authorization & start/stop cycle.
+├── command_router.py          # Centralized registry & dispatcher routing commands dynamically.
+└── handlers/                  # Modular functional command handlers
+    ├── __init__.py
+    ├── markets_handler.py     # Crypto horizon & active markets displays (/btc, /btc5, etc.)
+    ├── polymarket_handler.py  # Polymarket bets, CLOB orders & statistics (/polymarket, /clob)
+    ├── signals_handler.py     # Signal generations & paper test executions (/signals, /paper)
+    ├── system_handlers.py     # Devops, MCP, audits & system health (/mcp, /dev, /audit)
+    ├── transfer_handler.py    # Funds transfers & proxy wallet allocations (/transfer)
+    └── wallet_handler.py      # Wallet creation, balances & PK imports (/wallet, /gen, /import)
+```
 
-## Key Behaviors
+---
 
-- Commands such as `/help`, `/status`, `/mode`, and related operational commands are handled in the listener.
-- Private chat handling can be restricted by `TELEGRAM_PRIVATE_CHAT_IDS`.
-- `TELEGRAM_PRIVATE_ENABLED=0` disables private-message processing entirely.
-- Telegram messages are parsed through deterministic and semantic paths before reaching execution components.
+## ⚡ Centralized Command Registry (`COMMAND_REGISTRY`)
 
-## Shared Helpers
+Commands are declared dynamically in the centralized `COMMAND_REGISTRY` mapping located inside [command_router.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/telegram_scraper/command_router.py).
 
-Useful support modules:
+Each entry defines:
+- **`func`**: The exact handler method name (implemented in `CommandRouter`).
+- **`category`**: The permission and categorization layer (`ADMIN`, `TRADING`, `MARKETS`, `WALLET`, `DEVOPS`).
+- **`description`**: A human-friendly explanation.
+- **`usage`**: The command syntax signature.
+- **`example`**: An operational example.
+- **`notes`**: Important tips or advice.
 
-- [`telegram_scraper/command_router.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/telegram_scraper/command_router.py)
-- [`utils/signal_parser.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/signal_parser.py)
-- [`utils/telegram_helpers.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/telegram_helpers.py)
+Example registry entry:
+```python
+    "wallet": {
+        "func": "_cmd_wallet",
+        "category": "WALLET",
+        "description": "Gérer les portefeuilles, soldes et transferts.",
+        "usage": "/wallet",
+        "example": "/wallet",
+        "notes": "Affiche le cockpit des portefeuilles et balances configurés."
+    }
+```
 
-## Output Formatting
+This registry is also used by the **Dynamic Manual System** (`/man <command>`) to auto-generate fully detailed premium help pages for any command!
 
-Telegram-specific output is now less central than before. For system telemetry,
-prefer the plain-text formatter in:
+---
 
-- [`utils/output_formatter.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/output_formatter.py)
+## 🧪 How to Add a New Command
 
-## Operational Notes
+Adding a new command is fully modular and takes only 3 simple steps:
 
-- The listener keeps an internal queue for inbound messages.
-- It can be attached to the ledger, risk engine, HMM filter, feature store,
-  executor, scanner, and copy-trading agent.
-- Authorization checks happen before sensitive commands or signals are accepted.
+### 1. Declare the Command in the Registry
+Open [command_router.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/telegram_scraper/command_router.py) and add your command details to `COMMAND_REGISTRY`:
+```python
+    "mycmd": {
+        "func": "_cmd_mycmd",
+        "category": "DEVOPS",
+        "description": "Short description of what it does.",
+        "usage": "/mycmd <arg>",
+        "example": "/mycmd test",
+        "notes": "Administrative notes here."
+    }
+```
 
+### 2. Implement the Command Route Method
+In `CommandRouter` (inside [command_router.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/telegram_scraper/command_router.py)), implement the routing method matching the `func` name:
+```python
+    async def _cmd_mycmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self.listener._check_admin_auth(update): return
+
+        # Call the modular handler code
+        from telegram_scraper.handlers.system_handlers import handle_mycmd
+        await handle_mycmd(update, context, self.listener)
+```
+
+### 3. Implement the Handler Logic
+Create the corresponding handler function inside the appropriate module in `telegram_scraper/handlers/` (e.g. `system_handlers.py`):
+```python
+async def handle_mycmd(update, context, listener):
+    # Your beautiful premium logic here!
+    await listener.reply_to("🚀 Executed successfully!", update)
+```
+
+---
+
+## 🔒 Authorization & Access Levels
+
+Access control is strictly checked before executing any commands:
+1. **Public/User**: Public commands allowed for everyone.
+2. **Authorized (`_check_auth`)**: Restricts access based on `TELEGRAM_PRIVATE_CHAT_IDS`.
+3. **Admin (`_check_admin_auth`)**: Requires admin credentials to perform sensitive operations (e.g. trading, PK import).

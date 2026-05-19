@@ -220,49 +220,6 @@ def format_unified_feed_report(markets_general: list, intelligence_report) -> st
             parts.append(f"  • {question[:50]}\n")
 
     # Add a blank line and then the Lobstar Crypto Intelligence section
-    data = intelligence_report.to_dict()
-    summary = data["summary"]
-    avg_confidence = float(summary.get("avg_signal_confidence", 0.0))
-    from utils.crypto_market_intelligence import _report_bias, _direction_label, _risk_label, _signal_reason
-    bias = _report_bias(intelligence_report)
-    
-    bias_emoji = {"BULLISH": "📈 BULLISH", "BEARISH": "📉 BEARISH", "NEUTRAL": "⚖️ NEUTRE", "NEUTRE": "⚖️ NEUTRE"}.get(bias, bias)
-    
-    parts.append(
-        f"  🤖 Lobstar Crypto Intelligence\n"
-        f"  Biais marché: {bias_emoji} | confiance moyenne {avg_confidence:.0%}\n"
-        f"  Couverture: {data['crypto_market_count']} crypto / {data['market_count']} marchés\n"
-        f"  Flux: ${summary['total_crypto_volume']:,.0f} volume | ${summary['total_crypto_liquidity']:,.0f} liquidité\n"
-    )
-    
-    if intelligence_report.opportunities:
-        parts.append("  A surveiller")
-        for signal in intelligence_report.opportunities[:5]:
-            label = _direction_label(signal.direction)
-            reason = _signal_reason(signal)
-            parts.append(
-                f"  - {signal.asset} {label} | YES {signal.yes_price:.0%} / NO {signal.no_price:.0%} | score {signal.score:.0%}\n"
-                f"    {signal.market_slug}\n"
-                f"    Lecture: {reason}"
-            )
-    else:
-        parts.append("  A surveiller: aucun signal liquide prioritaire")
-        
-    if intelligence_report.risk_flags:
-        parts.append("\n  Risques")
-        for signal in intelligence_report.risk_flags[:5]:
-            label = _risk_label(signal.signal_type)
-            reason = _signal_reason(signal)
-            parts.append(
-                f"  - {signal.asset} {label} | confiance {signal.confidence:.0%}\n"
-                f"    {signal.market_slug}\n"
-                f"    Lecture: {reason}"
-            )
-            
-    parts.extend([
-        "",
-        "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5",
-        "  Avis consultatif. Pas d'execution sans parser, risque, ledger et mode valide.",
-    ])
-    
+    from utils.crypto_market_intelligence import format_intelligence_report
+    parts.append("\n" + format_intelligence_report(intelligence_report))
     return "\n".join(parts)

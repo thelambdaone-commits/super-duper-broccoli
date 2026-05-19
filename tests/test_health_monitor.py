@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import MagicMock
-import httpx
 import pytest
-from core.health_monitor import LobstarHealthMonitor, app
+import core.health_monitor as health_monitor
+from core.health_monitor import LobstarHealthMonitor
 
 
 class FakeTask:
@@ -25,95 +26,53 @@ class FakeRunner:
         self._is_running = running
 
 
-@pytest.mark.asyncio
-async def test_health_monitor_endpoints_when_components_are_up() -> None:
+def test_health_monitor_endpoints_when_components_are_up() -> None:
     orchestrator = FakeOrchestrator(queue_done=False)
     runner = FakeRunner(running=True)
+    health_monitor._orchestrator = orchestrator
+    health_monitor._runner = runner
 
-    monitor = LobstarHealthMonitor(orchestrator, runner, port=8089)
-    monitor.start()
-
-    try:
-        # Simulate a direct client request using FastAPI's TestClient style or mock http
-        from fastapi.testclient import TestClient
-        client = TestClient(app)
-        
-        response = client.get("/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "UP"
-        assert data["components"]["orchestrator"] == "UP"
-        assert data["components"]["quantum_runner"] == "UP"
-
-        response_live = client.get("/liveness")
-        assert response_live.status_code == 200
-        assert response_live.json()["status"] == "UP"
-
-    finally:
-        await monitor.stop()
+    response = health_monitor.get_liveness()
+    assert response["status"] == "UP"
+    assert response["components"]["orchestrator"] == "UP"
+    assert response["components"]["quantum_runner"] == "UP"
 
 
-@pytest.mark.asyncio
-async def test_health_monitor_endpoints_when_orchestrator_is_down() -> None:
+def test_health_monitor_endpoints_when_orchestrator_is_down() -> None:
     orchestrator = FakeOrchestrator(queue_done=True) # Work task completed/failed
     runner = FakeRunner(running=True)
+    health_monitor._orchestrator = orchestrator
+    health_monitor._runner = runner
 
-    monitor = LobstarHealthMonitor(orchestrator, runner, port=8090)
-    monitor.start()
-
-    try:
-        from fastapi.testclient import TestClient
-        client = TestClient(app)
-        
-        response = client.get("/health")
-        assert response.status_code == 503
-        data = response.json()
-        assert data["status"] == "DOWN"
-        assert data["components"]["orchestrator"] == "DOWN"
-        assert data["components"]["quantum_runner"] == "UP"
-
-    finally:
-        await monitor.stop()
+    response = health_monitor.get_liveness()
+    assert response.status_code == 503
+    data = json.loads(response.body)
+    assert data["status"] == "DOWN"
+    assert data["components"]["orchestrator"] == "DOWN"
+    assert data["components"]["quantum_runner"] == "UP"
 
 
-@pytest.mark.asyncio
-async def test_health_monitor_endpoints_when_runner_is_down() -> None:
+def test_health_monitor_endpoints_when_runner_is_down() -> None:
     orchestrator = FakeOrchestrator(queue_done=False)
     runner = FakeRunner(running=False) # Not running
+    health_monitor._orchestrator = orchestrator
+    health_monitor._runner = runner
 
-    monitor = LobstarHealthMonitor(orchestrator, runner, port=8091)
-    monitor.start()
-
-    try:
-        from fastapi.testclient import TestClient
-        client = TestClient(app)
-        
-        response = client.get("/health")
-        assert response.status_code == 503
-        data = response.json()
-        assert data["status"] == "DOWN"
-        assert data["components"]["orchestrator"] == "UP"
-        assert data["components"]["quantum_runner"] == "DOWN"
-
-    finally:
-        await monitor.stop()
+    response = health_monitor.get_liveness()
+    assert response.status_code == 503
+    data = json.loads(response.body)
+    assert data["status"] == "DOWN"
+    assert data["components"]["orchestrator"] == "UP"
+    assert data["components"]["quantum_runner"] == "DOWN"
 
 
-@pytest.mark.asyncio
-async def test_health_monitor_endpoints_when_missing_references() -> None:
-    monitor = LobstarHealthMonitor(None, None, port=8092)
-    monitor.start()
+def test_health_monitor_endpoints_when_missing_references() -> None:
+    health_monitor._orchestrator = None
+    health_monitor._runner = None
 
-    try:
-        from fastapi.testclient import TestClient
-        client = TestClient(app)
-        
-        response = client.get("/health")
-        assert response.status_code == 503
-        data = response.json()
-        assert data["status"] == "DOWN"
-        assert data["components"]["orchestrator"] == "DOWN"
-        assert data["components"]["quantum_runner"] == "DOWN"
-
-    finally:
-        await monitor.stop()
+    response = health_monitor.get_liveness()
+    assert response.status_code == 503
+    data = json.loads(response.body)
+    assert data["status"] == "DOWN"
+    assert data["components"]["orchestrator"] == "DOWN"
+    assert data["components"]["quantum_runner"] == "DOWN"

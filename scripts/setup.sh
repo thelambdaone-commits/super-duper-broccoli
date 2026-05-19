@@ -61,7 +61,6 @@ install_deps() {
     log_info "Installing Python dependencies..."
     pip install --upgrade pip setuptools wheel
     pip install -r "$PROJECT_DIR/requirements.txt"
-    pip install pm2
     log_ok "Dependencies installed."
 }
 

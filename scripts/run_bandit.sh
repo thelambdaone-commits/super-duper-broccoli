@@ -29,5 +29,6 @@ exec "${BANDIT_BIN}" \
   "${ROOT_DIR}/utils/polymarket_crawler" \
   "${ROOT_DIR}/main_agentic_clob.py" \
   "${ROOT_DIR}/scripts" \
+  -r \
   -c "${ROOT_DIR}/.bandit" \
   -f txt

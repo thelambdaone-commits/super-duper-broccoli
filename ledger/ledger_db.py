@@ -1,6 +1,7 @@
 import logging
 import os
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -22,10 +23,13 @@ class Ledger:
     def __init__(self, db_path: str = LEDGER_DB_PATH, schema_path: str = SCHEMA_PATH) -> None:
         self.db_path = db_path
         self.schema_path = schema_path
+        self._lock = threading.RLock()
         self._conn = self._open_connection()
         self._initialize_database()
 
     def _open_connection(self) -> sqlite3.Connection:
+        # FastAPI runs sync handlers in a worker thread pool; the shared ledger
+        # connection must be usable from those threads and serialized by _lock.
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
@@ -44,9 +48,17 @@ class Ledger:
         with open(self.schema_path) as f:
             self._conn.executescript(f.read())
         self._conn.commit()
+        self._migrate_schema()
         
         # Upgrade existing databases with new columns safely
-        for col, col_type in [("exit_price", "REAL"), ("pnl", "REAL"), ("is_win", "INTEGER"), ("tenant_wallet", "TEXT")]:
+        for col, col_type in [
+            ("exit_price", "REAL"),
+            ("pnl", "REAL"),
+            ("is_win", "INTEGER"),
+            ("tenant_wallet", "TEXT"),
+            ("stop_loss_pct", "REAL DEFAULT 0.0"),
+            ("take_profit_pct", "REAL DEFAULT 0.0"),
+        ]:
             try:
                 self._conn.execute(f"ALTER TABLE paper_positions ADD COLUMN {col} {col_type}")
             except sqlite3.OperationalError:
@@ -102,14 +114,15 @@ class Ledger:
 
     @contextmanager
     def _transaction(self):
-        cursor = self.conn.cursor()
-        try:
-            cursor.execute("BEGIN IMMEDIATE")
-            yield cursor
-            self.conn.commit()
-        except Exception:
-            self.conn.rollback()
-            raise
+        with self._lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("BEGIN IMMEDIATE")
+                yield cursor
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def validate_and_reserve(
         self, ticker: str, side: str, limit_price: float, requested_size: float
@@ -118,12 +131,13 @@ class Ledger:
             return {"authorized": False, "reason": "Invalid non-positive price or size."}
         capital_required = limit_price * requested_size
 
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT total_capital, allocated_pct, available_capital "
-            "FROM capital_allocation ORDER BY id DESC LIMIT 1"
-        )
-        allocation = cursor.fetchone()
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT total_capital, allocated_pct, available_capital "
+                "FROM capital_allocation ORDER BY id DESC LIMIT 1"
+            )
+            allocation = cursor.fetchone()
 
         if not allocation:
             return {"authorized": False, "reason": "No allocation config found."}
@@ -271,21 +285,24 @@ class Ledger:
             raise QuantFatal(f"Order persistence failed: {e}")
 
     def get_capital_summary(self) -> dict:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM capital_allocation ORDER BY id DESC LIMIT 1")
-        row = cursor.fetchone()
-        return dict(row) if row else {}
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM capital_allocation ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            return dict(row) if row else {}
 
     def get_open_positions(self) -> list[dict]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM positions WHERE status = 'OPEN'")
-        return [dict(row) for row in cursor.fetchall()]
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM positions WHERE status = 'OPEN'")
+            return [dict(row) for row in cursor.fetchall()]
 
     def get_execution_mode(self) -> str:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT mode FROM execution_config WHERE id = 1")
-        row = cursor.fetchone()
-        return row["mode"] if row else "PAPER"
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT mode FROM execution_config WHERE id = 1")
+            row = cursor.fetchone()
+            return row["mode"] if row else "PAPER"
 
     def set_execution_mode(self, mode: str) -> None:
         mode_upper = mode.upper().strip()
@@ -350,124 +367,240 @@ class Ledger:
             return {"error": str(e)}
 
     def get_paper_positions(self, status: str = "OPEN") -> list[dict]:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM paper_positions WHERE status = ? ORDER BY opened_at DESC",
-            (status,),
-        )
-        return [dict(row) for row in cursor.fetchall()]
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM paper_positions WHERE status = ? ORDER BY opened_at DESC",
+                (status,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
 
     def close_paper_position(
         self, position_id: str, exit_price: Optional[float] = None, pnl: Optional[float] = None, is_win: Optional[bool] = None
     ) -> None:
-        cursor = self.conn.cursor()
-        if exit_price is not None:
-            is_win_val = int(is_win) if is_win is not None else None
-            cursor.execute(
-                "UPDATE paper_positions SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP, "
-                "exit_price = ?, pnl = ?, is_win = ? "
-                "WHERE position_id = ?",
-                (exit_price, pnl, is_win_val, position_id),
-            )
-        else:
-            cursor.execute(
-                "UPDATE paper_positions SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP "
-                "WHERE position_id = ?",
-                (position_id,),
-            )
+        with self._lock:
+            cursor = self.conn.cursor()
+            if exit_price is not None:
+                is_win_val = int(is_win) if is_win is not None else None
+                cursor.execute(
+                    "UPDATE paper_positions SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP, "
+                    "exit_price = ?, pnl = ?, is_win = ? "
+                    "WHERE position_id = ?",
+                    (exit_price, pnl, is_win_val, position_id),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE paper_positions SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP "
+                    "WHERE position_id = ?",
+                    (position_id,),
+                )
 
-        if pnl is not None:
-            self._update_performance_from_paper(pnl, is_win if is_win is not None else False)
+            if pnl is not None:
+                self._update_performance_from_paper(pnl, is_win if is_win is not None else False)
 
-        self.conn.commit()
+            self.conn.commit()
 
     def _update_performance_from_paper(self, pnl: float, is_win: bool) -> None:
-        is_win_int = 1 if is_win else 0
-        cursor = self.conn.cursor()
+        with self._lock:
+            is_win_int = 1 if is_win else 0
+            cursor = self.conn.cursor()
 
-        cursor.execute(
-            "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES ('PAPER')",
-        )
+            cursor.execute(
+                "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES ('PAPER')",
+            )
 
-        cursor.execute("""
-            SELECT total_trades, winning_trades, losing_trades,
-                   total_net_pnl, total_friction, avg_win, avg_loss
-            FROM performance_metrics WHERE execution_mode = 'PAPER'
-        """)
-        metrics = cursor.fetchone()
-        if not metrics:
-            return
+            cursor.execute("""
+                SELECT total_trades, winning_trades, losing_trades,
+                       total_net_pnl, total_friction, avg_win, avg_loss
+                FROM performance_metrics WHERE execution_mode = 'PAPER'
+            """)
+            metrics = cursor.fetchone()
+            if not metrics:
+                return
 
-        total_trades = metrics["total_trades"] + 1
-        winning_trades = metrics["winning_trades"] + is_win_int
-        losing_trades = metrics["losing_trades"] + (0 if is_win else 1)
-        total_net_pnl = metrics["total_net_pnl"] + pnl
+            total_trades = metrics["total_trades"] + 1
+            winning_trades = metrics["winning_trades"] + is_win_int
+            losing_trades = metrics["losing_trades"] + (0 if is_win else 1)
+            total_net_pnl = metrics["total_net_pnl"] + pnl
 
-        win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
-        avg_win = (
-            (metrics["avg_win"] * metrics["winning_trades"] + (pnl if is_win else 0))
-            / winning_trades if winning_trades > 0 else 0.0
-        )
-        avg_loss = (
-            (metrics["avg_loss"] * metrics["losing_trades"] + (pnl if not is_win else 0))
-            / losing_trades if losing_trades > 0 else 0.0
-        )
-        profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else 0.0
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
+            avg_win = (
+                (metrics["avg_win"] * metrics["winning_trades"] + (pnl if is_win else 0))
+                / winning_trades if winning_trades > 0 else 0.0
+            )
+            avg_loss = (
+                (metrics["avg_loss"] * metrics["losing_trades"] + (pnl if not is_win else 0))
+                / losing_trades if losing_trades > 0 else 0.0
+            )
+            profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else 0.0
 
-        cursor.execute("""
-            UPDATE performance_metrics SET
-                total_trades = ?, winning_trades = ?, losing_trades = ?,
-                total_net_pnl = ?, win_rate = ?, profit_factor = ?,
-                avg_win = ?, avg_loss = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE execution_mode = 'PAPER'
-        """, (total_trades, winning_trades, losing_trades, total_net_pnl,
-              win_rate, profit_factor, avg_win, avg_loss))
+            cursor.execute("""
+                UPDATE performance_metrics SET
+                    total_trades = ?, winning_trades = ?, losing_trades = ?,
+                    total_net_pnl = ?, win_rate = ?, profit_factor = ?,
+                    avg_win = ?, avg_loss = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE execution_mode = 'PAPER'
+            """, (total_trades, winning_trades, losing_trades, total_net_pnl,
+                  win_rate, profit_factor, avg_win, avg_loss))
 
     def close_position(self, position_id: str) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "UPDATE positions SET status = 'CLOSED' WHERE position_id = ?",
-            (position_id,),
-        )
-        self.conn.commit()
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "UPDATE positions SET status = 'CLOSED' WHERE position_id = ?",
+                (position_id,),
+            )
+            self.conn.commit()
 
     def get_active_trades(self):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM active_trades WHERE status = 'OPEN'")
-        return cursor.fetchall()
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM active_trades WHERE status = 'OPEN'")
+            return cursor.fetchall()
 
     def get_performance_summary(self, mode: str = "PAPER") -> Dict[str, Any]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM performance_metrics WHERE execution_mode = ?", (mode,))
-        row = cursor.fetchone()
-        if not row:
-            return {}
-        return dict(row)
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM performance_metrics WHERE execution_mode = ?", (mode,))
+            row = cursor.fetchone()
+            if not row:
+                return {}
+            return dict(row)
 
     def get_safety_flags(self) -> Dict[str, Any]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM safety_flags WHERE id = 1")
-        row = cursor.fetchone()
-        if not row:
-            return {}
-        return dict(row)
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM safety_flags WHERE id = 1")
+            row = cursor.fetchone()
+            if not row:
+                return {}
+            return dict(row)
 
     def set_safety_flag(self, strict_maker_only: bool, max_kelly_pct: float, reason: str) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE safety_flags SET
-                strict_maker_only = ?,
-                max_kelly_pct = ?,
-                triggered_at = CURRENT_TIMESTAMP,
-                reason = ?
-            WHERE id = 1
-        """, (int(strict_maker_only), max_kelly_pct, reason))
-        self.conn.commit()
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                UPDATE safety_flags SET
+                    strict_maker_only = ?,
+                    max_kelly_pct = ?,
+                    triggered_at = CURRENT_TIMESTAMP,
+                    reason = ?
+                WHERE id = 1
+            """, (int(strict_maker_only), max_kelly_pct, reason))
+            self.conn.commit()
 
     def get_historical_performance(self, limit: int = 50) -> List[Dict[str, Any]]:
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT * FROM historical_performance
-            ORDER BY settled_at DESC LIMIT ?
-        """, (limit,))
-        return [dict(row) for row in cursor.fetchall()]
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT * FROM historical_performance
+                ORDER BY settled_at DESC LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def _migrate_schema(self) -> None:
+        with self._lock:
+            cursor = self.conn.cursor()
+            for col in ("stop_loss_pct", "take_profit_pct", "exit_price", "pnl", "closed_at"):
+                try:
+                    cursor.execute(f"ALTER TABLE positions ADD COLUMN {col} REAL")
+                except sqlite3.OperationalError:
+                    pass
+            self.conn.commit()
+
+    def set_position_sltp(self, position_id: str, stop_loss_pct: float = 0.0, take_profit_pct: float = 0.0) -> None:
+        with self._lock:
+            cursor = self.conn.cursor()
+            table = "paper_positions" if str(position_id).startswith("paper-") else "positions"
+            cursor.execute(
+                f"UPDATE {table} SET stop_loss_pct = ?, take_profit_pct = ? WHERE position_id = ?",
+                (stop_loss_pct, take_profit_pct, position_id),
+            )
+            self.conn.commit()
+
+    def get_positions_due_for_exit(self, current_prices: dict[str, float]) -> list[dict]:
+        positions = self.get_open_positions() + self.get_paper_positions("OPEN")
+        due: list[dict] = []
+        for pos in positions:
+            ticker = pos.get("ticker", "")
+            price = current_prices.get(ticker)
+            if price is None or price <= 0:
+                continue
+            entry = float(pos.get("entry_price", 0.0))
+            side = pos.get("side", "BUY")
+            sl = float(pos.get("stop_loss_pct", 0.0) or 0.0)
+            tp = float(pos.get("take_profit_pct", 0.0) or 0.0)
+            if entry <= 0:
+                continue
+            ret = (price - entry) / entry
+            if side in ("SELL", "NO", "SHORT"):
+                ret = -ret
+            if sl > 0 and ret <= -sl:
+                due.append({**pos, "exit_reason": "stop_loss", "exit_price": price})
+            elif tp > 0 and ret >= tp:
+                due.append({**pos, "exit_reason": "take_profit", "exit_price": price})
+        return due
+
+    def close_position(
+        self,
+        position_id: str,
+        exit_price: Optional[float] = None,
+        pnl: Optional[float] = None,
+    ) -> None:
+        with self._lock:
+            cursor = self.conn.cursor()
+            table = "paper_positions" if str(position_id).startswith("paper-") else "positions"
+            if exit_price is not None:
+                if table == "paper_positions":
+                    is_win = 1 if (pnl is not None and pnl > 0) else 0
+                    cursor.execute(
+                        "UPDATE paper_positions SET status = 'CLOSED', exit_price = ?, pnl = ?, "
+                        "is_win = ?, closed_at = CURRENT_TIMESTAMP WHERE position_id = ?",
+                        (exit_price, pnl, is_win, position_id),
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE positions SET status = 'CLOSED', exit_price = ?, pnl = ?, "
+                        "closed_at = CURRENT_TIMESTAMP WHERE position_id = ?",
+                        (exit_price, pnl, position_id),
+                    )
+            else:
+                cursor.execute(
+                    f"UPDATE {table} SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP "
+                    "WHERE position_id = ?",
+                    (position_id,),
+                )
+            self.conn.commit()
+
+    def get_global_drawdown(self) -> float:
+        """
+        Calcule le Drawdown Global sur les dernières 24 heures.
+        Retourne une valeur <= 0 (ex: -0.10 pour -10%).
+        """
+        try:
+            with self._transaction() as cursor:
+                cursor.execute("SELECT total_capital FROM capital_allocation ORDER BY id DESC LIMIT 1")
+                row = cursor.fetchone()
+                if not row:
+                    return 0.0
+                current_capital = float(row["total_capital"])
+                
+                cursor.execute("""
+                    SELECT MAX(total_capital) as peak_capital 
+                    FROM capital_allocation 
+                    WHERE timestamp >= datetime('now', '-1 day')
+                """)
+                peak_row = cursor.fetchone()
+                if not peak_row or not peak_row["peak_capital"]:
+                    return 0.0
+                
+                peak_capital = float(peak_row["peak_capital"])
+                
+                if peak_capital <= 0:
+                    return 0.0
+                    
+                drawdown = (current_capital - peak_capital) / peak_capital
+                return drawdown
+        except Exception as e:
+            logger.error(f"Erreur lors du calcul du drawdown global: {e}")
+            return 0.0

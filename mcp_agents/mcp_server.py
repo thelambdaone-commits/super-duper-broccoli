@@ -46,6 +46,16 @@ _passive_executor: Optional[PassiveExecutor] = None
 _arb_scanner: Optional[ArbitrageScanner] = None
 _circuit_breaker_engaged = False
 
+# New module globals (shared state)
+_vol_surface: Optional[Any] = None
+_earnings: Optional[Any] = None
+_chart_detector: Optional[Any] = None
+_sentiment_ensemble: Optional[Any] = None
+_portfolio_opt: Optional[Any] = None
+_macro: Optional[Any] = None
+_backtester: Optional[Any] = None
+_feature_factory_cls: Optional[Any] = None
+
 mcp = FastMCP(
     "quant-agentic-mcp",
     instructions="MCP server for quant-agentic-trading-core. "
@@ -59,14 +69,32 @@ def initialize(
     feature_store: Optional[any] = None,
     passive_executor: Optional[PassiveExecutor] = None,
     arb_scanner: Optional[ArbitrageScanner] = None,
+    vol_surface: Optional[Any] = None,
+    earnings: Optional[Any] = None,
+    chart_detector: Optional[Any] = None,
+    sentiment_ensemble: Optional[Any] = None,
+    portfolio_opt: Optional[Any] = None,
+    macro: Optional[Any] = None,
+    backtester: Optional[Any] = None,
+    feature_factory_cls: Optional[Any] = None,
 ) -> None:
     global _ledger, _hmm_filter, _risk_engine, _feature_store, _passive_executor, _arb_scanner
+    global _vol_surface, _earnings, _chart_detector, _sentiment_ensemble
+    global _portfolio_opt, _macro, _backtester, _feature_factory_cls
     _ledger = ledger
     _hmm_filter = hmm_filter
     _risk_engine = risk_engine
     _feature_store = feature_store
     _passive_executor = passive_executor
     _arb_scanner = arb_scanner
+    _vol_surface = vol_surface
+    _earnings = earnings
+    _chart_detector = chart_detector
+    _sentiment_ensemble = sentiment_ensemble
+    _portfolio_opt = portfolio_opt
+    _macro = macro
+    _backtester = backtester
+    _feature_factory_cls = feature_factory_cls
 
     # Register tools with initialized components
     get_ledger_tools(mcp, ledger)
@@ -77,7 +105,172 @@ def initialize(
     # Register specialized AI tools
     _register_specialist_tools(mcp)
     
+    # Register new module tools
+    _register_new_module_tools(mcp)
+    
     logger.info("MCP Server tools initialized.")
+
+def _get_adapter(module_name: str):
+    """Lazy singleton helper: returns shared instance or creates one."""
+    global _vol_surface, _earnings, _chart_detector, _sentiment_ensemble
+    global _portfolio_opt, _macro, _backtester
+    if module_name == "vol_surface":
+        if _vol_surface is None:
+            from models.volatility_surface import VolSurfaceAdapter
+            _vol_surface = VolSurfaceAdapter()
+        return _vol_surface
+    elif module_name == "earnings":
+        if _earnings is None:
+            from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline
+            _earnings = EarningsSentimentPipeline(use_huggingface=True)
+        return _earnings
+    elif module_name == "chart_detector":
+        if _chart_detector is None:
+            from utils.chart_pattern_detector import ChartPatternDetector
+            _chart_detector = ChartPatternDetector()
+        return _chart_detector
+    elif module_name == "sentiment_ensemble":
+        if _sentiment_ensemble is None:
+            from utils.sentiment_ensemble import SentimentEnsemble
+            _sentiment_ensemble = SentimentEnsemble(use_vader=True, use_finbert=True)
+        return _sentiment_ensemble
+    elif module_name == "portfolio_opt":
+        if _portfolio_opt is None:
+            from models.portfolio import PortfolioOptimizer
+            _portfolio_opt = PortfolioOptimizer(method="mean_variance")
+        return _portfolio_opt
+    elif module_name == "macro":
+        if _macro is None:
+            from utils.macro_intelligence import MacroIntelligence
+            _macro = MacroIntelligence()
+        return _macro
+    elif module_name == "backtester":
+        if _backtester is None:
+            from engine.backtest import Backtester
+            _backtester = Backtester(initial_capital=10000.0)
+        return _backtester
+    raise ValueError(f"Unknown module: {module_name}")
+
+def _register_new_module_tools(mcp):
+    @mcp.tool(name="vol_surface_status")
+    def vol_surface_status_tool() -> dict:
+        """Returns the status of the volatility surface module (SSVI models)."""
+        return _get_adapter("vol_surface").get_status()
+
+    @mcp.tool(name="vol_surface_synthetic")
+    def vol_surface_synthetic_tool(n_surfaces: int = 10, seed: int = 42) -> dict:
+        """Generates synthetic SSVI volatility surfaces for training or analysis."""
+        surfaces = _get_adapter("vol_surface").generate_synthetic_surfaces(n_surfaces=n_surfaces, seed=seed)
+        return {"n_surfaces": len(surfaces), "samples": surfaces[:3]}
+
+    @mcp.tool(name="sentiment_ensemble")
+    def sentiment_ensemble_tool(text: str) -> dict:
+        """Analyzes financial text sentiment using an ensemble of VADER + FinBERT."""
+        return _get_adapter("sentiment_ensemble").analyze(text)
+
+    @mcp.tool(name="macro_taylor_rule")
+    def macro_taylor_rule_tool(inflation: float = 3.0, unemployment: float = 4.0, current_rate: float = 4.5, variant: str = "1993") -> dict:
+        """Estimates implied central bank policy rate using Taylor Rule."""
+        taylor = _get_adapter("macro").taylor_rule(inflation=inflation, unemployment=unemployment, current_rate=current_rate, variant=variant)
+        return {"implied_rate": taylor.implied_rate, "stance": taylor.stance, "z_score": taylor.z_score}
+
+    @mcp.tool(name="macro_risk_assessment")
+    def macro_risk_assessment_tool(inflation: float = 3.0, unemployment: float = 4.0, vix: float = 15.0) -> dict:
+        """Assesses macro risk-on/risk-off regime using Taylor Rule + GDP + VIX."""
+        macro = _get_adapter("macro")
+        taylor = macro.taylor_rule(inflation=inflation, unemployment=unemployment)
+        return macro.risk_off_score(taylor_result=taylor, vix=vix)
+
+    @mcp.tool(name="chart_detect_patterns")
+    def chart_detect_patterns_tool(ohlcv_json: str, conf_threshold: float = 0.5) -> dict:
+        """Detects candlestick chart patterns (Head&Shoulders, Triangle, etc.) using YOLOv8."""
+        import json
+        ohlcv = json.loads(ohlcv_json)
+        detections = _get_adapter("chart_detector").detect_from_array(ohlcv, conf_threshold=conf_threshold)
+        return {"detections": detections, "count": len(detections)}
+
+    @mcp.tool(name="portfolio_optimize")
+    def portfolio_optimize_tool(prices_json: str, tickers_json: str, method: str = "equal_weight") -> dict:
+        """Optimizes portfolio weights using mean-variance, risk-parity, or equal-weight methods."""
+        import json
+        import pandas as pd
+        prices = json.loads(prices_json)
+        tickers = json.loads(tickers_json)
+        df = pd.DataFrame(dict(zip(tickers, [prices] * len(tickers))))
+        return _get_adapter("portfolio_opt").optimize_weights(df, method=method)
+
+    @mcp.tool(name="hedge_simulate_rl")
+    def hedge_simulate_rl_tool(n_episodes: int = 20, s0: float = 100.0, sigma: float = 0.2) -> dict:
+        """Simulates option hedging using a DDPG reinforcement learning agent."""
+        from models.hedging import HedgingEnv, DDPGHedgingAgent
+        env = HedgingEnv(S0=s0, sigma=sigma)
+        agent = DDPGHedgingAgent()
+        results = []
+        for ep in range(min(n_episodes, 30)):
+            state = env.reset(seed=ep)
+            total_reward = 0.0
+            done = False
+            while not done:
+                action = agent.select_action(state, noise=0.1)
+                next_state, reward, done, _ = env.step(action)
+                agent.replay.push(state, action, reward, next_state, done)
+                agent.train_step()
+                total_reward += reward
+                state = next_state
+            results.append({"episode": ep, "reward": round(total_reward, 4)})
+        return {"n_episodes": len(results), "episodes": results}
+
+    @mcp.tool(name="earnings_sentiment_status")
+    def earnings_sentiment_status_tool() -> dict:
+        """Returns the status of the earnings sentiment pipeline."""
+        return _get_adapter("earnings").get_status()
+
+    @mcp.tool(name="earnings_sentiment_analyze")
+    def earnings_sentiment_analyze_tool(ticker: str, quarter: str = "") -> dict:
+        """Analyzes earnings call transcript sentiment for a given ticker."""
+        result = _get_adapter("earnings").analyze_earnings_call(ticker=ticker, quarter=quarter or None)
+        return {
+            "ticker": result.ticker,
+            "quarter": result.quarter,
+            "year": result.year,
+            "sentiment_score": result.sentiment_score,
+            "confidence": result.confidence,
+            "key_themes": result.key_themes,
+            "qualitative_assessment": result.qualitative_assessment,
+            "error": result.error,
+        }
+
+    @mcp.tool(name="backtest_run")
+    def backtest_run_tool(prices_json: str, signals_json: str, initial_capital: float = 10000.0, spread_bps: float = 1.0) -> dict:
+        """Runs a vectorized backtest on price/signal dataframes with cost model."""
+        import json
+        import pandas as pd
+        from engine.backtest import CostModel
+        prices = pd.DataFrame(json.loads(prices_json))
+        signals = pd.DataFrame(json.loads(signals_json))
+        bt = _get_adapter("backtester")
+        bt.initial_capital = initial_capital
+        bt.cost_model = CostModel(spread_bps=spread_bps)
+        return bt.run(prices, signals)
+
+    @mcp.tool(name="feature_factory_compute")
+    def feature_factory_compute_tool(ohlcv_json: str) -> dict:
+        """Computes 40+ technical features from OHLCV data using FeatureFactory."""
+        import json
+        import pandas as pd
+        from utils.feature_factory import FeatureFactory
+        ohlcv = json.loads(ohlcv_json)
+        df = pd.DataFrame(ohlcv)
+        ff = FeatureFactory(df)
+        names = ff.get_feature_names()
+        matrix = ff.get_feature_matrix()
+        return {
+            "feature_names": names,
+            "feature_count": len(names),
+            "feature_matrix_shape": list(matrix.shape),
+            "last_row": {name: float(matrix[-1, i]) for i, name in enumerate(names)} if len(matrix) > 0 else {},
+        }
+
 
 def _register_specialist_tools(mcp):
     @mcp.tool(name="list_ai_specialists")
@@ -185,6 +378,7 @@ def get_market_regime(ticker: str = "SOL", returns_json: str = "") -> dict:
     }
 
 
+@mcp.tool(name="emergency_circuit_breaker", description="Instantly freezes or unfreezes all outbound trading operations. Action must be 'ENGAGE' or 'DISENGAGE'.")
 def emergency_circuit_breaker(action: str) -> dict:
     global _circuit_breaker_engaged
 

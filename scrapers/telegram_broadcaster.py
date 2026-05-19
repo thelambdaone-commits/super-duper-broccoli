@@ -190,6 +190,7 @@ class TelegramBroadcaster:
         self.tickers = [ticker.strip().upper() for ticker in (tickers or []) if ticker.strip()]
         self.edge_threshold = float(edge_threshold)
         self.rate_limiter = rate_limiter or TokenBucketRateLimiter()
+        self.feature_store = feature_store
         self.memory = memory or BroadcastMemory(
             ttl_seconds=int(os.getenv("TELEGRAM_BROADCAST_MEMORY_TTL_SECONDS", "3600")),
             max_entries=int(os.getenv("TELEGRAM_BROADCAST_MEMORY_MAX_ENTRIES", "256")),
@@ -309,6 +310,22 @@ class TelegramBroadcaster:
         if ok:
             self._mark_broadcast(signal.ticker)
             self.memory.remember(signal)
+            if self.feature_store is not None:
+                try:
+                    self.feature_store.record_signal(
+                        source="telegram_broadcaster",
+                        ticker=signal.ticker,
+                        side=signal.action,
+                        price=signal.market_probability,
+                        size=0.0,
+                        confidence=signal.calibrated_probability,
+                        raw_text=signal.market_question,
+                        regime_label="",
+                        decision_json={"market_slug": signal.market_slug},
+                    )
+                    logger.info(f"💾 Persisted broadcasted signal to FeatureStore for {signal.ticker}")
+                except Exception as e:
+                    logger.error(f"Failed to persist broadcasted signal to FeatureStore: {e}")
         return ok
 
     async def evaluate_ticker(self, ticker: str) -> Optional[BroadcastSignal]:

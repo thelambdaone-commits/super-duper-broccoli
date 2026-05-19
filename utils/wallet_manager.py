@@ -84,6 +84,8 @@ class WalletManager:
         
         self._token_contracts: dict[str, Contract] = {}
         self._token_decimals: dict[str, int] = {}
+        self._balance_cache: dict[str, tuple[float, TokenBalance]] = {}
+        self._eth_balance_cache: dict[str, tuple[float, float]] = {}
         self._load_token_contracts()
 
     def _load_token_contracts(self):
@@ -103,10 +105,19 @@ class WalletManager:
 
     def get_eth_balance(self, wallet_address: str) -> float:
         """Get native ETH balance (actually MATIC on Polygon)."""
+        import time
+        now = time.time()
+        if wallet_address in self._eth_balance_cache:
+            ts, cached_bal = self._eth_balance_cache[wallet_address]
+            if now - ts < 10.0:
+                return cached_bal
+
         try:
             address = Web3.to_checksum_address(wallet_address)
             wei_balance = self.w3.eth.get_balance(address)
-            return float(self.w3.from_wei(wei_balance, "ether"))
+            balance = float(self.w3.from_wei(wei_balance, "ether"))
+            self._eth_balance_cache[wallet_address] = (now, balance)
+            return balance
         except Web3ValidationError as e:
             logger.error(f"Invalid address {wallet_address}: {e}")
             return 0.0
@@ -123,6 +134,14 @@ class WalletManager:
         if token_upper not in self._token_contracts:
             logger.error(f"Token {token} not found. Supported: {list(POLYGON_TOKENS.keys())}")
             return None
+
+        import time
+        now = time.time()
+        cache_key = f"{wallet_address}:{token_upper}"
+        if cache_key in self._balance_cache:
+            ts, cached_bal = self._balance_cache[cache_key]
+            if now - ts < 10.0:
+                return cached_bal
         
         try:
             address = Web3.to_checksum_address(wallet_address)
@@ -131,13 +150,15 @@ class WalletManager:
             decimals = self._token_decimals[token_upper]
             formatted = raw_balance / (10 ** decimals)
             
-            return TokenBalance(
+            balance = TokenBalance(
                 token=token_upper,
                 address=wallet_address,
                 raw_balance=raw_balance,
                 decimals=decimals,
                 formatted_balance=formatted,
             )
+            self._balance_cache[cache_key] = (now, balance)
+            return balance
         except Web3ValidationError as e:
             logger.error(f"Invalid address {wallet_address}: {e}")
             return None

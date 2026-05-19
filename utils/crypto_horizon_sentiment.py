@@ -17,6 +17,14 @@ ASSET_ALIASES = {
     "HYPE": ("hype", "hyperliquid"),
     "DOGE": ("doge", "dogecoin"),
     "BNB": ("bnb", "binance coin"),
+    "ADA": ("ada", "cardano"),
+    "AVAX": ("avax", "avalanche"),
+    "LINK": ("link", "chainlink"),
+    "SUI": ("sui", "sui network"),
+    "PEPE": ("pepe", "pepecoin"),
+    "WIF": ("wif", "dogwifhat"),
+    "TON": ("ton", "toncoin", "the open network"),
+    "NEAR": ("near", "near protocol"),
 }
 
 HORIZON_ALIASES = {

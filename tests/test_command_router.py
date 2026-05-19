@@ -49,7 +49,7 @@ async def test_cmd_crypto_horizon_btc5_success() -> None:
     # Mock the horizon analyzer client
     mock_market = make_market("btc-updown-5m", "BTC up or down 5m?", 0.65, 0.35)
     mock_market.end_date = "2026-05-17T12:00:00Z"
-    
+
     listener._scanner = MagicMock()
     listener._scanner.client = FakeClient([mock_market])
 
@@ -67,7 +67,7 @@ async def test_cmd_crypto_horizon_btc5_success() -> None:
 
     # Verify auth was checked
     listener._check_auth.assert_called_once_with(update)
-    
+
     # Verify a reply was sent
     listener.reply_to.assert_called_once()
     reply_args = listener.reply_to.call_args
@@ -96,7 +96,7 @@ async def test_cmd_crypto_horizon_all_valid_command_variations() -> None:
 
     # Test distinct quick horizon commands
     quick_commands = ["/btc15", "/btc1h", "/eth5", "/sol15", "/xrp1h", "/hype5", "/doge5", "/bnb1h"]
-    
+
     for cmd in quick_commands:
         listener.reply_to.reset_mock()
         message = MagicMock()
@@ -106,7 +106,7 @@ async def test_cmd_crypto_horizon_all_valid_command_variations() -> None:
         update.effective_message = message
 
         await router._cmd_crypto_horizon(update, None)
-        
+
         listener.reply_to.assert_called_once()
         text = listener.reply_to.call_args[0][0]
         assert "LOBSTAR CRYPTO SENTIMENT" in text
@@ -175,3 +175,89 @@ async def test_cmd_crypto_markets_all_assets() -> None:
         text = listener.reply_to.call_args[0][0]
         assert f"MARCHÉS ACTIFS POUR {asset.upper()}" in text
         assert f"Will {asset.upper()} double?" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_manual_dynamic_lookup() -> None:
+    listener = MagicMock()
+    listener.reply_to = AsyncMock()
+    listener.application = MagicMock()
+    listener.access_control = MagicMock()
+    listener.access_control.est_admin = MagicMock(return_value=True)
+
+    router = CommandRouter(listener)
+
+    # 1. Test /man with arguments (e.g. "wallet")
+    message_wallet = MagicMock()
+    message_wallet.text = "/man wallet"
+    message_wallet.chat_id = 123
+    update_wallet = MagicMock()
+    update_wallet.effective_message = message_wallet
+    update_wallet.effective_chat = MagicMock()
+    update_wallet.effective_chat.id = 123
+
+    context_wallet = MagicMock()
+    context_wallet.args = ["wallet"]
+
+    await router._cmd_manual(update_wallet, context_wallet)
+    listener.reply_to.assert_called_once()
+    text_wallet = listener.reply_to.call_args[0][0]
+    assert "MANUEL LOBSTAR — /wallet" in text_wallet
+    assert "Gérer les portefeuilles, soldes" in text_wallet
+
+    # 2. Test /man with dynamic horizon (e.g. "btc5")
+    listener.reply_to.reset_mock()
+    context_btc5 = MagicMock()
+    context_btc5.args = ["btc5"]
+
+    await router._cmd_manual(update_wallet, context_btc5)
+    listener.reply_to.assert_called_once()
+    text_btc5 = listener.reply_to.call_args[0][0]
+    assert "MANUEL LOBSTAR — /btc5" in text_btc5
+    assert "Sentiment du marché crypto pour BTC sur l'horizon 5." in text_btc5
+
+    # 3. Test /man with unknown command
+    listener.reply_to.reset_mock()
+    context_unknown = MagicMock()
+    context_unknown.args = ["unknown_cmd"]
+
+    await router._cmd_manual(update_wallet, context_unknown)
+    listener.reply_to.assert_called_once()
+    text_unknown = listener.reply_to.call_args[0][0]
+    assert "Commande `/unknown_cmd` introuvable." in text_unknown
+
+    # 4. Test /man with no arguments (fallback to HelpManager menu)
+    listener.reply_to.reset_mock()
+    context_none = MagicMock()
+    context_none.args = []
+
+    with patch("utils.help_manager.HelpManager.send_menu", new_callable=AsyncMock) as mock_send_menu:
+        await router._cmd_manual(update_wallet, context_none)
+        mock_send_menu.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cmd_gsd_success() -> None:
+    listener = MagicMock()
+    listener._check_admin_auth = AsyncMock(return_value=True)
+
+    status_msg = AsyncMock()
+    listener.reply_to = AsyncMock(return_value=status_msg)
+
+    router = CommandRouter(listener)
+
+    message = MagicMock()
+    message.text = "/gsd --dry-run timing delay in binance websocket client"
+    update = MagicMock()
+    update.effective_message = message
+
+    context = MagicMock()
+    context.args = ["--dry-run", "timing", "delay", "in", "binance", "websocket", "client"]
+
+    await router._cmd_gsd(update, context)
+
+    listener.reply_to.assert_called_once()
+    status_msg.edit_text.assert_called_once()
+    final_text = status_msg.edit_text.call_args[0][0]
+    assert "GSD RESOLUTION PROCESS COMPLETE" in final_text
+    assert "RESOLVED & VERIFIED" in final_text

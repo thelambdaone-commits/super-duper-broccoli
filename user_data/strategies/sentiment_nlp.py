@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from typing import Optional
 
@@ -23,14 +24,23 @@ SENTIMENT_KEYWORDS = {
 
 
 class SentimentAnalyzer:
-    def __init__(self, use_deberta: bool = False) -> None:
+    def __init__(self, use_deberta: bool = False, use_finbert: bool = False, finbert_model: str = "ProsusAI/finbert") -> None:
         self._keyword_scores = SENTIMENT_KEYWORDS
         self._use_deberta = use_deberta
+        self._use_finbert = use_finbert
+        self._finbert_model = finbert_model
         self._deberta_pipeline: Optional[object] = None
+        self._finbert_pipeline: Optional[object] = None
         if use_deberta:
             self._init_deberta()
+        if use_finbert:
+            self._init_finbert()
 
     def _init_deberta(self) -> None:
+        if not self._allow_remote_models() and not self._is_local_model_path("microsoft/deberta-v3-base"):
+            logger.info("DeBERTa disabled in offline mode; using keyword fallback")
+            self._use_deberta = False
+            return
         try:
             from transformers import pipeline
             self._deberta_pipeline = pipeline(
@@ -42,6 +52,23 @@ class SentimentAnalyzer:
         except Exception as e:
             logger.warning(f"DeBERTa load failed (fallback to keyword): {e}")
             self._use_deberta = False
+
+    def _init_finbert(self) -> None:
+        if not self._allow_remote_models() and not self._is_local_model_path(self._finbert_model):
+            logger.info("FinBERT disabled in offline mode; using keyword fallback")
+            self._use_finbert = False
+            return
+        try:
+            from transformers import pipeline
+            self._finbert_pipeline = pipeline(
+                "sentiment-analysis",
+                model=self._finbert_model,
+                tokenizer=self._finbert_model,
+            )
+            logger.info("FinBERT pipeline loaded: %s", self._finbert_model)
+        except Exception as e:
+            logger.warning(f"FinBERT load failed: {e}")
+            self._use_finbert = False
 
     def analyze_keyword(self, text: str) -> dict[str, float]:
         text_lower = text.lower()
@@ -62,6 +89,31 @@ class SentimentAnalyzer:
             "confidence": round(float(confidence), 4),
             "matches": matches,
         }
+
+    def analyze_finbert(self, text: str) -> dict[str, float]:
+        if self._finbert_pipeline is None:
+            return self.analyze_keyword(text)
+        try:
+            result = self._finbert_pipeline(text[:512])
+            if isinstance(result, list) and len(result) > 0:
+                label = result[0].get("label", "NEUTRAL").upper()
+                score = result[0].get("score", 0.0)
+                if label == "POSITIVE":
+                    net = score
+                elif label == "NEGATIVE":
+                    net = -score
+                else:
+                    net = 0.0
+                return {
+                    "score": round(float(net), 4),
+                    "magnitude": round(float(abs(net)), 4),
+                    "confidence": round(float(score), 4),
+                    "model": self._finbert_model,
+                    "label": label,
+                }
+        except Exception as e:
+            logger.warning("FinBERT inference failed: %s", e)
+        return self.analyze_keyword(text)
 
     def analyze_deberta(self, text: str) -> dict[str, float]:
         if self._deberta_pipeline is None:
@@ -86,12 +138,22 @@ class SentimentAnalyzer:
         return self.analyze_keyword(text)
 
     def analyze(self, text: str) -> dict[str, float]:
+        if self._use_finbert:
+            return self.analyze_finbert(text)
         if self._use_deberta:
             return self.analyze_deberta(text)
         return self.analyze_keyword(text)
 
     def analyze_batch(self, texts: list[str]) -> list[dict[str, float]]:
         return [self.analyze(t) for t in texts]
+
+    @staticmethod
+    def _allow_remote_models() -> bool:
+        return os.getenv("HF_ALLOW_REMOTE_MODELS", "").strip().lower() in {"1", "true", "yes"}
+
+    @staticmethod
+    def _is_local_model_path(model_name: str) -> bool:
+        return os.path.isdir(model_name) or os.path.isfile(model_name)
 
     def to_feature_vector(self, result: dict[str, float]) -> np.ndarray:
         return np.array([
