@@ -58,6 +58,36 @@ from core.mlops_feedback_loop import LobstarMLOpsEngine
 from core.quantum_runner import LobstarQuantumRunner
 from utils.api_key_notifier import get_api_key_notifier
 from telegram.constants import ParseMode
+
+def should_broadcast_message(category: str, text: str) -> bool:
+    import hashlib
+    import json
+    import os
+
+    cleaned = "".join(text.split())
+    msg_hash = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()
+
+    filepath = "user_data/data/last_broadcast_hashes.json"
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+    hashes = {}
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r") as f:
+                hashes = json.load(f)
+        except Exception:
+            pass
+
+    if hashes.get(category) == msg_hash:
+        return False
+
+    hashes[category] = msg_hash
+    try:
+        with open(filepath, "w") as f:
+            json.dump(hashes, f)
+    except Exception:
+        pass
+    return True
 from core.orchestrator import LobstarOrchestrator
 from core.health_monitor import LobstarHealthMonitor
 from core.health_supervisor_agent import HealthSupervisorAgent, HealthSupervisorConfig
@@ -142,7 +172,7 @@ def build_access_control(secrets: dict, execution_mode: str) -> tuple[AccessCont
     access_control = AccessControlManager(admin_chat_ids=sorted(admin_chat_ids))
     raw_chat_id = os.getenv("CHAT_ID", "")
     chat_id = int(raw_chat_id) if raw_chat_id else None
-    
+
     private_key_raw = secrets.get("CLOB_PRIVATE_KEY")
     private_key_wrapped = SecretStr(private_key_raw) if private_key_raw else None
     tenant_wallet = _derive_public_wallet(private_key_wrapped)
@@ -151,7 +181,7 @@ def build_access_control(secrets: dict, execution_mode: str) -> tuple[AccessCont
     return access_control, chat_id
 
 
-def build_copy_trading_agent() -> CopyTradingAgent | None:
+def build_copy_trading_agent(risk_engine: Any = None) -> CopyTradingAgent | None:
     copy_wallet = os.getenv("COPY_WALLET", "").strip()
     if not copy_wallet:
         return None
@@ -161,7 +191,7 @@ def build_copy_trading_agent() -> CopyTradingAgent | None:
         max_copy_notional=float(os.getenv("COPY_MAX_NOTIONAL", "100.0")),
         buy_only=os.getenv("COPY_BUY_ONLY", "true").lower() == "true",
     )
-    return CopyTradingAgent(copy_config)
+    return CopyTradingAgent(copy_config, risk_engine=risk_engine)
 
 
 def build_telegram_listener(
@@ -203,12 +233,13 @@ def build_broadcaster(container: ServiceContainer, pipeline: TrainingPipeline, s
         market_client=scanner.client,
         tickers=["SOL", "BTC", "ETH"],
         edge_threshold=float(os.getenv("TELEGRAM_BROADCAST_EDGE_THRESHOLD", "0.07")),
+        feature_store=container.store,
     )
 
 
 def build_cognitive_brain(store: FeatureStore, scanner: MarketScanner, pipeline: TrainingPipeline) -> LobstarCognitiveBrain:
     from core.arbitrage_feedback_loop import LobstarArbitrageEngine
-    
+
     arb_engine = LobstarArbitrageEngine(trigger_threshold=0.015)
     return LobstarCognitiveBrain(
         store=store,
@@ -225,17 +256,17 @@ def build_crypto_intelligence() -> CryptoMarketIntelligence:
 async def run_blocking(label: str, func: Callable[..., Any], *args: Any, timeout: float = 30.0, **kwargs: Any) -> Any:
     """
     Execute a blocking function in a thread pool with timeout and contextual error logging.
-    
+
     Args:
         label: Human-readable label for logging (e.g., "market scan", "vault lookup")
         func: The blocking function to execute
         *args: Positional arguments for func
         timeout: Timeout in seconds
         **kwargs: Keyword arguments for func
-        
+
     Returns:
         Result from func
-        
+
     Raises:
         TimeoutError: If execution exceeds timeout
     """
@@ -280,7 +311,7 @@ def _fetch_rpc_blocking(rpc_url: str) -> dict[str, Any]:
         data=b'{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}',
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=5) as response:
+    with urllib.request.urlopen(req, timeout=5) as response:  # nosec B310
         return json.loads(response.read().decode())
 
 
@@ -325,6 +356,81 @@ def _setup_quantum_runner(
 
     runner.register_job("Autonomic_Healer", run_healer, interval_sec=2.0)
     runner.register_job("FeatureStore_Prune", prune_feature_store, interval_sec=3600.0)
+
+    # ─── 1. System Connectivity & Credentials Check ───
+    async def system_connectivity_check():
+        import httpx
+        from utils.api_key_check import get_api_key_notifier
+        # Check all critical keys
+        api_check = get_api_key_notifier().check_all_keys(runtime_secrets=container.secrets)
+        if api_check["missing"]:
+            alert = get_api_key_notifier().format_telegram_alert(api_check)
+            logger.warning(f"⚠️ [CREDENTIALS] Missing API keys: {api_check['missing']}")
+            if broadcaster and broadcaster.notifier:
+                await broadcaster.notifier.send_async(alert, parse_mode="Markdown")
+
+        # Check Polygon RPC and Polymarket Gamma API connectivity
+        timeout = httpx.Timeout(5.0, connect=3.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            rpc_url = container.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL")
+            if rpc_url:
+                try:
+                    res = await _check_rpc_dry_run(rpc_url)
+                    if "result" not in res:
+                        logger.warning("⚠️ [CONNECTIVITY] Alchemy RPC returned invalid response")
+                except Exception as e:
+                    logger.warning(f"⚠️ [CONNECTIVITY] Alchemy RPC offline: {e}")
+
+            try:
+                r = await client.get("https://gamma-api.polymarket.com/tags?limit=1", timeout=3.0)
+                if r.status_code >= 500:
+                    logger.warning(f"⚠️ [CONNECTIVITY] Polymarket Gamma API returned status {r.status_code}")
+            except Exception as e:
+                logger.warning(f"⚠️ [CONNECTIVITY] Polymarket Gamma API offline: {e}")
+
+    runner.register_job("System_Connectivity_Check", system_connectivity_check, interval_sec=1800.0)
+
+    # ─── 2. Database WAL & Storage Optimization ───
+    async def db_storage_optimization():
+        ledger = getattr(container, "ledger", None)
+        if not ledger:
+            return
+        try:
+            # Clean SQLite WAL files, run VACUUM cleanly, prune indexes
+            cursor = ledger.conn.cursor()
+            cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            cursor.execute("PRAGMA optimize")
+            logger.info("💾 [AUTO MAINTENANCE] SQLite Database WAL truncated and storage optimized successfully.")
+        except Exception as e:
+            logger.error(f"❌ [AUTO MAINTENANCE] Database optimization failed: {e}")
+
+    runner.register_job("DB_Storage_Optimization", db_storage_optimization, interval_sec=7200.0)
+
+    # ─── 3. Dynamic ML Reinforcement & Calibration Loop ───
+    async def dynamic_ml_reinforcement():
+        pipeline = getattr(container, "training_pipeline", None)
+        ledger = getattr(container, "ledger", None)
+        if not pipeline or not ledger:
+            return
+        try:
+            from scripts.rl_feedback_loop import run_rl_feedback_loop
+            # Adjust EWMA learning weights from paper trading outcomes
+            await run_blocking(
+                "RL feedback loop",
+                run_rl_feedback_loop,
+                timeout=120.0,
+            )
+            # Retrain probability calibrators
+            tickers = os.getenv("MODEL_TICKERS", "SOL,BTC,ETH").split(",")
+            tickers = [t.strip().upper() for t in tickers if t.strip()]
+            for ticker in tickers:
+                calibration_log = pipeline.update_calibration_from_paper_trades(ticker, ledger)
+                if calibration_log:
+                    logger.info(f"🎯 [AUTO CALIBRATION] Updated Isotonic Calibrator weights for {ticker}: {calibration_log}")
+        except Exception as e:
+            logger.error(f"❌ [AUTO CALIBRATION] Dynamic ML calibration failed: {e}")
+
+    runner.register_job("Dynamic_ML_Reinforcement", dynamic_ml_reinforcement, interval_sec=3600.0)
 
     async def daily_tca_report():
         metrics_log_path = os.getenv(
@@ -372,7 +478,7 @@ def _setup_quantum_runner(
 async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, store: FeatureStore, container: ServiceContainer) -> None:
     """Logs dry-run validation report with real system state checks."""
     logger.info("=== DRY RUN MODE ===")
-    
+
     # 1. Validate vault and RAM dictionary state of active session wallets
     try:
         vault_secrets = container.secrets or {}
@@ -380,13 +486,13 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
         required_secrets = ["TELEGRAM_BOT_TOKEN", "CLOB_PRIVATE_KEY"]
         missing_secrets = [s for s in required_secrets if not vault_secrets.get(s)]
         vault_status = "OK" if vault_count > 0 and not missing_secrets else "MISSING"
-        
+
         session_wallet_count = container.vault.compter_wallets_session()
         logger.info(f"Vault RAM session wallets state: {session_wallet_count} active session wallets in memory.")
         logger.info(f"Vault Secrets: {vault_status} ({vault_count} secrets loaded, {len(missing_secrets)} missing)")
     except Exception as e:
         logger.info(f"Vault Check: ERROR ({e})")
-    
+
     # 2. Verify Alchemy RPC connectivity
     rpc_url = container.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL")
     if rpc_url:
@@ -401,7 +507,7 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
             logger.warning(f"Alchemy RPC Connectivity: FAILED ({e})")
     else:
         logger.warning("Alchemy RPC Connectivity: SKIPPED (No POLYGON_RPC_URL configured)")
-    
+
     # Validate CLOB engine with actual connectivity
     try:
         freqai_status = "OK" if container.freqai else "MISSING"
@@ -415,7 +521,7 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
                 freqai_status = "CONNECTIVITY_ERROR"
     except Exception as e:
         logger.info(f"CLOB Engine: ERROR ({e})")
-    
+
     # Validate ledger with actual database check
     try:
         ledger_status = "OK" if container.ledger else "MISSING"
@@ -429,7 +535,7 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
                 ledger_status = "DATABASE_ERROR"
     except Exception as e:
         logger.info(f"Ledger: ERROR ({e})")
-    
+
     # Validate HMM with actual model check
     try:
         hmm_status = "OK" if container.hmm else "MISSING"
@@ -443,7 +549,7 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
                 hmm_status = "MODEL_ERROR"
     except Exception as e:
         logger.info(f"HMMRegimeFilter: ERROR ({e})")
-    
+
     # Validate risk engine with actual calculation
     try:
         risk_status = "OK" if container.risk else "MISSING"
@@ -458,7 +564,7 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
                 risk_status = "CALCULATION_ERROR"
     except Exception as e:
         logger.info(f"PortfolioRiskEngine: ERROR ({e})")
-    
+
     # Validate executor with actual status
     try:
         executor_status = "OK" if container.executor else "MISSING"
@@ -473,7 +579,7 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
                 executor_status = "STATUS_ERROR"
     except Exception as e:
         logger.info(f"PassiveExecutor: ERROR ({e})")
-    
+
     # Circuit breaker with actual status
     try:
         cb_status = circuit_breaker.status_report
@@ -481,17 +587,17 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
         logger.info(f"CircuitBreaker: {cb_status} (Allowed: {cb_allowed})")
     except Exception as e:
         logger.info(f"CircuitBreaker: ERROR ({e})")
-    
+
     # Feature store with actual stats
     try:
         store_stats = store.get_stats() if store else "N/A"
         logger.info(f"FeatureStore: OK ({store_stats})")
     except Exception as e:
         logger.info(f"FeatureStore: PARTIAL ({e})")
-    
+
     logger.info(f"Execution Mode: {mode}")
     logger.info("Telegram Bot: SKIPPED (dry-run)")
-    
+
     # Overall status with real validation
     component_status = {
         'vault': vault_status != "MISSING",
@@ -501,15 +607,15 @@ async def _dry_run_report(mode: str, circuit_breaker: CircuitBreakerService, sto
         'risk': risk_status == "OK",
         'executor': executor_status == "OK"
     }
-    
+
     all_ok = all(component_status.values())
-    
+
     if all_ok:
         logger.info("✅ Pipeline validated successfully. All core components operational.")
     else:
         failed_components = [k for k, v in component_status.items() if not v]
         logger.warning(f"⚠️ Pipeline has {len(failed_components)} failed components: {', '.join(failed_components)}")
-    
+
     logger.info(f"Active mode: {mode} — {'Virtual' if mode in ('REPLAY', 'PAPER') else 'Real capital at risk.'}")
 
 
@@ -550,7 +656,7 @@ async def _run_services_loop(
         health_supervisor_task = asyncio.create_task(health_supervisor.start()) if health_supervisor else None
         health_sidecar_task = asyncio.create_task(health_sidecar.run_forever()) if health_sidecar else None
         runner_task = asyncio.create_task(runner_coro)
-        
+
         tasks = [telegram_task, scan_task, retrain_task, runner_task]
         if clob_feed_task:
             tasks.append(clob_feed_task)
@@ -563,17 +669,17 @@ async def _run_services_loop(
         await asyncio.gather(*tasks)
     finally:
         logger.info("💤 [CLEANUP] Initiating graceful shutdown...")
-        
+
         # Stop core services first
         runner.stop()
         logger.debug("✅ QuantumRunner stopped")
-        
+
         await orchestrator.stop()
         logger.debug("✅ Orchestrator stopped")
-        
+
         await health_monitor.stop()
         logger.debug("✅ HealthMonitor stopped")
-        
+
         if polymarket_monitor:
             try:
                 await polymarket_monitor.stop()
@@ -592,7 +698,7 @@ async def _run_services_loop(
                 logger.debug("✅ HealthMonitorSidecar stopped")
             except Exception as e:
                 logger.warning(f"Error stopping health_sidecar: {e}")
-        
+
         # Properly cancel all tasks with exception handling
         tasks_to_cancel = []
         if telegram_task and not telegram_task.done():
@@ -619,13 +725,13 @@ async def _run_services_loop(
         if runner_task and not runner_task.done():
             runner_task.cancel()
             tasks_to_cancel.append(runner_task)
-        
+
         # Wait for all cancellations to complete
         if tasks_to_cancel:
             logger.debug(f"Awaiting cancellation of {len(tasks_to_cancel)} tasks...")
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
             logger.debug("✅ All tasks cancelled")
-        
+
         logger.info("✅ [CLEANUP] Graceful shutdown complete")
 
 
@@ -637,7 +743,7 @@ async def main(
 
     container = ServiceContainer.get_instance()
     notifier = container.notifier
-    
+
     notifier.send(f"🚀 *System Started*\nMode: `{execution_mode}`\nEnvironment: `{os.uname().nodename}`")
 
     # Rehydrate risk engine
@@ -652,16 +758,16 @@ async def main(
     risk = container.risk
     store = container.store
     passive_executor = container.executor
-    
+
     if secrets.get("GROQ_API_KEY"):
         lobstar = LobstarAgent(api_key=secrets["GROQ_API_KEY"])
     else:
         logger.warning("GROQ_API_KEY missing. Semantic signal parsing (LOBSTAR) disabled.")
         lobstar = None
-    
+
     circuit_breaker = CircuitBreakerService({"name": "CLOB_Execution"})
 
-    copy_trading_agent = build_copy_trading_agent()
+    copy_trading_agent = build_copy_trading_agent(risk_engine=risk)
 
     training_pipeline = TrainingPipeline(
         store=store,
@@ -708,7 +814,7 @@ async def main(
         chat_id=chat_id,
         access_control=access_control,
     )
-    
+
     logger.info("✅ Telegram listener initialized (ready for callbacks)")
 
     # Instantiate the orchestrator with listener passed directly
@@ -771,6 +877,25 @@ async def main(
         except Exception as e:
             logger.error(f"❌ Failed to send API key alert: {e}")
 
+    from utils.market_data_reader import MarketDataReader
+    market_reader = MarketDataReader(polymarket_client=market_scanner.client)
+
+    order_manager: Any = None
+    try:
+        from utils.polymarket_order_manager import PolymarketOrderManager
+        from core.wallet_manager import PolymarketWalletManager
+        wallet_mgr = PolymarketWalletManager(
+            vault_handler=container.vault,
+            polygon_rpc_url=secrets.get("POLYGON_RPC_URL", ""),
+        )
+        order_manager = PolymarketOrderManager(
+            wallet_manager=wallet_mgr,
+            private_key=secrets.get("CLOB_PRIVATE_KEY"),
+        )
+        logger.info("✅ PolymarketOrderManager initialized")
+    except Exception as e:
+        logger.warning(f"PolymarketOrderManager init skipped: {e}")
+
     listener.attach_components(
         ledger=ledger,
         risk=risk,
@@ -779,6 +904,8 @@ async def main(
         executor=passive_executor,
         scanner=market_scanner,
         copy_agent=copy_trading_agent,
+        market_reader=market_reader,
+        order_manager=order_manager,
     )
 
     try:
@@ -811,101 +938,97 @@ async def main(
     except Exception as e:
         logger.warning(f"Live CLOB feed disabled: failed to prime token IDs ({e})")
 
-    async def _health_check_loop():
+    async def model_drift_and_health_check():
         """Periodic model health, drift check, and self-improvement analysis."""
-        while True:
+        for ticker in DEFAULT_TICKERS:
             try:
-                await asyncio.sleep(3600) # Every hour
-                for ticker in DEFAULT_TICKERS:
-                    report = await run_blocking(
-                        f"model health check {ticker}",
-                        model_validator.run_health_check,
-                        ticker,
-                        "default_v1",
-                        timeout=30.0,
-                    )
-                    if report.get("health") == "CRITICAL":
-                        msg = f"🚨 *DRIFT DETECTED: {ticker}*\n\nModel validation failed. Triggering autonomous retraining..."
-                        await listener.send_message(msg, parse_mode="Markdown")
-
-                        try:
-                            await run_blocking(
-                                f"training cycle {ticker}",
-                                training_pipeline.run_cycle,
-                                ticker,
-                                timeout=float(os.getenv("TRAINING_CYCLE_TIMEOUT_SECONDS", "300")),
-                            )
-                            await listener.send_message(
-                                f"✅ *RECALIBRATION COMPLETE: {ticker}*\n\nModel weights updated and redeployed.",
-                                parse_mode="Markdown",
-                            )
-                        except Exception as e:
-                            logger.exception("Retraining failed for %s", ticker)
-                            await listener.send_message(
-                                f"❌ *RECALIBRATION FAILED: {ticker}*\n\nError: {e}",
-                                parse_mode="Markdown",
-                            )
-
-                        self_improver.log_incident("MODEL_DRIFT", f"Drift detected for {ticker}", "Distribution shift", "Prediction accuracy degradation")
-
-                imp_report = await run_blocking(
-                    "self-improvement report",
-                    self_improver.generate_improvement_report,
+                report = await run_blocking(
+                    f"model health check {ticker}",
+                    model_validator.run_health_check,
+                    ticker,
+                    "default_v1",
                     timeout=30.0,
                 )
-                await listener.send_message(imp_report, parse_mode="Markdown")
+                if report.get("health") == "CRITICAL":
+                    msg = f"🚨 *DRIFT DETECTED: {ticker}*\n\nModel validation failed. Triggering autonomous retraining..."
+                    await listener.send_message(msg, parse_mode="Markdown")
 
-                try:
-                    from scripts.rl_feedback_loop import run_rl_feedback_loop
-                    await run_blocking(
-                        "RL feedback loop",
-                        run_rl_feedback_loop,
-                        timeout=120.0,
-                    )
-                    logger.info("Dynamic ML reinforcement weights updated successfully via background maintenance.")
-                except Exception:
-                    logger.exception("Failed to execute dynamic ML feedback")
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Health check loop iteration failed; continuing next cycle.")
+                    try:
+                        await run_blocking(
+                            f"training cycle {ticker}",
+                            training_pipeline.run_cycle,
+                            ticker,
+                            timeout=float(os.getenv("TRAINING_CYCLE_TIMEOUT_SECONDS", "300")),
+                        )
+                        await listener.send_message(
+                            f"✅ *RECALIBRATION COMPLETE: {ticker}*\n\nModel weights updated and redeployed.",
+                            parse_mode="Markdown",
+                        )
+                    except Exception as e:
+                        logger.exception("Retraining failed for %s", ticker)
+                        await listener.send_message(
+                            f"❌ *RECALIBRATION FAILED: {ticker}*\n\nError: {e}",
+                            parse_mode="Markdown",
+                        )
+
+                    self_improver.log_incident("MODEL_DRIFT", f"Drift detected for {ticker}", "Distribution shift", "Prediction accuracy degradation")
+            except Exception as e:
+                logger.error(f"Failed drift check/retrain for {ticker}: {e}")
+
+        try:
+            imp_report = await run_blocking(
+                "self-improvement report",
+                self_improver.generate_improvement_report,
+                timeout=30.0,
+            )
+            await listener.send_message(imp_report, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Failed self-improvement report: {e}")
+
+    # Register the model health & self-improvement job on the runner
+    runner.register_job("Model_Health_And_Drift", model_drift_and_health_check, interval_sec=3600.0)
+
+    async def _health_check_loop():
+        """Periodic model health, drift check, and self-improvement analysis (standby)."""
+        while True:
+            await asyncio.sleep(86400)
 
     async def _market_scan_loop() -> None:
         from utils.market_scanner import SCAN_INTERVAL_SECONDS
-        
+
         # Wait for listener to be fully initialized
         for _ in range(30):
             if listener.application:
                 break
             await asyncio.sleep(1)
-            
+
         logger.info(f"Market scanner started (interval={SCAN_INTERVAL_SECONDS}s)")
-        
+
         # Timing trackers
         last_crypto_intelligence_at = 0.0
         crypto_intelligence_interval = int(os.getenv("CRYPTO_INTELLIGENCE_INTERVAL_SECONDS", "1800"))
         last_sentiment = None
         iteration_count = 0
         first_scan_completed = False
-        
+
         while True:
             try:
                 iteration_count += 1
                 is_first_scan = iteration_count == 1
-                
+
                 result = await run_blocking(
                     "market scan",
                     market_scanner.scan_markets,
                     timeout=float(os.getenv("MARKET_SCAN_TIMEOUT_SECONDS", "60")),
                 )
-                
+
                 if result.total_markets_scanned > 0:
                     logger.info(
                         f"Scan: {result.total_markets_scanned} markets, "
                         f"{len(result.winning_bets)} winning, "
                         f"{len(result.trending_markets)} trending"
                     )
-                    
+
                     # ─── FIRST SCAN INITIALIZATION (Only on iteration 1) ───
                     if is_first_scan:
                         logger.info("🎯 [FIRST SCAN] Initializing market baseline report...")
@@ -925,31 +1048,65 @@ async def main(
                                 timeout=30.0,
                             )
                             report = format_market_report(fallback_markets)
-                        await listener.send_message(report, parse_mode="Markdown")
-                        
+
+                        if should_broadcast_message("baseline_report", report):
+                            await listener.send_message(report, parse_mode="Markdown")
+                            logger.info("✅ [FIRST SCAN] Baseline report sent")
+                        else:
+                            logger.info("⏭️ [FIRST SCAN] Baseline report matches last broadcast; skipping spam.")
+
                         snapshot_mgr.capture(
                             category="SYSTEM",
                             component="MARKET_REPORT",
                             data={"report": report},
                             tags=["periodic", "market_scan", "first_run"]
                         )
-                        logger.info("✅ [FIRST SCAN] Baseline report sent")
+
+                        # Capture full scan results for TRADING category
+                        snapshot_mgr.capture(
+                            category="TRADING",
+                            component="MARKET_SCAN_RESULTS",
+                            data={
+                                "timestamp": result.timestamp,
+                                "total_markets": result.total_markets_scanned,
+                                "winning_bets": len(result.winning_bets),
+                                "trending_markets": len(result.trending_markets),
+                                "competitive_markets": len(result.competitive_markets),
+                                "arbitrage_opportunities": len(result.arbitrage_opportunities),
+                                "sentiment": result.aggregate_sentiment,
+                                "winning_bets_detail": [
+                                    {
+                                        "ticker": s.ticker,
+                                        "side": s.side,
+                                        "confidence": s.confidence,
+                                        "fee_rate_bps": s.fee_rate_bps,
+                                        "reason": s.reason,
+                                        "market_question": s.market_question,
+                                    } for s in result.winning_bets
+                                ],
+                            },
+                            tags=["market_scan", "first_run", "gems"]
+                        )
                         first_scan_completed = True
-                    
+
                     # ─── CONTINUOUS MONITORING (Every iteration) ───
-                    
+
                     # Monitor sentiment changes
                     sentiment = result.aggregate_sentiment.get("sentiment", "NEUTRAL")
                     if sentiment != last_sentiment:
                         mood = result.aggregate_sentiment.get("bullish_pct", 50)
-                        await listener.send_message(
+                        msg = (
                             f"🌍 *Market Feeling Update*\n"
                             f"Feeling: `{sentiment}`\n"
-                            f"Bullish share: `{mood:.1f}%`",
-                            parse_mode="Markdown",
+                            f"Bullish share: `{mood:.1f}%`"
                         )
+                        if should_broadcast_message("market_feeling", msg):
+                            await listener.send_message(
+                                msg,
+                                parse_mode="Markdown",
+                            )
                         last_sentiment = sentiment
-                    
+
                     # Record features for training pipeline
                     await run_blocking(
                         "record scanner features",
@@ -957,17 +1114,17 @@ async def main(
                         store,
                         timeout=30.0,
                     )
-                    
+
                     # Broadcast market analysis
                     await broadcaster.scan_and_broadcast()
-                    
+
                     # ─── PERIODIC CRYPTO INTELLIGENCE (First scan + time-based) ───
                     now = datetime.now(timezone.utc).timestamp()
                     should_run_intelligence = (
-                        is_first_scan or 
+                        is_first_scan or
                         (now - last_crypto_intelligence_at) >= crypto_intelligence_interval
                     )
-                    
+
                     if should_run_intelligence:
                         logger.info(f"📊 [CRYPTO INTELLIGENCE] Running analysis...")
                         markets = await run_blocking(
@@ -985,31 +1142,220 @@ async def main(
                         )
                         if intelligence_report.crypto_market_count > 0:
                             intelligence_text = format_intelligence_report(intelligence_report)
-                            sent = await listener.send_message(intelligence_text)
-                            if sent:
+                            if should_broadcast_message("crypto_intelligence", intelligence_text):
+                                sent = await listener.send_message(intelligence_text)
+                                if sent:
+                                    last_crypto_intelligence_at = now
+                                    logger.info(f"✅ [CRYPTO INTELLIGENCE] Report sent and cached")
+                            else:
                                 last_crypto_intelligence_at = now
-                                logger.info(f"✅ [CRYPTO INTELLIGENCE] Report sent and cached")
+                                logger.info(f"⏭️ [CRYPTO INTELLIGENCE] Report matches last broadcast; skipping spam.")
                             snapshot_mgr.capture(
                                 category="SYSTEM",
                                 component="CRYPTO_INTELLIGENCE",
                                 data=intelligence_report.to_dict(),
                                 tags=["periodic", "crypto_intelligence"],
                             )
-                    
-                    # ─── WINNING BETS ALERTS (Every iteration if present) ───
+
+                    # ─── WINNING BETS ALERTS + AUTO-TRADE (Every iteration if present) ───
                     if result.winning_bets:
                         alert = format_winning_bets_alert(result.winning_bets[:3])
-                        await listener.send_message(alert, parse_mode="Markdown")
+                        if alert and should_broadcast_message("winning_bets_alert", alert):
+                            await listener.send_message(alert, parse_mode="Markdown")
+
+                        # Auto-trade: push winning bets to orchestrator for execution
+                        for bet in result.winning_bets:
+                            try:
+                                signal = {
+                                    "ticker": bet.ticker,
+                                    "side": bet.side,
+                                    "price": bet.price,
+                                    "confidence": bet.confidence,
+                                    "reason": bet.reason,
+                                    "market_question": bet.market_question,
+                                    "market_slug": bet.market_slug,
+                                    "source": "market_scanner",
+                                    "token_id": bet.ticker,
+                                    "size": 0.0,  # Let risk engine compute
+                                }
+                                await orchestrator.on_signal(signal)
+                                logger.info(f"📈 Auto-trade signal pushed: {bet.side} {bet.ticker} ({bet.confidence:.0%} confidence)")
+                            except Exception as e:
+                                logger.warning(f"Failed to auto-trade winning bet {bet.ticker}: {e}")
+
+                        # Capture winning bets in TRADING category
+                        snapshot_mgr.capture(
+                            category="TRADING",
+                            component="WINNING_BETS",
+                            data={
+                                "timestamp": result.timestamp,
+                                "count": len(result.winning_bets),
+                                "gems": [
+                                    {
+                                        "ticker": s.ticker,
+                                        "confidence": s.confidence,
+                                        "price": s.price,
+                                        "fee_rate_bps": s.fee_rate_bps,
+                                        "reason": s.reason,
+                                        "market_question": s.market_question,
+                                        "direction": s.direction,
+                                    } for s in result.winning_bets[:5]
+                                ],
+                            },
+                            tags=["winning_bets", "gems", "high_confidence"]
+                        )
                         trending = format_scan_report(result)
-                        if len(trending) > 100:
+                        if len(trending) > 100 and should_broadcast_message("scan_report", trending):
                             await listener.send_message(trending, parse_mode="Markdown")
                 else:
                     logger.warning("Scan returned 0 markets — check API connectivity")
-                    
+
             except Exception as e:
                 logger.error(f"❌ [MARKET SCAN] Failed: {e}")
             finally:
                 await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+
+    async def _hmm_training_loop() -> None:
+        """Trains HMM on real Polymarket probability returns every 6h."""
+        while True:
+            try:
+                import numpy as np
+                from datetime import datetime, timezone, timedelta
+                lookback_hours = 336  # 14 days
+                since = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).timestamp()
+                markets = await run_blocking(
+                    "hmm training data fetch",
+                    market_scanner.client.list_markets,
+                    limit=50,
+                    sort_by="volume",
+                    timeout=30.0,
+                )
+                if not markets:
+                    logger.warning("HMM training: no markets fetched")
+                    await asyncio.sleep(21600)
+                    continue
+                prob_series: list[float] = []
+                for m in markets[:10]:
+                    try:
+                        ob = await run_blocking(
+                            f"orderbook {m.id}",
+                            market_scanner.client.get_order_book,
+                            m.id,
+                            timeout=15.0,
+                        )
+                        mid = float(ob.get("midpoint", 0.5) or 0.5)
+                        prob_series.append(mid)
+                    except Exception:
+                        pass
+                if len(prob_series) >= 20:
+                    returns = np.diff(np.log(np.clip(prob_series, 0.01, 0.99)))
+                    returns = returns[np.isfinite(returns)]
+                    if len(returns) >= 10:
+                        hmm.fit(returns)
+                        logger.info(f"✅ HMM retrained on {len(returns)} returns from {len(prob_series)} markets")
+                    else:
+                        logger.warning(f"HMM training: insufficient returns ({len(returns)} < 10)")
+                else:
+                    logger.warning(f"HMM training: insufficient prob series ({len(prob_series)} < 20)")
+            except Exception as e:
+                logger.error(f"HMM training error: {e}")
+            await asyncio.sleep(21600)  # 6h
+    runner.register_job("HMM_Training", _hmm_training_loop, interval_sec=21600.0)
+
+    async def _sltp_monitoring_loop() -> None:
+        """Monitors open positions for stop-loss/take-profit every 60s."""
+        while True:
+            try:
+                if ledger is None:
+                    await asyncio.sleep(60)
+                    continue
+                open_positions = ledger.get_open_positions()
+                if not open_positions:
+                    await asyncio.sleep(60)
+                    continue
+                current_prices: dict[str, float] = {}
+                for pos in open_positions:
+                    ticker = pos.get("ticker", "")
+                    if ticker in current_prices:
+                        continue
+                    try:
+                        ob = await run_blocking(
+                            f"sltp orderbook {ticker}",
+                            market_scanner.client.get_order_book,
+                            ticker,
+                            timeout=10.0,
+                        )
+                        mid = float(ob.get("midpoint", 0.0) or ob.get("price", 0.0))
+                        if mid > 0:
+                            current_prices[ticker] = mid
+                    except Exception:
+                        pass
+                if not current_prices:
+                    await asyncio.sleep(60)
+                    continue
+                due = ledger.get_positions_due_for_exit(current_prices)
+                for pos in due:
+                    reason = pos.get("exit_reason", "unknown")
+                    ticker = pos.get("ticker", "")
+                    pos_id = pos.get("position_id", "")
+                    entry = float(pos.get("entry_price", 0.0))
+                    exit_p = float(pos.get("exit_price", 0.0))
+                    pnl_pct = ((exit_p - entry) / entry * 100) if entry > 0 else 0.0
+                    
+                    # Determine target exit side: opposite of the entry side
+                    entry_side = pos.get("side", "BUY").upper()
+                    exit_side = "SELL" if entry_side == "BUY" else "BUY"
+                    size = float(pos.get("size", 0.0))
+                    
+                    if size > 0:
+                        logger.info(f"🔄 [SL/TP TRIGGERED] Closing position on exchange: {exit_side} {size} {ticker} @ {exit_p}")
+                        success = False
+                        try:
+                            exec_res = await passive_executor.execute(
+                                ticker=ticker,
+                                side=exit_side,
+                                price=exit_p,
+                                size=size,
+                                override_strict_maker=True,
+                            )
+                            logger.info(f"SL/TP exchange execution result: {exec_res}")
+                            if exec_res.get("status") in ("FILLED", "TAKER_FILLED"):
+                                success = True
+                            else:
+                                logger.error(f"SL/TP exchange order failed or was rejected: {exec_res}")
+                        except Exception as exec_err:
+                            logger.error(f"Failed to execute SL/TP close on exchange: {exec_err}")
+                        
+                        if not success:
+                            warn_msg = (
+                                f"⚠️ *WARNING: SL/TP CLOSURE FAILED*\n"
+                                f"Ticker: `{ticker}`\n"
+                                f"Exit Side: `{exit_side}` | Size: `{size}`\n"
+                                f"Exchange order was NOT filled (rejected or failed).\n"
+                                f"The position remains OPEN on Polymarket. Please close manually!"
+                            )
+                            try:
+                                await listener.send_message(warn_msg, parse_mode="Markdown")
+                            except Exception:
+                                pass
+                            continue
+
+                    ledger.close_position(pos_id, exit_price=exit_p)
+                    msg = (
+                        f"⏹ *Position Closed: {reason}*\n"
+                        f"Ticker: `{ticker}`\n"
+                        f"Entry: `${entry:.4f}` → Exit: `${exit_p:.4f}`\n"
+                        f"PnL: `{pnl_pct:+.2f}%`"
+                    )
+                    try:
+                        await listener.send_message(msg, parse_mode="Markdown")
+                    except Exception:
+                        pass
+                    logger.info(f"SL/TP closed {pos_id}: {reason} ({pnl_pct:+.2f}%)")
+            except Exception as e:
+                logger.error(f"SL/TP monitoring error: {e}")
+            await asyncio.sleep(60)
+    runner.register_job("SLTP_Monitoring", _sltp_monitoring_loop, interval_sec=60.0)
 
     ws_url = secrets.get("WS_URL") or os.getenv("WS_URL", "")
     polygon_rpc = secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL") or os.getenv("RPC_URL", "")
@@ -1145,7 +1491,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--maintenance", action="store_true", help="Run archive maintenance cycle and exit")
     args = parser.parse_args()
-    
+
     # 1. Deterministic Execution Mode Conflict Checking
     real_env = os.getenv("REAL", "false").lower() == "true"
     paper_env = os.getenv("PAPER", "false").lower() == "true"
