@@ -53,6 +53,7 @@
       "repo": "https://github.com/MervinPraison/PraisonAI",
       "category": "agent_framework",
       "status": "optional_dependency",
+      "integration_state": "optional_dependency",
       "token_strategy": "Use only for bounded multi-agent workflows; pass compact task specs and file paths instead of whole-file context.",
       "use_for": [
         "Parallel code review workflows",
@@ -114,6 +115,7 @@
       "repo": "https://github.com/karpathy/llm-council",
       "category": "agent_pattern",
       "status": "local_adapter",
+      "integration_state": "runtime_active",
       "token_strategy": "Use config/llm_council.json and MCP build_llm_council_plan before any live model call.",
       "use_for": [
         "Multi-model second opinions",
@@ -142,6 +144,7 @@
       "repo": "https://github.com/666ghj/MiroFish",
       "category": "swarm_simulation",
       "status": "local_planning_adapter",
+      "integration_state": "runtime_active",
       "license": "AGPL-3.0 upstream; do not vendor upstream code without license review.",
       "token_strategy": "Use config/mirofish.json and build_mirofish_simulation_plan to create compact simulation briefs before any model calls.",
       "use_for": [
@@ -266,6 +269,7 @@
       "repo": "https://github.com/obra/superpowers",
       "category": "agent_methodology",
       "status": "local_methodology_adapter",
+      "integration_state": "runtime_active",
       "token_strategy": "Use as a lightweight methodology reference for spec-first, plan-first, TDD, and review loops; keep the active context to the current task and touched files.",
       "use_for": [
         "Specification-driven implementation",
