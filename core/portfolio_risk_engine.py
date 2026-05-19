@@ -104,6 +104,19 @@ class PortfolioRiskEngine:
     def _update_drawdown_tracking(self, current_capital: float) -> Optional[str]:
         if current_capital > self._peak_equity:
             self._peak_equity = current_capital
+            
+        if hasattr(self.ledger, "get_global_drawdown"):
+            global_drawdown = self.ledger.get_global_drawdown()
+            if global_drawdown <= -0.10:
+                self._is_drawdown_tripped = True
+                try:
+                    from mcp_agents.mcp_server import emergency_circuit_breaker
+                    emergency_circuit_breaker("ENGAGE")
+                    logger.critical(f"GLOBAL DRAWDOWN TRIPPED ({global_drawdown*100:.2f}%%). EMERGENCY CIRCUIT BREAKER ENGAGED.")
+                except Exception as e:
+                    logger.error(f"Failed to engage emergency circuit breaker: {e}")
+                return f"GLOBAL_DRAWDOWN_TRIPPED:{global_drawdown*100:.1f}%"
+                
         if self._peak_equity > 0:
             drawdown = (self._peak_equity - current_capital) / self._peak_equity
             if drawdown >= self.max_trailing_drawdown_pct:
@@ -196,6 +209,48 @@ class PortfolioRiskEngine:
             f"Exposure updated: {ticker} -> {self._exposures[ticker]:.2f} "
             f"(net beta exposure: {self.net_beta_exposure_pct:.1f}%)"
         )
+
+
+    async def validate_signal_risk(
+        self,
+        signal: dict,
+        current_portfolio_value: float = 0.0,
+        active_positions: dict[str, float] | None = None,
+    ) -> tuple[bool, str]:
+        active_positions = active_positions or {}
+        cap = current_portfolio_value or 10_000.0
+
+        dd_reason = self._update_drawdown_tracking(cap)
+        if dd_reason is not None:
+            return False, dd_reason
+
+        ticker = str(signal.get("ticker", signal.get("token_id", ""))).upper()
+        side = str(signal.get("side", "BUY"))
+        price = float(signal.get("price", 0.0) or 0.0)
+        confidence = float(signal.get("confidence", 0.5))
+
+        regime_label = str(signal.get("regime_label", "LOW_VOLATILITY"))
+        if regime_label in BLOCKED_REGIMES:
+            return False, f"HMM_BLOCKED:{regime_label}"
+
+        if price <= 0:
+            return False, "INVALID_PRICE"
+
+        # Estimate potential size with current compute_position_size
+        sizing = self.compute_position_size(
+            ticker=ticker, side=side, price=price,
+            confidence=confidence,
+            regime_label=regime_label,
+        )
+        if sizing.get("size", 0.0) <= 0:
+            return False, sizing.get("reason", "RISK_CAP_ZERO")
+
+        # Concentration check inclusive of existing positions
+        existing = active_positions.get(ticker, 0.0)
+        if existing > 0 and not self._check_concentration(ticker, sizing["capital_at_risk"], cap):
+            return False, "CONCENTRATION_LIMIT"
+
+        return True, "OK"
 
 
 class _NullLedger:
