@@ -4,8 +4,9 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_FREQTRADE_REPO_PATH = Path("/home/ogj9f33gvvzc/freqtrade")
-DEFAULT_NLTK_DATA_PATH = Path("/home/ogj9f33gvvzc/nltk_data")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_FREQTRADE_REPO_PATH = PROJECT_ROOT / "freqtrade"
+DEFAULT_NLTK_DATA_PATH = PROJECT_ROOT / "data" / "nltk_data"
 
 
 def ensure_local_freqtrade_available(repo_path: str | os.PathLike | None = None) -> bool:

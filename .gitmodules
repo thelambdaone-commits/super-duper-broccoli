@@ -4,3 +4,6 @@
 [submodule "agents/mirothinker"]
 	path = agents/mirothinker
 	url = https://github.com/MiroMindAI/MiroThinker
+[submodule "freqtrade"]
+	path = freqtrade
+	url = https://github.com/freqtrade/freqtrade.git
