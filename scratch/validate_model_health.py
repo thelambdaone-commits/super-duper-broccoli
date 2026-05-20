@@ -1,6 +1,5 @@
 import sys
 import os
-import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -10,11 +9,11 @@ from utils.model_validator import ModelValidator
 def main():
     store = FeatureStore()
     validator = ModelValidator(store)
-    
+
     print("=======================================")
     print("🧪 LOBSTAR MODEL VALIDATION & DRIFT AUDIT")
     print("=======================================")
-    
+
     ticker = "SOL"
     print(f"\n[RUNNING KS-TEST DRIFT CHECK FOR {ticker}]")
     try:
@@ -24,7 +23,7 @@ def main():
         print(f"  • KS Statistic: {drift_rep.get('ks_stat', 0.0):.6f}")
         print(f"  • P-Value: {drift_rep.get('p_value', 0.0):.6f}")
         print(f"  • Drift Detected: {drift_rep.get('drift_detected', False)}")
-        
+
         # Check actual sample sizes
         current = store.get_feature_history(ticker, "mid_price", limit=100)
         reference = store.get_feature_history(ticker, "mid_price", limit=1000)

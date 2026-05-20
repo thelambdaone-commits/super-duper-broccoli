@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 import re
 from typing import Dict, Any, Tuple
 
@@ -73,11 +72,11 @@ class PolymarketWalletManager:
             }
 
         eth_balance = 0.0
-        
+
         # EOA Direct Balances
         eoa_usdc_native = 0.0
         eoa_usdc_e = 0.0
-        
+
         # Proxy Balances
         proxy_pusd = 0.0
         proxy_usdc_native = 0.0
@@ -140,7 +139,7 @@ class PolymarketWalletManager:
 
         # Direct USDC = EOA native USDC + EOA USDC.e
         usdc_direct = eoa_usdc_native + eoa_usdc_e
-        
+
         # Proxy Polymarket balance = Proxy pUSD + Proxy native USDC + Proxy USDC.e
         usdc_proxy = proxy_pusd + proxy_usdc_native + proxy_usdc_e
 
@@ -166,7 +165,7 @@ class PolymarketWalletManager:
         usdc_direct = float(soldes.get('usdc_direct', 0.0))
         usdc_proxy = float(soldes.get('usdc_proxy', 0.0))
         total_capital = usdc_direct + usdc_proxy
-        
+
         lines = [
             "🎯 *Polymarket Cockpit*",
             "────────────────────────",
@@ -174,10 +173,10 @@ class PolymarketWalletManager:
             f"🔑 *Active Wallet* : `{wallet_name}`",
             f"📬 *EOA Address* : `{wallet_address}`"
         ]
-        
+
         if proxy_address:
             lines.append(f"🛡️ *Proxy Address* : `{proxy_address}`")
-            
+
         lines.extend([
             f"💵 *USDC Direct* : `{usdc_direct:.2f} USDC`",
             f"🛡️ *Polymarket pUSD* : `{usdc_proxy:.2f} pUSD`",
@@ -186,14 +185,14 @@ class PolymarketWalletManager:
             f"💾 *Saved Vaults* : `{total_connections}`",
             "────────────────────────"
         ])
-        
+
         if not proxy_address:
             lines.append("⚠️ *No Proxy Wallet set.*")
             lines.append("Use `/wallet set-proxy <address>` in DM to track your Polymarket pUSD balance!")
             lines.append("────────────────────────")
-            
+
         text = "\n".join(lines)
-        
+
         # Clavier ultra-réactif avec gestionnaire de callback centralisé
         reply_markup = InlineKeyboardMarkup(
             [
@@ -216,5 +215,5 @@ class PolymarketWalletManager:
                 [InlineKeyboardButton("⬅️ Return to Main Menu", callback_data="menu_main")],
             ]
         )
-        
+
         return text, reply_markup

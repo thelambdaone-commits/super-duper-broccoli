@@ -160,7 +160,7 @@ class OutputFormatter:
         # 1. Active Learning & Adaptation telemetries
         efficiency_loss = status_data.get("efficiency_loss")
         min_edge = status_data.get("min_edge")
-        
+
         telemetry_path = "user_data/data/raw_stream/arbitrage_telemetry.jsonl"
         if (efficiency_loss is None or min_edge is None) and os.path.exists(telemetry_path):
             try:
@@ -174,7 +174,7 @@ class OutputFormatter:
                             min_edge = last_record.get("nouveau_seuil_calculé", last_record.get("min_edge_threshold"))
             except Exception:
                 pass
-                
+
         # Sensible telemetry defaults if no live records present yet
         if efficiency_loss is None:
             efficiency_loss = 0.017

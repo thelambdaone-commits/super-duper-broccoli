@@ -92,7 +92,7 @@ class RufloSwarmSupervisor:
         self._redis_url = os.getenv("REDIS_URL")
         self._redis: Optional[redis.Redis] = None
         self._redis_namespace = "quant_core_v2"
-        
+
         try:
             config_path = Path("ruflo_config.json")
             if config_path.exists():
@@ -410,10 +410,10 @@ class RufloSwarmSupervisor:
         """Démarre le loop de surveillance continue."""
         self._state = SwarmState.HEALTHY
         self._monitoring_task = asyncio.create_task(self._monitoring_loop())
-        
+
         if self._redis:
             self._redis_pubsub_task = asyncio.create_task(self._redis_pubsub_listener())
-            
+
         logger.info("✅ Swarm supervisor monitoring started")
 
     async def _redis_pubsub_listener(self) -> None:
@@ -476,7 +476,7 @@ class RufloSwarmSupervisor:
                 await self._monitoring_task
             except asyncio.CancelledError:
                 pass
-        
+
         if self._redis_pubsub_task:
             self._redis_pubsub_task.cancel()
             try:
@@ -486,7 +486,7 @@ class RufloSwarmSupervisor:
 
         if self._redis:
             await self._redis.close()
-            
+
         logger.info("🛑 Swarm supervisor stopped")
 
     def get_status(self) -> Dict[str, Any]:
@@ -524,7 +524,7 @@ class RufloSwarmSupervisor:
             "timestamp": time.time(),
             "data": data,
         }
-        
+
         # Ingestion locale
         await self._event_bus.put(event)
 
@@ -543,12 +543,12 @@ class RufloSwarmSupervisor:
     def set_shared_value(self, key: str, value: Any) -> None:
         """Écrit dans la mémoire partagée (locale + sync-fire-and-forget Redis)."""
         self._shared_memory[key] = value
-        
+
         if self._redis:
             try:
                 # 1. Persistence de la valeur
                 asyncio.create_task(self._redis.set(
-                    f"{self._redis_namespace}:mem:{key}", 
+                    f"{self._redis_namespace}:mem:{key}",
                     json.dumps(value)
                 ))
                 # 2. Notification de mise à jour pour les autres instances
@@ -580,7 +580,7 @@ class RufloSwarmSupervisor:
                     return val
             except Exception as e:
                 logger.error(f"💾 Redis get failed for {key}: {e}")
-        
+
         return default
 
 

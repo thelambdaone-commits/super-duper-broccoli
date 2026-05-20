@@ -1,9 +1,8 @@
 import asyncio
 import logging
-import time
 import json
 import os
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 from datetime import datetime, timezone
 
 logger = logging.getLogger("ArbitrageLatencyProfiler")

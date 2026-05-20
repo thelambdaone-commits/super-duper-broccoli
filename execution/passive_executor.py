@@ -1,10 +1,10 @@
 import asyncio
 import logging
+import os
 import time
 import uuid
 from typing import Any, Callable, Optional
 
-from core.freqai_engine import FreqAIEngine
 
 logger = logging.getLogger("PassiveExecutor")
 
@@ -107,7 +107,6 @@ class PassiveExecutor:
     def _is_strict_maker_only(self) -> bool:
         if getattr(self, "_override_strict", False):
             return False
-        import os
         if os.getenv("STRICT_MAKER_ONLY", "").lower() == "true":
             return True
         if self.ledger:
@@ -296,7 +295,7 @@ class PassiveExecutor:
             execution_price *= (1 + slippage_pct)
         else:
             execution_price *= (1 - slippage_pct)
-        
+
         slippage_cost = abs(execution_price - (price * spread_multiplier)) * size
         self._metrics["simulated_slippage_usd"] += slippage_cost
 
@@ -362,7 +361,7 @@ class PassiveExecutor:
             # 2. In a real institutional setup, we would fetch open positions from the CLOB
             # and send market orders to close them.
             # Since FreqAIEngine only has basic methods, we log the intent.
-            
+
             return {
                 "status": "SUCCESS",
                 "cancelled_orders": cancelled_count,

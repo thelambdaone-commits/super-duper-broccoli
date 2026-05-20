@@ -19,7 +19,7 @@ DEFAULT_MODEL_DIR = os.path.join(
 class PolymarketPredictiveEngine:
     """
     Moteur Prédictif Central de niveau institutionnel.
-    Exécute le pipeline, calcule le consensus de l'essaim ML, applique la 
+    Exécute le pipeline, calcule le consensus de l'essaim ML, applique la
     calibration isotonique et le time-decay lissé pour extraire l'edge.
     """
 
@@ -53,7 +53,7 @@ class PolymarketPredictiveEngine:
         self, p_calibrated: float, timestamp_resolution: float
     ) -> float:
         """
-        Calcule le time-decay exponentiel avec une borne de sécurité 
+        Calcule le time-decay exponentiel avec une borne de sécurité
         pour préserver l'agressivité microstructurelle en fin de marché.
         """
         now = time.time() if timestamp_resolution > 1_000_000_000 else time.monotonic()
@@ -203,6 +203,36 @@ class PolymarketPredictiveEngine:
         if hasattr(self.calibrator, "calibrate"):
             logger.warning("Calibrator exposes calibrate() only; skipping inference-time recalibration")
         return raw_score
+
+    def _normalize_market_feature_rows(self, features: Any) -> list[dict[str, Any]]:
+        if features is None:
+            return []
+        if isinstance(features, list):
+            if not features:
+                return []
+            if all(isinstance(row, dict) for row in features):
+                return features
+            return [{"value": row} for row in features]
+        if isinstance(features, dict):
+            if any(isinstance(value, list) for value in features.values()):
+                keys = list(features.keys())
+                max_len = max(
+                    (len(value) for value in features.values() if isinstance(value, list)),
+                    default=0,
+                )
+                rows: list[dict[str, Any]] = []
+                for idx in range(max_len or 1):
+                    row: dict[str, Any] = {}
+                    for key in keys:
+                        value = features[key]
+                        if isinstance(value, list):
+                            row[key] = value[idx] if idx < len(value) else value[-1] if value else None
+                        else:
+                            row[key] = value
+                    rows.append(row)
+                return rows
+            return [features]
+        return [{"value": features}]
 
     def predict_winning_bet(
         self,

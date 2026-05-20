@@ -24,7 +24,7 @@ exec "${BANDIT_BIN}" \
   "${ROOT_DIR}/models" \
   "${ROOT_DIR}/monitors" \
   "${ROOT_DIR}/scrapers" \
-  "${ROOT_DIR}/telegram_scraper" \
+  "${ROOT_DIR}/scrappers" \
   "${ROOT_DIR}/utils" \
   "${ROOT_DIR}/utils/polymarket_crawler" \
   "${ROOT_DIR}/main_agentic_clob.py" \

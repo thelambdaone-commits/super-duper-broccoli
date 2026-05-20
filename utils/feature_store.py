@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Optional
 
 from utils.exceptions import QuantFatal
@@ -15,6 +15,15 @@ FEATURE_STORE_PATH = os.path.join(
 )
 
 
+ALLOWED_TABLES = frozenset({
+    "market_microstructure",
+    "features_computed",
+    "signals_ingested",
+    "decisions_log",
+    "web_events_raw",
+})
+
+
 class FeatureStore:
     def __init__(self, db_path: str = FEATURE_STORE_PATH) -> None:
         self.db_path = db_path
@@ -22,6 +31,12 @@ class FeatureStore:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._connect()
         self._init_schema()
+
+    @staticmethod
+    def _validate_table(table: str) -> str:
+        if table not in ALLOWED_TABLES:
+            raise ValueError(f"Unsupported table: {table}")
+        return table
 
     def _connect(self) -> None:
         try:
@@ -478,9 +493,10 @@ class FeatureStore:
         ]
         removed: dict[str, int] = {}
         for table in tables:
-            before = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            self._conn.execute(f"DELETE FROM {table} WHERE timestamp < ?", (float(cutoff_ts),))
-            after = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            t = self._validate_table(table)
+            before = self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            self._conn.execute(f"DELETE FROM {t} WHERE timestamp < ?", (float(cutoff_ts),))
+            after = self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
             removed[table] = int(before - after)
         self._conn.commit()
         try:
@@ -565,23 +581,25 @@ class FeatureStore:
     def purge_before(self, cutoff_ts: float) -> int:
         total = 0
         for table in ["market_microstructure", "features_computed", "signals_ingested", "decisions_log", "web_events_raw"]:
-            before = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            self._conn.execute(f"DELETE FROM {table} WHERE timestamp < ?", (cutoff_ts,))
-            after = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            t = self._validate_table(table)
+            before = self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            self._conn.execute(f"DELETE FROM {t} WHERE timestamp < ?", (cutoff_ts,))
+            after = self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
             total += before - after
         self._conn.execute("CHECKPOINT")
         logger.info(f"Purged {total} rows before {datetime.fromtimestamp(cutoff_ts)}")
         return total
 
     def export_to_parquet(self, table: str, output_path: str, before_ts: float) -> int:
+        t = self._validate_table(table)
         count = self._conn.execute(f"""
-            SELECT COUNT(*) FROM {table} WHERE timestamp < ?
+            SELECT COUNT(*) FROM {t} WHERE timestamp < ?
         """, (before_ts,)).fetchone()[0]
         if count == 0:
             return 0
         self._conn.execute(f"""
             COPY (
-                SELECT * FROM {table} WHERE timestamp < ?
+                SELECT * FROM {t} WHERE timestamp < ?
             ) TO '{output_path}' (FORMAT 'PARQUET', COMPRESSION 'ZSTD')
         """, (before_ts,))
         logger.info(f"Exported {count} rows from {table} -> {output_path}")
@@ -590,7 +608,8 @@ class FeatureStore:
     def get_stats(self) -> dict:
         stats = {}
         for table in ["market_microstructure", "features_computed", "signals_ingested", "decisions_log", "web_events_raw"]:
-            row = self._conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            t = self._validate_table(table)
+            row = self._conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
             stats[table] = row[0]
         return stats
 
@@ -605,7 +624,7 @@ class FeatureStore:
         if table not in allowed_tables:
             raise ValueError(f"Unsupported table for latest timestamp lookup: {table}")
 
-        row = self._conn.execute(f"SELECT MAX(timestamp) FROM {table}").fetchone()
+        row = self._conn.execute(f"SELECT MAX(timestamp) FROM {self._validate_table(table)}").fetchone()
         if not row or row[0] is None:
             return None
         return float(row[0])

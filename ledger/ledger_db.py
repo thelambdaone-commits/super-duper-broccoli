@@ -49,7 +49,7 @@ class Ledger:
             self._conn.executescript(f.read())
         self._conn.commit()
         self._migrate_schema()
-        
+
         # Upgrade existing databases with new columns safely
         for col, col_type in [
             ("exit_price", "REAL"),
@@ -304,7 +304,7 @@ class Ledger:
                 "FROM capital_allocation ORDER BY id DESC LIMIT 1"
             )
             allocation = cursor.fetchone()
-            
+
             if not allocation:
                 # Default if none exists: 5% allocation limit
                 cursor.execute(
@@ -317,7 +317,7 @@ class Ledger:
                 # Engagement is the difference between what we thought we had total and what was available
                 engaged = allocation["total_capital"] - allocation["available_capital"]
                 new_available = real_total_capital - engaged
-                
+
                 cursor.execute(
                     "INSERT INTO capital_allocation (total_capital, allocated_pct, available_capital) "
                     "VALUES (?, ?, ?)",
@@ -500,23 +500,23 @@ class Ledger:
 
                 position_id = pos["position_id"]
                 new_filled_qty = pos["filled_qty"] + filled_qty
-                
+
                 # Update position
                 cursor.execute(
                     "UPDATE positions SET filled_qty = ?, execution_price = ? WHERE position_id = ?",
                     (new_filled_qty, execution_price, position_id),
                 )
-                
+
                 # Check if fully filled (optional: status update if needed)
                 # On Polymarket, one order can have multiple fills.
-                
+
                 # Record transaction
                 cursor.execute(
                     "INSERT INTO transactions (position_id, ticker, side, price, size, filled_qty, execution_price, exchange_order_id) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (position_id, pos["ticker"], pos["side"], pos["entry_price"], filled_qty, filled_qty, execution_price, exchange_order_id),
                 )
-            
+
             logger.info(f"✅ Position {position_id} mise à jour (fill: {filled_qty} @ {execution_price})")
             return True
         except Exception as e:
@@ -579,10 +579,14 @@ class Ledger:
                     pass
             self.conn.commit()
 
+    @staticmethod
+    def _resolve_position_table(position_id: str) -> str:
+        return "paper_positions" if str(position_id).startswith("paper-") else "positions"
+
     def set_position_sltp(self, position_id: str, stop_loss_pct: float = 0.0, take_profit_pct: float = 0.0) -> None:
         with self._lock:
             cursor = self.conn.cursor()
-            table = "paper_positions" if str(position_id).startswith("paper-") else "positions"
+            table = self._resolve_position_table(position_id)
             cursor.execute(
                 f"UPDATE {table} SET stop_loss_pct = ?, take_profit_pct = ? WHERE position_id = ?",
                 (stop_loss_pct, take_profit_pct, position_id),
@@ -620,7 +624,7 @@ class Ledger:
     ) -> None:
         with self._lock:
             cursor = self.conn.cursor()
-            table = "paper_positions" if str(position_id).startswith("paper-") else "positions"
+            table = self._resolve_position_table(position_id)
             if exit_price is not None:
                 if table == "paper_positions":
                     is_win = 1 if (pnl is not None and pnl > 0) else 0
@@ -655,21 +659,21 @@ class Ledger:
                 if not row:
                     return 0.0
                 current_capital = float(row["total_capital"])
-                
+
                 cursor.execute("""
-                    SELECT MAX(total_capital) as peak_capital 
-                    FROM capital_allocation 
+                    SELECT MAX(total_capital) as peak_capital
+                    FROM capital_allocation
                     WHERE updated_at >= datetime('now', '-1 day')
                 """)
                 peak_row = cursor.fetchone()
                 if not peak_row or not peak_row["peak_capital"]:
                     return 0.0
-                
+
                 peak_capital = float(peak_row["peak_capital"])
-                
+
                 if peak_capital <= 0:
                     return 0.0
-                    
+
                 drawdown = (current_capital - peak_capital) / peak_capital
                 return drawdown
         except Exception as e:

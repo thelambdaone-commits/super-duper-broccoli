@@ -9,8 +9,17 @@ from typing import Callable, Optional
 import websockets
 from eth_abi.codec import ABICodec
 from eth_abi.registry import registry
-from web3 import Web3
-from web3.middleware import ExtraDataToPOAMiddleware
+
+try:
+    from web3 import Web3
+    from web3.middleware import ExtraDataToPOAMiddleware
+    from web3.providers import WebsocketProvider
+    WEB3_AVAILABLE = True
+except ImportError:
+    WEB3_AVAILABLE = False
+    Web3 = None
+    WebsocketProvider = None
+    ExtraDataToPOAMiddleware = None
 
 logger = logging.getLogger("PolymarketMonitor")
 
@@ -30,6 +39,9 @@ class PolymarketMonitor:
         rpc_url: Optional[str] = None,
         match_signature: str = MATCH_ORDERS_SIGNATURE,
     ) -> None:
+        if not WEB3_AVAILABLE:
+            raise ImportError("web3 is required for PolymarketMonitor. Install it with: pip install web3")
+        
         self.on_signal = on_signal
         self.target_wallet = Web3.to_checksum_address(target_wallet) if target_wallet else None
         self.ws_url = ws_url or os.getenv("WS_URL", "")
@@ -41,7 +53,7 @@ class PolymarketMonitor:
         self._start_time: Optional[datetime] = None
 
         if self.rpc_url:
-            self.web3 = Web3(Web3.WebsocketProvider(self.rpc_url) if self.rpc_url.startswith("ws") else Web3.HTTPProvider(self.rpc_url))
+            self.web3 = Web3(WebsocketProvider(self.rpc_url) if self.rpc_url.startswith("ws") else Web3.HTTPProvider(self.rpc_url))
             self.web3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
         else:
             self.web3 = None

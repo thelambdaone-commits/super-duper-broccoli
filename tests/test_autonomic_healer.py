@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import os
-import time
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pytest
 from pathlib import Path
 from core.autonomic_healer import LobstarAutonomicHealer
@@ -77,7 +76,7 @@ async def test_autonomic_healer_cooldown(temp_log_file: str) -> None:
 @pytest.mark.asyncio
 async def test_autonomic_healer_rpc_remediation(temp_log_file: str, monkeypatch: pytest.MonkeyPatch) -> None:
     healer = LobstarAutonomicHealer(log_file_path=temp_log_file)
-    
+
     # Backup not set
     monkeypatch.delenv("BACKUP_QUICKNODE_RPC_URL", raising=False)
     result_fail = await healer.deployer_correctif_autonome("ALCHEMY_RPC_TIMEOUT")
@@ -95,16 +94,16 @@ async def test_autonomic_healer_rpc_remediation(temp_log_file: str, monkeypatch:
 @pytest.mark.asyncio
 async def test_autonomic_healer_sqlite_wal_remediation(temp_log_file: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     healer = LobstarAutonomicHealer(log_file_path=temp_log_file)
-    
+
     # Create fake WAL files in memory or mock paths
     db_dir = tmp_path / "user_data" / "data"
     db_dir.mkdir(parents=True, exist_ok=True)
-    
+
     shm_file = db_dir / "ledger.db-shm"
     wal_file = db_dir / "ledger.db-wal"
     shm_file.touch()
     wal_file.touch()
-    
+
     # Patch remediator db directory to use our temp path
     def mock_repair_sqlite_wal():
         files_to_remove = [str(shm_file), str(wal_file)]
@@ -118,9 +117,9 @@ async def test_autonomic_healer_sqlite_wal_remediation(temp_log_file: str, tmp_p
             "action": "FLUSHED_WAL_SHARED_MEMORY",
             "details": f"{removed_count} files removed"
         }
-        
+
     monkeypatch.setitem(healer.remediation_actions, "SQLITE_WAL_LOCKED", mock_repair_sqlite_wal)
-    
+
     result = await healer.deployer_correctif_autonome("SQLITE_WAL_LOCKED")
     assert result["statut"] == "REPAIRED"
     assert not shm_file.exists()
@@ -162,16 +161,16 @@ async def test_autonomic_healer_notifications(temp_log_file: str) -> None:
 @pytest.mark.asyncio
 async def test_autonomic_healer_scan_loop_graceful_cancel(temp_log_file: str) -> None:
     healer = LobstarAutonomicHealer(log_file_path=temp_log_file)
-    
+
     # Execute loop and cancel it immediately
     task = asyncio.create_task(healer.scan_et_guerir_continu(interval_seconds=0.01))
     await asyncio.sleep(0.02)
     task.cancel()
-    
+
     try:
         await task
     except asyncio.CancelledError:
         pass
-    
+
     # Assert it terminated gracefully without exception
     assert task.done()

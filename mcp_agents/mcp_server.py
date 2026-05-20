@@ -18,21 +18,12 @@ from mcp_agents.tools.storage_tools import get_storage_tools
 
 # Specialist utilities
 from utils.ai_specialists import (
-    build_specialist_prompt_context,
-    get_ai_routing_policy,
     get_ai_specialist,
     list_ai_specialists,
-    list_free_ai_provider_sources,
-)
-from utils.project_context import (
-    get_project_context,
-    list_local_skill_contexts,
-    list_project_contexts,
 )
 from utils.prompt_memory import (
     build_project_prompt_context,
     format_project_prompt_context,
-    list_project_memory,
     record_project_memory,
 )
 
@@ -101,13 +92,13 @@ def initialize(
     get_market_tools(mcp, hmm_filter, arb_scanner)
     get_execution_tools(mcp, ledger, risk_engine, hmm=hmm_filter)
     get_storage_tools(mcp, feature_store)
-    
+
     # Register specialized AI tools
     _register_specialist_tools(mcp)
-    
+
     # Register new module tools
     _register_new_module_tools(mcp)
-    
+
     logger.info("MCP Server tools initialized.")
 
 def _get_adapter(module_name: str):

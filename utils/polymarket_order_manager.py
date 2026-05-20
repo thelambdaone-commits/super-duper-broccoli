@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from py_clob_client.clob_types import OrderType
 from py_clob_client.client import ClobClient
 
 from utils.wallet_manager import WalletManager
@@ -85,18 +84,18 @@ class PolymarketOrderManager:
     ) -> dict:
         """
         Estimate the cost of placing a bet.
-        
+
         Args:
             amount: Number of shares
             price: Price per share (0.0-1.0)
             side: "BUY" or "SELL"
-        
+
         Returns:
             dict with cost breakdown
         """
         # On Polymarket: when you BUY at price P, you pay P per share
         # When you SELL at price P, you receive P per share
-        
+
         if side.upper() == "BUY":
             collateral_needed = amount * price
             fee = collateral_needed * 0.02  # 2% taker fee
@@ -134,7 +133,7 @@ class PolymarketOrderManager:
     ) -> PolymarketOrder:
         """
         Place a bet on Polymarket.
-        
+
         Args:
             market_id: Polymarket market ID
             token_id: Token ID for the outcome
@@ -144,7 +143,7 @@ class PolymarketOrderManager:
             amount: Number of shares
             slippage_tolerance: Acceptable slippage as decimal (0.05 = 5%)
             dry_run: If True, don't execute
-        
+
         Returns:
             PolymarketOrder with transaction details
         """
@@ -227,12 +226,12 @@ class PolymarketOrderManager:
     ) -> ClaimReceipt:
         """
         Claim winnings from a resolved market.
-        
+
         Args:
             market_id: Market ID or Condition ID
             outcome: "YES" or "NO"
             dry_run: If True, don't execute transaction
-        
+
         Returns:
             ClaimReceipt with transaction details
         """
@@ -256,7 +255,7 @@ class PolymarketOrderManager:
                 market_details = {}
 
             condition_id = market_details.get("condition_id", market_id)
-            
+
             # Find the outcome token ID
             token_id_str = None
             tokens = market_details.get("tokens", [])
@@ -345,11 +344,11 @@ class PolymarketOrderManager:
                     logger.warning(f"Failed to query balances: {e}")
 
             logger.info(f"Balances - EOA: {eoa_balance} | Proxy: {proxy_balance} contracts")
-            
+
             # Determine target for claim
             target_address = eoa_address
             has_winnings = eoa_balance > 0
-            
+
             if proxy_balance > 0 and proxy_address:
                 target_address = proxy_address
                 has_winnings = True
@@ -378,14 +377,14 @@ class PolymarketOrderManager:
 
             # Build and send transaction
             index_sets = [1] if outcome.upper() == "YES" else [2]
-            
+
             # Format condition_id into 32-byte hex bytes
             cond_bytes = w3.to_bytes(hexstr=condition_id)
             if len(cond_bytes) < 32:
                 cond_bytes = cond_bytes.rjust(32, b'\x00')
 
             logger.info(f"Sending on-chain redeemPositions transaction on Polygon...")
-            
+
             if target_address == eoa_address:
                 # Direct EOA redemption
                 tx = ctf_contract.functions.redeemPositions(
@@ -398,11 +397,11 @@ class PolymarketOrderManager:
                     "nonce": w3.eth.get_transaction_count(eoa_address),
                     "gasPrice": int(w3.eth.gas_price * 1.2),  # +20% for speed
                 })
-                
+
                 signed_tx = w3.eth.account.sign_transaction(tx, private_key)
                 tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
                 tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-                
+
                 logger.info(f"Direct EOA claim tx completed: {tx_receipt.transactionHash.hex()}")
                 return ClaimReceipt(
                     market_id=market_id,
@@ -441,24 +440,24 @@ class PolymarketOrderManager:
     ) -> tuple[bool, str]:
         """
         Check if wallet has sufficient balance to place a bet.
-        
+
         Returns:
             (can_bet, message)
         """
         cost_est = self.estimate_bet_cost(amount, price, side)
-        
+
         if side.upper() == "BUY":
             required_usdc = cost_est["total_cost"]
             # TODO: Get actual USDC balance from wallet
             # For now, just return estimate
             return True, f"Need ${required_usdc:.2f} USDC"
-        
+
         return True, "Ready to place bet"
 
     def format_order(self, order: PolymarketOrder) -> str:
         """Format order for display."""
         lines = [f"📊 **Polymarket Order**\n"]
-        
+
         if order.status == "failed":
             lines.append(f"❌ Status: FAILED")
             lines.append(f"Error: {order.error_message}")
@@ -471,13 +470,13 @@ class PolymarketOrderManager:
             lines.append(f"• Price: `${order.price:.2f}`")
             lines.append(f"• Total: `${order.collateral_value:.2f}`")
             lines.append(f"• Potential Profit: `${order.potential_profit:.2f}`")
-        
+
         return "\n".join(lines)
 
     def format_claim_receipt(self, receipt: ClaimReceipt) -> str:
         """Format claim receipt for display."""
         lines = [f"🎉 **Claim Receipt**\n"]
-        
+
         if receipt.status == "failed":
             lines.append(f"❌ Status: FAILED")
             lines.append(f"Error: {receipt.error_message}")
@@ -486,5 +485,5 @@ class PolymarketOrderManager:
             lines.append(f"• Market: `{receipt.market_id}`")
             lines.append(f"• Outcome: `{receipt.outcome}`")
             lines.append(f"• Claimed: `${receipt.amount_claimed:.2f}`")
-        
+
         return "\n".join(lines)

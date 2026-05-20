@@ -14,6 +14,8 @@ logger = logging.getLogger("ProbabilityCalibrator")
 
 
 class ProbabilityCalibrator:
+    ALLOWED_DIR = os.getenv("MODEL_DIR", "user_data/models")
+
     def __init__(
         self,
         fusion_mode: str = "ensemble",
@@ -154,6 +156,10 @@ class ProbabilityCalibrator:
         return path
 
     def load(self, path: str) -> "ProbabilityCalibrator":
+        resolved = os.path.abspath(path)
+        allowed = os.path.abspath(self.ALLOWED_DIR)
+        if not resolved.startswith(allowed):
+            raise ValueError(f"Refusing to load from outside {allowed}: {path}")
         with open(path, "rb") as fh:
             data = pickle.load(fh)
         self.fusion_mode = data.get("fusion_mode", self.fusion_mode)

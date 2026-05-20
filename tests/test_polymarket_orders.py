@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from utils.polymarket_order_manager import PolymarketOrderManager, PolymarketOrder, ClaimReceipt
 from utils.wallet_manager import WalletManager
 from datetime import datetime
@@ -32,7 +32,7 @@ def test_order_manager_init(wallet_manager):
 def test_estimate_bet_cost_buy():
     """Test bet cost estimation for BUY."""
     estimate = PolymarketOrderManager.estimate_bet_cost(None, 10, 0.5, "BUY")
-    
+
     assert estimate["side"] == "BUY"
     assert estimate["amount"] == 10
     assert estimate["price"] == 0.5
@@ -45,7 +45,7 @@ def test_estimate_bet_cost_buy():
 def test_estimate_bet_cost_sell():
     """Test bet cost estimation for SELL."""
     estimate = PolymarketOrderManager.estimate_bet_cost(None, 10, 0.5, "SELL")
-    
+
     assert estimate["side"] == "SELL"
     assert estimate["amount"] == 10
     assert estimate["price"] == 0.5
@@ -55,7 +55,7 @@ def test_estimate_bet_cost_sell():
 def test_estimate_bet_cost_zero_price():
     """Test bet cost with zero price."""
     estimate = PolymarketOrderManager.estimate_bet_cost(None, 10, 0.0, "BUY")
-    
+
     assert estimate["collateral_or_proceeds"] == 0.0
     assert estimate["fee_amount"] == 0.0
     assert estimate["total_cost"] == 0.0
@@ -64,7 +64,7 @@ def test_estimate_bet_cost_zero_price():
 def test_estimate_bet_cost_high_price():
     """Test bet cost with high price."""
     estimate = PolymarketOrderManager.estimate_bet_cost(None, 10, 0.9, "BUY")
-    
+
     assert estimate["collateral_or_proceeds"] == 9.0  # 10 * 0.9
     assert abs(estimate["potential_profit"] - 1.0) < 0.001  # 10 * (1 - 0.9) with floating point tolerance
     assert estimate["roi_percent"] > 0
@@ -82,7 +82,7 @@ async def test_place_order_dry_run(order_manager):
         amount=10,
         dry_run=True,
     )
-    
+
     assert order.market_id == "0xabcd1234"
     assert order.outcome == "YES"
     assert order.side == "BUY"
@@ -95,7 +95,7 @@ async def test_place_order_dry_run(order_manager):
 async def test_place_order_no_client(wallet_manager):
     """Test placing order when ClobClient not initialized."""
     manager = PolymarketOrderManager(wallet_manager=wallet_manager, clob_client=None)
-    
+
     order = await manager.place_order(
         market_id="0xabcd",
         token_id="0xtoken",
@@ -104,7 +104,7 @@ async def test_place_order_no_client(wallet_manager):
         price=0.40,
         amount=5,
     )
-    
+
     assert order.status == "failed"
     assert order.error_message is not None
 
@@ -113,7 +113,7 @@ async def test_place_order_no_client(wallet_manager):
 async def test_claim_winnings_dry_run(order_manager):
     """Test claiming winnings in dry run mode."""
     from unittest.mock import patch, MagicMock
-    
+
     mock_w3 = MagicMock()
     mock_w3.is_connected.return_value = True
     mock_w3.eth.account.from_key.return_value.address = "0x742d35Cc6634C0532925a3b844Bc9e7595f42dE"
@@ -121,16 +121,16 @@ async def test_claim_winnings_dry_run(order_manager):
     mock_w3.eth.get_transaction_count.return_value = 0
     mock_w3.to_checksum_address = lambda x: x
     mock_w3.to_bytes = lambda hexstr: b'\x00' * 32
-    
+
     with patch("web3.Web3", return_value=mock_w3) as mock_web3_class:
         mock_web3_class.HTTPProvider = MagicMock()
-        
+
         receipt = await order_manager.claim_winnings(
             market_id="0xabcd1234",
             outcome="YES",
             dry_run=True,
         )
-        
+
         assert receipt.market_id == "0xabcd1234"
         assert receipt.outcome == "YES"
         assert receipt.status == "pending"
@@ -140,12 +140,12 @@ async def test_claim_winnings_dry_run(order_manager):
 async def test_claim_winnings_no_client(wallet_manager):
     """Test claiming when ClobClient not initialized."""
     manager = PolymarketOrderManager(wallet_manager=wallet_manager, clob_client=None)
-    
+
     receipt = await manager.claim_winnings(
         market_id="0xabcd",
         outcome="YES",
     )
-    
+
     assert receipt.status == "failed"
     assert receipt.error_message is not None
 
@@ -153,7 +153,7 @@ async def test_claim_winnings_no_client(wallet_manager):
 def test_check_balance_for_bet(order_manager):
     """Test balance check for betting."""
     can_bet, msg = order_manager.check_balance_for_bet(10, 0.5, "BUY")
-    
+
     assert can_bet is True
     assert "$" in msg or "USDC" in msg or "Need" in msg
 
@@ -172,7 +172,7 @@ def test_polymarket_order_potential_profit_buy():
         status="pending",
         created_at=datetime.utcnow(),
     )
-    
+
     profit = order.potential_profit
     assert profit == 4.0  # 10 * (1 - 0.6)
 
@@ -191,7 +191,7 @@ def test_polymarket_order_potential_profit_sell():
         status="pending",
         created_at=datetime.utcnow(),
     )
-    
+
     profit = order.potential_profit
     assert profit == 4.0  # 10 * 0.4
 
@@ -210,10 +210,10 @@ def test_format_order():
         status="pending",
         created_at=datetime.utcnow(),
     )
-    
+
     manager = PolymarketOrderManager(wallet_manager=Mock())
     formatted = manager.format_order(order)
-    
+
     assert "📊" in formatted
     assert "order123" in formatted
     assert "BUY" in formatted
@@ -230,10 +230,10 @@ def test_format_claim_receipt():
         amount_claimed=10.50,
         status="pending",
     )
-    
+
     manager = PolymarketOrderManager(wallet_manager=Mock())
     formatted = manager.format_claim_receipt(receipt)
-    
+
     assert "🎉" in formatted
     assert "market123" in formatted
     assert "YES" in formatted
@@ -254,7 +254,7 @@ def test_order_string_representation():
         status="pending",
         created_at=datetime.utcnow(),
     )
-    
+
     string_repr = str(order)
     assert "SELL" in string_repr
     assert "20" in string_repr

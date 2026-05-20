@@ -38,14 +38,14 @@ class SentimentEnsemble:
                         nltk.download('vader_lexicon', quiet=True)
                     else:
                         raise
-                
+
                 from nltk.sentiment import SentimentIntensityAnalyzer
                 self._vader = SentimentIntensityAnalyzer()
                 logger.info("VADER loaded")
             except Exception as e:
                 logger.warning("VADER init failed: %s", e)
                 self.use_vader = False
-        
+
         if self.use_finbert:
             # Try Serverless API first if token is available (Free Tier Optimization)
             if self.hf_token:
@@ -108,7 +108,7 @@ class SentimentEnsemble:
                     )
                     def query_api(t):
                         return self._hf_client.text_classification(t[:512])
-                    
+
                     res = query_api(text)
                     if res:
                         best = max(res, key=lambda x: x["score"])

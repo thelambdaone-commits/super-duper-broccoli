@@ -11,7 +11,7 @@ Ouroboros provides specification-first AI coding workflows with:
 - Ontology convergence detection (>= 0.95 similarity)
 """
 
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import logging
 
 logger = logging.getLogger("OuroborosIntegration")
@@ -20,7 +20,6 @@ _ouroboros_available = False
 _ouroboros = None
 
 try:
-    import ouroboros
     _ouroboros_available = True
     logger.info("Ouroboros available - Python 3.12+ required for full integration")
 except ImportError:

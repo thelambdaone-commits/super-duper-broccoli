@@ -1,4 +1,3 @@
-import pytest
 import pandas as pd
 from models.predictive_engine import PolymarketPredictiveEngine
 
@@ -7,7 +6,7 @@ def test_predictive_engine_min_edge_rejection() -> None:
     """Verifies that signals with edges < 7% are rejected, and >= 7% are approved."""
     # Initialize engine with 7% edge threshold
     engine = PolymarketPredictiveEngine(min_edge_threshold=0.07, allow_mock_predictions=True)
-    
+
     # 1. Edge < 7% (probability 55%, price 0.50 -> edge 5%)
     engine._get_mock_prediction = lambda: 0.55
     res = engine.predict_winning_bet(
@@ -32,7 +31,7 @@ def test_predictive_engine_min_edge_rejection() -> None:
 def test_predictive_engine_kelly_sizing() -> None:
     """Validates that edge-based Kelly Sizing matches correct mathematical payout fractions."""
     engine = PolymarketPredictiveEngine(min_edge_threshold=0.07)
-    
+
     # Probability = 60%, Price = 0.50
     # payout = (1.0 - 0.5) / 0.5 = 1.0
     # q = 0.40

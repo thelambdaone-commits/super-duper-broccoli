@@ -1,0 +1,24 @@
+{
+    "trading_mode": "CONTINUOUS",
+    "active_providers": ["BINANCE", "YFINANCE"],
+    "polymarket_enabled": true,
+    "continuous_markets": {
+        "binance": {
+            "tickers": ["BTCUSDT", "ETHUSDT"],
+            "candle_interval": "5m",
+            "prediction_horizon": 3
+        },
+        "yfinance": {
+            "tickers": ["SPY", "QQQ"],
+            "candle_interval": "5m",
+            "prediction_horizon": 3
+        }
+    },
+    "yfinance": {
+        "cache_dir": "user_data/data/yfinance_cache"
+    },
+    "binance": {
+        "ws_base_url": "wss://stream.binance.com:9443/ws",
+        "rest_base_url": "https://api.binance.com"
+    }
+}

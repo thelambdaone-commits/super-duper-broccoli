@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import List, Tuple, Generator, Optional, Callable
+from typing import List, Tuple, Generator, Optional
 from itertools import combinations
 from sklearn.metrics import log_loss
 

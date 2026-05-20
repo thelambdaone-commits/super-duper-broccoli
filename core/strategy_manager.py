@@ -24,12 +24,12 @@ class StrategyManager:
             if filename.endswith(".py") and not filename.startswith("__"):
                 module_name = filename[:-3]
                 file_path = os.path.join(self.strategies_dir, filename)
-                
+
                 try:
                     spec = importlib.util.spec_from_file_location(module_name, file_path)
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
-                    
+
                     # Look for a class that ends with 'Strategy'
                     for attr_name in dir(module):
                         if attr_name.endswith("Strategy"):

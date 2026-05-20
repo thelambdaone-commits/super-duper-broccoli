@@ -1,6 +1,5 @@
 import os
 from unittest.mock import patch
-import pytest
 from utils.rpc_provider import (
     get_rpc_url,
     resolve_rpc_with_fallback,

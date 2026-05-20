@@ -23,7 +23,7 @@ def test_wallet_manager_init():
         mock_w3 = Mock()
         mock_w3.is_connected.return_value = True
         MockWeb3.return_value = mock_w3
-        
+
         with patch('utils.wallet_manager.resolve_rpc_with_fallback') as mock_rpc:
             mock_rpc.return_value = "https://polygon-rpc.com"
             manager = WalletManager()
@@ -37,16 +37,16 @@ def test_wallet_manager_is_valid_address():
         mock_w3 = Mock()
         mock_w3.is_connected.return_value = True
         MockWeb3.return_value = mock_w3
-        
+
         with patch('utils.wallet_manager.resolve_rpc_with_fallback') as mock_rpc:
             mock_rpc.return_value = "https://polygon-rpc.com"
             manager = WalletManager()
-            
+
             # Valid address
             with patch('utils.wallet_manager.Web3.to_checksum_address') as mock_checksum:
                 mock_checksum.return_value = "0x742d35Cc6634C0532925a3b844Bc9e7595f42dE"
                 assert manager.is_valid_address("0x742d35Cc6634C0532925a3b844Bc9e7595f42dE")
-            
+
             # Invalid address
             with patch('utils.wallet_manager.Web3.to_checksum_address') as mock_checksum:
                 mock_checksum.side_effect = Web3ValidationError("Invalid address")
@@ -61,12 +61,12 @@ def test_wallet_manager_health_check():
         mock_block = {"number": 12345}
         mock_w3.eth.get_block.return_value = mock_block
         MockWeb3.return_value = mock_w3
-        
+
         with patch('utils.wallet_manager.resolve_rpc_with_fallback') as mock_rpc:
             mock_rpc.return_value = "https://polygon-rpc.com"
             manager = WalletManager()
             health = manager.health_check()
-            
+
             assert health["status"] == "healthy"
             assert health["connected"] == True
             assert health["chain_id"] == 137
@@ -82,12 +82,12 @@ def test_get_eth_balance():
         mock_w3.from_wei.return_value = 1.0
         mock_w3.to_checksum_address.return_value = "0x742d35Cc6634C0532925a3b844Bc9e7595f42dE"
         MockWeb3.return_value = mock_w3
-        
+
         with patch('utils.wallet_manager.resolve_rpc_with_fallback') as mock_rpc:
             mock_rpc.return_value = "https://polygon-rpc.com"
             manager = WalletManager()
             balance = manager.get_eth_balance("0x742d35Cc6634C0532925a3b844Bc9e7595f42dE")
-            
+
             assert balance == 1.0
 
 
@@ -97,11 +97,11 @@ def test_format_balance_report():
         mock_w3 = Mock()
         mock_w3.is_connected.return_value = True
         MockWeb3.return_value = mock_w3
-        
+
         with patch('utils.wallet_manager.resolve_rpc_with_fallback') as mock_rpc:
             mock_rpc.return_value = "https://polygon-rpc.com"
             manager = WalletManager()
-            
+
             with patch.object(manager, 'get_snapshot') as mock_snapshot:
                 snapshot = WalletSnapshot(
                     wallet_address="0x742d35Cc6634C0532925a3b844Bc9e7595f42dE",
@@ -118,9 +118,9 @@ def test_format_balance_report():
                     eth_balance=1.5,
                 )
                 mock_snapshot.return_value = snapshot
-                
+
                 report = manager.format_balance_report("0x742d35Cc6634C0532925a3b844Bc9e7595f42dE")
-                
+
                 assert "💰" in report
                 assert "Wallet Balances" in report
                 assert "MATIC" in report

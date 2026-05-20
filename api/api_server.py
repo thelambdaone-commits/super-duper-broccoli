@@ -1,9 +1,9 @@
 import logging
-import os
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -14,7 +14,6 @@ from core.freqai_engine import FreqAIEngine
 from core.portfolio_risk_engine import PortfolioRiskEngine
 from execution.passive_executor import PassiveExecutor
 from ledger.ledger_db import Ledger
-from core.performance_attribution import PerformanceAttribution
 from mcp_agents.mcp_server import (
     initialize as mcp_initialize,
     get_ledger_state,
@@ -37,7 +36,6 @@ from utils.crypto_market_intelligence import (
 from utils.feature_store import FeatureStore
 from utils.polymarket_client import PolymarketClient
 from utils.regime_utils import get_regime_label
-from utils.vault_handler import VaultHandler
 
 # New module imports
 from models.volatility_surface import VolSurfaceAdapter
@@ -115,7 +113,7 @@ class MispricingRequest(BaseModel):
 async def lifespan(app: FastAPI):
     global _ledger, _freqai, _hmm, _risk, _store, _executor, _arb, _sentiment, _market_intel, _poly_client
     global _vol_surface, _earnings, _chart_detector, _sentiment_ensemble, _portfolio_opt, _macro, _backtester
-    
+
     container = ServiceContainer.get_instance()
     _ledger = container.ledger
     _freqai = container.freqai
@@ -123,12 +121,12 @@ async def lifespan(app: FastAPI):
     _risk = container.risk
     _store = container.store
     _executor = container.executor
-    
+
     _arb = ArbitrageScanner()
     _sentiment = SentimentAnalyzer(use_finbert=True)
     _market_intel = CryptoMarketIntelligence()
     _poly_client = PolymarketClient()
-    
+
     _vol_surface = container.vol_surface or VolSurfaceAdapter()
     _earnings = container.earnings or EarningsSentimentPipeline(use_huggingface=True)
     _chart_detector = container.chart_detector or ChartPatternDetector()
@@ -136,7 +134,7 @@ async def lifespan(app: FastAPI):
     _portfolio_opt = container.portfolio_opt or PortfolioOptimizer(method="mean_variance")
     _macro = container.macro or MacroIntelligence()
     _backtester = container.backtester or Backtester(initial_capital=10000.0)
-    
+
     mcp_initialize(
         ledger=_ledger, hmm_filter=_hmm, risk_engine=_risk,
         feature_store=_store, passive_executor=_executor, arb_scanner=_arb,
@@ -158,6 +156,14 @@ app = FastAPI(
     description="REST API for Polymarket CLOB trading bot",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

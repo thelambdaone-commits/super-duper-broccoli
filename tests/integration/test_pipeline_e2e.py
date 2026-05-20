@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
 from core.orchestrator import LobstarOrchestrator
 from core.services.circuit_breaker import CircuitBreakerConfig, CircuitBreakerService
 from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
-from core.services.signal_router import SignalRouter, SignalRouterContext
+from core.services.signal_router import SignalRouter
 
 
 class FakeSnapshotManager:

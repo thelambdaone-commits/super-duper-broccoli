@@ -1,7 +1,6 @@
 import asyncio
 import logging
-import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 from datetime import datetime, timezone
 
 logger = logging.getLogger("AdaptiveRetraining")

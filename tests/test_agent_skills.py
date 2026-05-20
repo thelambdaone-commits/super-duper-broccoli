@@ -13,7 +13,7 @@ class TestAgentSkillsSystem(unittest.TestCase):
         """Verifies that the registry dynamically parses manifests in subfolders."""
         skills = self.registry.list_skills()
         self.assertGreaterEqual(len(skills), 6)
-        
+
         ids = {s.get("id") for s in skills}
         self.assertIn("market_scanner_skill", ids)
         self.assertIn("portfolio_risk_skill", ids)
@@ -26,7 +26,7 @@ class TestAgentSkillsSystem(unittest.TestCase):
         """Verifies that OpenAI/Anthropic parameter schemas compile correctly."""
         tools = self.registry.get_tool_definitions()
         self.assertGreaterEqual(len(tools), 6)
-        
+
         names = {t.get("name") for t in tools}
         self.assertIn("scan_polymarket", names)
         self.assertIn("calculate_kelly_size", names)

@@ -1,4 +1,3 @@
-import pytest
 import builtins
 
 from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline, EarningsResult

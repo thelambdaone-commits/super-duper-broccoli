@@ -1,8 +1,6 @@
 import ast
 import logging
 import os
-import re
-from collections import Counter
 from typing import Any, Optional
 
 from continuous_improvement.skills import ALL_SKILLS

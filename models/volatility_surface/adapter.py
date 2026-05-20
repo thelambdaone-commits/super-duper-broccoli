@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from models.volatility_surface.ssvi import SSVIParams, sample_params, surface_grid
+from models.volatility_surface.ssvi import sample_params, surface_grid
 from models.volatility_surface.arbitrage import arbitrage_report
 from models.volatility_surface.metrics import surface_rmse
 

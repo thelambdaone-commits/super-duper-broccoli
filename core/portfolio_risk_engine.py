@@ -104,7 +104,7 @@ class PortfolioRiskEngine:
     def _update_drawdown_tracking(self, current_capital: float) -> Optional[str]:
         if current_capital > self._peak_equity:
             self._peak_equity = current_capital
-            
+
         if hasattr(self.ledger, "get_global_drawdown"):
             global_drawdown_raw = self.ledger.get_global_drawdown()
             try:
@@ -120,7 +120,7 @@ class PortfolioRiskEngine:
                 except Exception as e:
                     logger.error(f"Failed to engage emergency circuit breaker: {e}")
                 return f"GLOBAL_DRAWDOWN_TRIPPED:{global_drawdown*100:.1f}%"
-                
+
         if self._peak_equity > 0:
             drawdown = (self._peak_equity - current_capital) / self._peak_equity
             if drawdown >= self.max_trailing_drawdown_pct:
@@ -286,6 +286,87 @@ class PortfolioRiskEngine:
             return False, "CONCENTRATION_LIMIT"
 
         return True, "OK"
+
+
+    # ── Continuous market sizing (additive, no binary Polymarket overlap) ──
+
+    def compute_continuous_position_size(
+        self,
+        ticker: str,
+        side: str,
+        price: float,
+        prob_up: float = 0.55,
+        expected_return: float = 0.0,
+        asset_volatility: float = 0.5,
+        regime_label: str = "LOW_VOLATILITY",
+        confidence: float = 0.5,
+        kelly_fraction: float = 0.25,
+    ) -> dict:
+        cap = self.ledger.get_capital_summary()
+        total = cap.get("total_capital", 10_000.0)
+        available = cap.get("available_capital", total)
+
+        if total <= 0:
+            return self._zero_size_result("NO_CAPITAL")
+
+        dd_reason = self._update_drawdown_tracking(total)
+        if dd_reason is not None:
+            return self._zero_size_result(dd_reason)
+
+        if price <= 0:
+            return self._zero_size_result("INVALID_PRICE")
+
+        if regime_label in BLOCKED_REGIMES:
+            return self._zero_size_result(f"HMM_BLOCKED:{regime_label}")
+
+        win_prob = max(0.01, min(float(prob_up), 0.99))
+        if expected_return != 0.0 and asset_volatility > 0:
+            win_loss_ratio = 1.0 + abs(expected_return) / max(asset_volatility, 0.01)
+        else:
+            win_loss_ratio = 1.5
+
+        base_kelly = self._kelly_size(win_prob, win_loss_ratio, total)
+        base_vol = self._vol_target_size(total, asset_volatility)
+        single_position_cap = total * self.max_single_position_pct
+        base_notional = min(base_kelly, base_vol, single_position_cap)
+
+        regime_multiplier = self._regime_multiplier(regime_label, confidence)
+        sized_notional = min(regime_multiplier * base_notional, max(0.0, available))
+        sized_notional *= kelly_fraction
+
+        if hasattr(self.ledger, "get_execution_mode"):
+            mode = self.ledger.get_execution_mode()
+            if mode in ("PROD", "SHADOW"):
+                sized_notional = min(sized_notional, 6.0)
+
+        ticker_base = ticker.split("-")[0] if "-" in ticker else ticker
+        beta = self._beta_to_btc.get(ticker_base, 0.5)
+
+        if not self._check_concentration(ticker, sized_notional, total):
+            sized_notional = self.max_concentration_pct * total - self._exposures.get(ticker, 0.0)
+
+        if not self._check_correlated_drawdown(sized_notional, beta, total):
+            current_net = self.net_beta_exposure_pct / 100.0 * total
+            sized_notional = (
+                self.max_correlated_drawdown_pct * total - current_net
+                if beta <= 0 else (self.max_correlated_drawdown_pct * total - current_net) / beta
+            )
+
+        final_notional = max(0.0, min(sized_notional, max(0.0, available)))
+        final_size = final_notional / price
+
+        return {
+            "size": final_size,
+            "capital_at_risk": final_notional,
+            "kelly_pct": base_kelly / total * 100 if total > 0 else 0.0,
+            "vol_target_pct": base_vol / total * 100 if total > 0 else 0.0,
+            "regime_multiplier": regime_multiplier,
+            "net_beta_exposure_pct": self.net_beta_exposure_pct,
+            "single_position_cap_pct": self.max_single_position_pct * 100.0,
+            "prob_up": win_prob,
+            "expected_return": expected_return,
+            "reason": "OK" if final_size > 0 else "RISK_CAP_ZERO",
+        }
 
 
 class _NullLedger:

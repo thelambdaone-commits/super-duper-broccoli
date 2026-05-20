@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ExecutionMode = Literal["REPLAY", "PAPER", "SHADOW", "PROD"]
@@ -53,7 +53,7 @@ class AppSettings(BaseSettings):
     mistral_api_key: str | None = None
     deepseek_api_key: str | None = None
     huggingface_api_key: str | None = None
-    
+
     # Brave Search is deprecated in favor of RSS news feeds
     brave_search_api_key: str | None = None
     news_feeds: str = ""

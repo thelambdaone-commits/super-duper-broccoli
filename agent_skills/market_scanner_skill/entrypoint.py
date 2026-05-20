@@ -5,7 +5,7 @@ def scan_polymarket(limit: int = 30) -> dict:
     scanner = MarketScanner()
     result = scanner.scan_markets()
     sentiment = scanner.get_aggregate_sentiment()
-    
+
     return {
         "status": "SUCCESS",
         "limit_scanned": limit,

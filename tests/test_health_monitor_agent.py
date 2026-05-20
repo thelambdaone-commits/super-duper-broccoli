@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import MagicMock, AsyncMock
 import pytest
-from pathlib import Path
 from agents.health_monitor_agent import HealthMonitorAgent, HealthMonitorConfig
 
 
@@ -67,7 +65,7 @@ async def test_health_monitor_emit_heartbeat() -> None:
 async def test_health_monitor_maintain_feature_store() -> None:
     store = FakeFeatureStore()
     agent = HealthMonitorAgent(feature_store=store)
-    
+
     res = await agent.maintain_feature_store()
     assert res["status"] == "ok"
     assert res["removed"] == 42
@@ -79,7 +77,7 @@ async def test_health_monitor_maintain_feature_store() -> None:
 async def test_health_monitor_reconcile_ledger() -> None:
     ledger = FakeLedger({"available_capital": 1000.0})
     agent = HealthMonitorAgent(ledger=ledger)
-    
+
     res = await agent.reconcile_ledger()
     assert res["status"] == "ok"
     assert res["capital_summary"]["available_capital"] == 1000.0
@@ -88,7 +86,7 @@ async def test_health_monitor_reconcile_ledger() -> None:
 @pytest.mark.asyncio
 async def test_health_monitor_check_memory_under_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = HealthMonitorAgent(config=HealthMonitorConfig(max_memory_rss_mb=100.0))
-    
+
     # Mock psutil memory rss to be 50MB (well under 100MB limit)
     class FakeMemoryInfo:
         rss = 50.0 * 1024.0 * 1024.0
@@ -110,7 +108,7 @@ async def test_health_monitor_check_memory_under_limit(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_health_monitor_check_memory_over_limit_triggers_gc(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = HealthMonitorAgent(config=HealthMonitorConfig(max_memory_rss_mb=100.0))
-    
+
     # Mock psutil memory rss to be 150MB (over 100MB limit)
     class FakeMemoryInfo:
         rss = 150.0 * 1024.0 * 1024.0
@@ -138,7 +136,7 @@ async def test_health_monitor_run_once() -> None:
     store = FakeFeatureStore()
     ledger = FakeLedger({"available_capital": 100.0})
     agent = HealthMonitorAgent(feature_store=store, ledger=ledger)
-    
+
     res = await agent.run_once()
     assert "heartbeat" in res
     assert "memory" in res
@@ -150,15 +148,15 @@ async def test_health_monitor_run_once() -> None:
 @pytest.mark.asyncio
 async def test_health_monitor_run_forever_graceful_cancel() -> None:
     agent = HealthMonitorAgent()
-    
+
     # We execute run_forever but cancel it right away
     task = asyncio.create_task(agent.run_forever(poll_interval=0.01))
     await asyncio.sleep(0.02)
     task.cancel()
-    
+
     try:
         await task
     except asyncio.CancelledError:
         pass
-        
+
     assert task.done()

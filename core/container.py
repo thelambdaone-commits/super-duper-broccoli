@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from core.freqai_engine import FreqAIEngine
 from core.portfolio_risk_engine import PortfolioRiskEngine
@@ -12,6 +12,16 @@ from utils.feature_store import FeatureStore
 from utils.notifier import TelegramNotifier
 from utils.vault_handler import VaultHandler
 
+if TYPE_CHECKING:
+    from models.volatility_surface import VolSurfaceAdapter
+    from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline
+    from utils.chart_pattern_detector import ChartPatternDetector
+    from utils.sentiment_ensemble import SentimentEnsemble
+    from models.portfolio import PortfolioOptimizer
+    from utils.macro_intelligence import MacroIntelligence
+    from engine.backtest import Backtester
+    from utils.feature_factory import FeatureFactory
+
 logger = logging.getLogger("ServiceContainer")
 
 class ServiceContainer:
@@ -20,9 +30,9 @@ class ServiceContainer:
     def __init__(self) -> None:
         self.vault = VaultHandler()
         self.secrets = self.vault.fetch_quantum_secrets()
-        
+
         self.ledger = Ledger()
-        
+
         # Resolve active proxy/funder wallet
         from utils.credential_manager import CredentialManager
         funder = None
@@ -40,7 +50,7 @@ class ServiceContainer:
                         pass
         except Exception as e:
             logger.warning(f"Unable to load active proxy wallet: {e}")
-            
+
         self.freqai = FreqAIEngine(
             private_key=self.secrets["CLOB_PRIVATE_KEY"],
             api_key=self.secrets["CLOB_API_KEY"],
@@ -51,7 +61,7 @@ class ServiceContainer:
         self.hmm = HMMRegimeFilter()
         self.risk = PortfolioRiskEngine(ledger=self.ledger, hmm_filter=self.hmm)
         self.risk.rehydrate_from_ledger(self.ledger)
-        
+
         # Determine store path
         default_data_dir = os.getenv("DATA_PATH", "user_data/data")
         api_store_path = os.getenv(
@@ -59,7 +69,7 @@ class ServiceContainer:
             os.path.join(default_data_dir, "feature_store.duckdb"),
         )
         self.store = FeatureStore(db_path=api_store_path)
-        
+
         self.notifier = TelegramNotifier(
             bot_token=self.secrets.get("TELEGRAM_BOT_TOKEN"),
             chat_id=os.getenv("CHAT_ID"),
@@ -133,7 +143,7 @@ class ServiceContainer:
             logger.warning(f"Backtester init failed: {e}")
         try:
             from utils.feature_factory import FeatureFactory
-            self.feature_factory = FeatureFactory
+            self.feature_factory = FeatureFactory()
         except Exception as e:
             logger.warning(f"FeatureFactory init failed: {e}")
 
@@ -146,11 +156,11 @@ class ServiceContainer:
     async def sync_real_capital(self) -> None:
         """Syncs the ledger with real-world capital if RPC is available."""
         from core.wallet_manager import PolymarketWalletManager
-        
+
         wallet_address = os.getenv("POLYMARKET_WALLET_ADDRESS") or os.getenv("WALLET_ADDRESS")
         proxy_address = os.getenv("POLYMARKET_PROXY_WALLET_ADDRESS") or os.getenv("PROXY_WALLET_ADDRESS")
         rpc_url = self.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL")
-        
+
         if not wallet_address or not rpc_url:
             logger.warning("Capital sync skipped: WALLET_ADDRESS or POLYGON_RPC_URL missing.")
             return
@@ -159,7 +169,7 @@ class ServiceContainer:
             mgr = PolymarketWalletManager(self.vault, polygon_rpc_url=rpc_url)
             balances = await mgr.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
             real_total = balances.get("usdc_balance", 0.0)
-            
+
             if real_total > 0:
                 self.ledger.sync_capital(real_total)
                 # Re-rehydrate risk to be sure

@@ -10,13 +10,13 @@ def main():
     print("=======================================")
     print("🧠 LOBSTAR MLOPS & PREDICTION TRACKING AUDIT")
     print("=======================================")
-    
+
     # 1. Store stats
     stats = store.get_stats()
     print("\n[DB TABLE COUNTS]")
     for table, count in stats.items():
         print(f"  • {table}: {count} rows")
-        
+
     # 2. Query decisions
     print("\n[LATEST DECISIONS LOGGED]")
     try:

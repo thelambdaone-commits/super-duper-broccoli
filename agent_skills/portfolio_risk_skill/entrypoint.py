@@ -14,7 +14,7 @@ def calculate_kelly_size(
     # Use a sandboxed ledger to prevent db locks
     db_path = "user_data/data/skills_transient.db"
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    
+
     ledger = Ledger(db_path=db_path)
     # Ensure standard capital allocation is present
     cursor = ledger.conn.cursor()
@@ -23,10 +23,10 @@ def calculate_kelly_size(
         "VALUES (1, 10000.0, 10000.0, 10.0)"
     )
     ledger.conn.commit()
-    
+
     hmm = HMMRegimeFilter()
     risk = PortfolioRiskEngine(ledger=ledger, hmm_filter=hmm)
-    
+
     sizing = risk.compute_position_size(
         ticker=ticker,
         side=side,
@@ -34,7 +34,7 @@ def calculate_kelly_size(
         confidence=confidence,
         regime_label=regime
     )
-    
+
     return {
         "status": "SUCCESS",
         "ticker": ticker.upper(),

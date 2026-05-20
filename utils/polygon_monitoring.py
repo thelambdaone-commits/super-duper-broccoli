@@ -1,9 +1,6 @@
 import asyncio
 import json
 import logging
-import os
-import time
-import requests
 import websockets
 from typing import Any, Callable, Optional
 
@@ -52,7 +49,7 @@ class PolygonMonitor:
             "method": "eth_subscribe",
             "params": ["newHeads"] # Changed to newHeads for general block tracking
         }
-        
+
         while self._running:
             try:
                 async with websockets.connect(self.ws_url) as ws:
@@ -106,7 +103,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     async def dummy_callback(event):
         print(f"EVENT: {event}")
-    
+
     monitor = PolygonMonitor(callback=dummy_callback)
     try:
         asyncio.run(monitor.start())

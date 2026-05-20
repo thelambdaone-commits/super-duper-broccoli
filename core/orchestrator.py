@@ -3,9 +3,7 @@ import logging
 import os
 import time
 from typing import Any, Dict, List, Optional
-from pydantic import SecretStr
 
-from utils.exceptions import QuantFatal
 from utils.presentation_formatters import (
     format_cognitive_decision_notification,
     format_execution_notification,
@@ -52,7 +50,7 @@ class LobstarOrchestrator:
         self.circuit_breaker_service = self._normalize_circuit_breaker(circuit_breaker)
         self.predictive_gate_service = predictive_gate_service or self._normalize_predictive_gate()
         self.signal_router = signal_router or self._normalize_signal_router()
-        
+
         # Distributed Memory Access
         self._swarm = None
         try:
@@ -98,7 +96,7 @@ class LobstarOrchestrator:
                 if copy_sig:
                     # Enqueue the enriched copy signal for full cognitive & risk processing
                     await self._enqueue_signal(copy_sig)
-                    return 
+                    return
             except Exception as e:
                 logger.error(f"Error in copy trading fast-path: {e}")
         # ─────────────────────────────────────────────────────────────────────
@@ -191,10 +189,10 @@ class LobstarOrchestrator:
 
             from utils.message_formatter import InstitutionalMessageFormatter
             confirmation = InstitutionalMessageFormatter.format_trade_execution_html(result)
-            
+
             chat_id = signal.get("chat_id")
             update = signal.get("update")
-            
+
             if update is not None and update.message:
                 await self.listener.reply_to(confirmation, update, parse_mode="HTML")
             elif chat_id:
@@ -665,37 +663,37 @@ class LobstarOrchestrator:
         Résout le problème des boutons qui ne répondent pas et actualise l'affichage en place.
         """
         query = update.callback_query
-        
+
         # 1. CRITIQUE : Dit à Telegram que le clic a été reçu (Arrête le chargement infini)
         await query.answer()
-        
+
         # Récupération des données du bouton cliqué
         action = query.data
         chat_id = query.message.chat_id
         message_id = query.message.message_id
-        
+
         logger.info(f"🔘 [COCKPIT] Button clicked: {action} by user {query.from_user.id}")
-        
+
         # Gestion des actions du portefeuille
         if action == "wallet_refresh":
             # Récupération des nouveaux soldes en direct
             from core.wallet_manager import PolymarketWalletManager
             wallet_manager = PolymarketWalletManager(vault_handler=None, polygon_rpc_url="")
-            
+
             # Simulation des soldes réels (à remplacer par l'appel RPC réel)
             soldes = {
                 "usdc_direct": 0.00,
                 "usdc_proxy": 10.00,  # Tes 10 dollars détectés en pUSD !
                 "eth_balance": 19.9692
             }
-            
+
             texte_mis_a_jour, keyboard = wallet_manager.generer_layout_telegram(
                 wallet_name="session",
                 wallet_address="0xdc5585...cf614E",
                 soldes=soldes,
                 total_connections=1
             )
-            
+
             # Mise à jour en place de l'affichage sans réémettre un message
             await context.bot.edit_message_text(
                 chat_id=chat_id,
@@ -705,7 +703,7 @@ class LobstarOrchestrator:
                 parse_mode="Markdown"
             )
             logger.info("🔄 [COCKPIT] Soldes mis à jour et réaffichage propre validé.")
-            
+
         elif action == "wallet_history":
             ledger = getattr(self.container, 'ledger', None)
             if ledger:
@@ -753,7 +751,7 @@ class LobstarOrchestrator:
             else:
                 text = "💰 *PnL*\nLedger non disponible."
             await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="Markdown")
-            
+
         elif action == "wallet_show_key":
             # Affichage de la clé privée (avec sécurité)
             await context.bot.edit_message_text(
@@ -762,7 +760,7 @@ class LobstarOrchestrator:
                 text="🔑 *Clé privée* :\n⚠️ **NE JAMAIS PARTAGER CETTE CLÉ**\n`0xdc5585...cf614E`",
                 parse_mode="Markdown"
             )
-            
+
         elif action == "wallet_change":
             # Affichage du sélecteur de portefeuille
             await context.bot.edit_message_text(
@@ -771,7 +769,7 @@ class LobstarOrchestrator:
                 text="🔀 *Changer de portefeuille* :\nSélectionnez un portefeuille sauvegardé ou importez-en un nouveau.",
                 parse_mode="Markdown"
             )
-            
+
         elif action == "wallet_disconnect":
             # Déconnexion avec confirmation
             await context.bot.edit_message_text(
@@ -780,7 +778,7 @@ class LobstarOrchestrator:
                 text="❌ *Portefeuille déconnecté avec succès*.\nLes clés ont été purgées de la RAM.",
                 parse_mode="Markdown"
             )
-            
+
         elif action == "menu_main":
             # Retour au menu principal
             from utils.message_formatter import format_main_menu

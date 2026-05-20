@@ -1,6 +1,5 @@
 import os
 import pytest
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from ledger.ledger_db import Ledger
 from utils.exceptions import QuantFatal
@@ -24,7 +23,7 @@ def test_ledger_initialization(temp_ledger):
 def test_execution_mode_persistence(temp_ledger):
     temp_ledger.set_execution_mode("SHADOW")
     assert temp_ledger.get_execution_mode() == "SHADOW"
-    
+
     temp_ledger.set_execution_mode("PROD")
     assert temp_ledger.get_execution_mode() == "PROD"
 
@@ -45,12 +44,12 @@ def test_capital_allocation_and_reserve(temp_ledger):
         "VALUES (10000.0, 10000.0, 10.0)"
     )
     temp_ledger.conn.commit()
-    
+
     # Test valid reservation (10% of 10000 = 1000)
     res = temp_ledger.validate_and_reserve("SOL", "BUY", 0.5, 1000)
     assert res["authorized"] is True
     assert res["size"] == 1000
-    
+
     # Test adjustment by circuit breaker (2000 > 1000 hard cap)
     res = temp_ledger.validate_and_reserve("SOL", "BUY", 0.5, 4000)
     assert res["authorized"] is True
@@ -70,7 +69,7 @@ def test_record_order_updates_capital(temp_ledger):
         "VALUES (10000.0, 10000.0, 10.0)"
     )
     temp_ledger.conn.commit()
-    
+
     temp_ledger.record_order(
         "pos-1",
         "SOL",
@@ -82,10 +81,10 @@ def test_record_order_updates_capital(temp_ledger):
         execution_price=0.5,
         notional_usd=500.0,
     )
-    
+
     summary = temp_ledger.get_capital_summary()
     assert summary["available_capital"] == 9500.0 # 10000 - (0.5 * 1000)
-    
+
     positions = temp_ledger.get_open_positions()
     assert len(positions) == 1
     assert positions[0]["ticker"] == "SOL"

@@ -1,7 +1,6 @@
 import logging
 import os
 import warnings
-import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -80,12 +79,12 @@ class EarningsSentimentPipeline:
                     logger.info("Using HF Serverless Inference API for %s", self.hf_model)
                 except Exception as e:
                     logger.warning("Failed to init HF InferenceClient: %s", e)
-            
+
             if self._hf_client:
                 try:
                     # Serverless API can return 503 if model is loading
                     from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_message
-                    
+
                     @retry(
                         stop=stop_after_attempt(3),
                         wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -124,7 +123,7 @@ class EarningsSentimentPipeline:
             except Exception as e:
                 logger.warning("Failed to load local HF model %s: %s", self.hf_model, e)
                 return self._keyword_sentiment(text)
-        
+
         try:
             result = self._hf_pipeline(text[:512])[0]
             label = result["label"].upper()

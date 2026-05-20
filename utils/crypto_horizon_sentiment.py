@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable
 
 from utils.crypto_market_intelligence import CryptoMarketIntelligence
 from utils.polymarket_client import Market, PolymarketClient
@@ -289,10 +288,10 @@ def format_horizon_sentiment(sentiment: HorizonSentiment | None, asset: str, hor
 
     header_emoji = {"BULLISH": "📈", "BEARISH": "📉", "NEUTRAL": "⚖️"}.get(sentiment.sentiment, "💎")
     direction_arrow = {"BULLISH": "UP 🟢", "BEARISH": "DOWN 🔴", "NEUTRAL": "FLAT 🟡"}.get(sentiment.sentiment, sentiment.sentiment)
-    
+
     is_proxy = (sentiment.market_slug == "composite-proxy-btc-eth-sol")
     proxy_suffix = " [PROXY HEDGE 🌐]" if is_proxy else ""
-    
+
     pct = sentiment.probability * 100.0
     bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
 

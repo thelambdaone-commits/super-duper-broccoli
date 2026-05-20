@@ -4,7 +4,6 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
@@ -280,9 +279,6 @@ class PolymarketClient:
         if not isinstance(data, list):
             return []
         return [_parse_market(m) for m in data if _has_condition_id(m)]
-
-        self._cache_set(cache_key, data)
-        return data
 
     def deep_scrape_market(self, slug: str) -> Optional[str]:
         """Uses Scrapling to fetch deep market rules and context from the web UI."""

@@ -1,6 +1,5 @@
 
 import sys
-import os
 from pathlib import Path
 
 # Add project root to path
@@ -10,15 +9,15 @@ from utils.market_discovery import MarketDiscovery, format_market_discovery, for
 
 def main():
     discovery = MarketDiscovery()
-    
+
     print("Searching for best markets...")
     scored_markets = discovery.discover_markets(limit=5, min_score=40.0)
     print("\n" + format_market_discovery(scored_markets))
-    
+
     print("\nSearching for betting opportunities (arbitrage/spreads)...")
     opportunities = discovery.find_betting_opportunities(min_edge_percent=3.0)
     print("\n" + format_betting_opportunities(opportunities))
-    
+
     print("\nSearching for contrarian opportunities...")
     contrarian = discovery.get_contrarian_opportunities(limit=5)
     if contrarian:

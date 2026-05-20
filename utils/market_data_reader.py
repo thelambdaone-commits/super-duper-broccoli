@@ -1,8 +1,8 @@
 import logging
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional
 
-from utils.polymarket_client import PolymarketClient, Market
+from utils.polymarket_client import PolymarketClient
 
 logger = logging.getLogger("MarketDataReader")
 
@@ -200,17 +200,17 @@ class MarketDataReader:
             f"• Liquidity: `${snapshot.liquidity:,.0f}`",
             f"• Fees: `{snapshot.fee_rate_bps} bps`",
         ]
-        
+
         if snapshot.is_closed:
             lines.append("• Status: `CLOSED`")
         elif not snapshot.is_active:
             lines.append("• Status: `INACTIVE`")
         else:
             lines.append("• Status: `ACTIVE`")
-        
+
         if snapshot.end_date:
             lines.append(f"• Ends: `{snapshot.end_date}`")
-        
+
         return "\n".join(lines)
 
     def format_opportunity(self, opp: MarketOpportunity) -> str:
@@ -222,20 +222,20 @@ class MarketDataReader:
             f"• Spread: `{opp.spread:.2%}`",
             f"• Description: {opp.description}",
         ]
-        
+
         if opp.recommended_action:
             lines.append(f"• Action: {opp.recommended_action}")
-        
+
         return "\n".join(lines)
 
     def format_markets_list(self, markets: list[MarketSnapshot], limit: int = 5) -> str:
         """Format list of markets for display."""
         lines = [f"📊 **Top {min(len(markets), limit)} Markets**\n"]
-        
+
         for i, market in enumerate(markets[:limit], 1):
             lines.append(f"{i}. [{market.slug[:40]}...](https://polymarket.com/event/{market.slug})")
             lines.append(f"   YES: `{market.yes_price:.2f}` | NO: `{market.no_price:.2f}` | Vol: `${market.volume:,.0f}`")
-        
+
         return "\n".join(lines)
 
     def get_market_health_status(self, snapshot: MarketSnapshot) -> dict:
@@ -247,7 +247,7 @@ class MarketDataReader:
             "spread_reasonable": snapshot.spread < 0.20,  # <20%
             "fees_standard": snapshot.fee_rate_bps == 200,  # 2%
         }
-        
+
         health["overall_health"] = sum(health.values()) / len(health)
-        
+
         return health

@@ -3,14 +3,14 @@ import requests
 def main():
     eoa_address = "0xdc5585f67b57b9f5e1f7b57b9f5e1f7b57cf614E"
     print(f"Checking EOA: {eoa_address}")
-    
+
     # Try querying positions from data api
     try:
         url = f"https://data-api.polymarket.com/positions?user={eoa_address}"
         print(f"Querying: {url}")
         resp = requests.get(url, timeout=10)
         print(f"Status: {resp.status_code}")
-        
+
         if resp.status_code == 200:
             data = resp.json()
             print(f"Received positions: {len(data)} items")

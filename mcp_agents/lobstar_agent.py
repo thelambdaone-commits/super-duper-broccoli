@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict
 
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -22,7 +22,7 @@ LOBSTAR_SYSTEM_PROMPT = (
 class LobstarAgent:
     def __init__(self, api_key: Optional[str] = None) -> None:
         self.logger = logging.getLogger("LobstarAgent")
-        
+
         # Priority 1: Groq (Current default)
         self._groq_key = api_key or os.getenv("GROQ_API_KEY")
         self._nvidia_key = os.getenv("NVIDIA_API_KEY")
@@ -30,7 +30,7 @@ class LobstarAgent:
         self._deepseek_key = os.getenv("DEEPSEEK_API_KEY")
 
         self.clients: Dict[str, AsyncOpenAI] = {}
-        
+
         # Distributed Memory Access
         self._swarm = None
         try:
@@ -86,9 +86,9 @@ class LobstarAgent:
         retry=retry_if_exception_type(Exception),
     )
     async def _call_provider(
-        self, 
-        provider: str, 
-        texte_signal: str, 
+        self,
+        provider: str,
+        texte_signal: str,
         ml_context: Optional[dict] = None,
         tool_map: Optional[dict] = None
     ) -> dict:
@@ -102,18 +102,18 @@ class LobstarAgent:
             "MISTRAL": "mistral-tiny",
             "DEEPSEEK": "deepseek-chat"
         }
-        
+
         model = model_map.get(provider, "gpt-4o-mini")
-        
+
         system_prompt = LOBSTAR_SYSTEM_PROMPT
         if ml_context:
             system_prompt += f"\n\nML CONTEXT: {json.dumps(ml_context)}"
-            
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": texte_signal},
         ]
-        
+
         # Extra params for specific providers
         extra_params = {}
         # Only Groq and NVIDIA support tools/json_object consistently here
@@ -123,7 +123,7 @@ class LobstarAgent:
                 extra_params["tool_choice"] = "auto"
             else:
                 extra_params["response_format"] = {"type": "json_object"}
-            
+
         response = await client.chat.completions.create(
             model=model,
             messages=messages,
@@ -131,18 +131,18 @@ class LobstarAgent:
             max_tokens=300,
             **extra_params
         )
-        
+
         message = response.choices[0].message
-        
+
         # Handle Tool Calls
         if message.tool_calls:
             messages.append(message)
             for tool_call in message.tool_calls:
                 func_name = tool_call.function.name
                 func_args = json.loads(tool_call.function.arguments)
-                
+
                 self.logger.info(f"🛠️ LLM ({provider}) calling tool: {func_name}({func_args})")
-                
+
                 if tool_map and func_name in tool_map:
                     result = await tool_map[func_name](**func_args)
                     messages.append({
@@ -158,7 +158,7 @@ class LobstarAgent:
                         "name": func_name,
                         "content": "{\"error\": \"TOOL_NOT_AVAILABLE\"}",
                     })
-            
+
             # Second call after tools
             response = await client.chat.completions.create(
                 model=model,
@@ -177,13 +177,13 @@ class LobstarAgent:
             json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
                 content = json_match.group(0)
-                
+
         data = json.loads(content)
         data["provider"] = provider
         return data
 
     async def analyser_signal_contextuel(
-        self, 
+        self,
         texte_signal: str,
         ml_context: Optional[dict] = None,
         tool_map: Optional[dict] = None
@@ -199,7 +199,7 @@ class LobstarAgent:
 
         # 2. Check Swarm distributed cache (L2: Redis)
         import hashlib
-        h = hashlib.md5(texte_signal.encode("utf-8")).hexdigest()
+        h = hashlib.sha256(texte_signal.encode("utf-8")).hexdigest()
         cache_key = f"lobstar:cache:{h}"
         if self._swarm:
             distributed_val = await self._swarm.get_shared_value_async(cache_key)
@@ -220,20 +220,20 @@ class LobstarAgent:
 
         # LLM Fallback Chain: GROQ -> NVIDIA -> MISTRAL -> DEEPSEEK
         providers_to_try = ["GROQ", "NVIDIA", "MISTRAL", "DEEPSEEK"]
-        
+
         for provider in providers_to_try:
             if provider not in self.clients:
                 continue
-                
+
             try:
                 data = await self._call_provider(
-                    provider, 
-                    texte_signal, 
-                    ml_context=ml_context, 
+                    provider,
+                    texte_signal,
+                    ml_context=ml_context,
                     tool_map=tool_map
                 )
                 self._consecutive_failures = 0
-                
+
                 if "error" in data and data["error"] == "INVALID_SIGNAL":
                     self._cache[texte_signal] = (now, None)
                     if self._swarm:
@@ -244,7 +244,7 @@ class LobstarAgent:
                 self._cache[texte_signal] = (now, data)
                 if self._swarm:
                     self._swarm.set_shared_value(cache_key, [now, data])
-                    
+
                 self.logger.info(f"✅ Signal parsed successfully via {provider}")
                 return data
 
@@ -255,10 +255,10 @@ class LobstarAgent:
         # If all LLM providers fail
         self._consecutive_failures += 1
         self.logger.error(f"❌ All LLM providers failed (Total consecutive: {self._consecutive_failures})")
-        
+
         if self._consecutive_failures >= 3:
             self._fallback_active = True
             self._next_health_check = now + 300.0
             self.logger.critical("🚨 LLM STACK UNRESPONSIVE. DETERMINISTIC FALLBACK ACTIVATED for 5 minutes.")
-        
+
         return self._regex_fallback(texte_signal)

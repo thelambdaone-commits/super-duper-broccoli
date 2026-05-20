@@ -2,7 +2,7 @@ import logging
 import math
 from typing import Any, Dict, Optional
 
-from py_clob_client_v2 import ApiCreds, ClobClient, OrderArgs, OrderType, Side, PartialCreateOrderOptions
+from py_clob_client import ApiCreds, ClobClient, OrderArgs, OrderType, PartialCreateOrderOptions
 
 from utils.exceptions import QuantFatal
 from utils.secret_validation import validate_private_key_or_raise
@@ -29,7 +29,7 @@ class FreqAIEngine:
         try:
             if signature_type is None:
                 signature_type = 3 if funder else 0
-            
+
             self.client = ClobClient(
                 host=self.api_url,
                 key=self.private_key,
@@ -107,7 +107,7 @@ class FreqAIEngine:
                 side=order_side,
                 token_id=ticker,
             )
-            
+
             # Resolve tick size options if possible
             options = None
             market_filters = self._get_market_filters(ticker)
@@ -117,7 +117,7 @@ class FreqAIEngine:
                     tick_size = str(tick_size)
                 if tick_size in ('0.1', '0.01', '0.001', '0.0001'):
                     options = PartialCreateOrderOptions(tick_size=tick_size)
-            
+
             confirmation = self.client.create_and_post_order(order_args, options=options)
             logger.info(f"Order deployed: ID={confirmation.get('orderID')}")
             return confirmation
@@ -140,7 +140,7 @@ class FreqAIEngine:
                 side=order_side,
                 token_id=ticker,
             )
-            
+
             # Use negative risk options and tick size in V2 Options
             options = PartialCreateOrderOptions(neg_risk=False)
             market_filters = self._get_market_filters(ticker)
@@ -150,7 +150,7 @@ class FreqAIEngine:
                     tick_size = str(tick_size)
                 if tick_size in ('0.1', '0.01', '0.001', '0.0001'):
                     options = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=False)
-                    
+
             order = self.client.create_order(order_args, options=options)
             confirmation = self.client.post_order(
                 order,
@@ -203,21 +203,21 @@ class FreqAIEngine:
         try:
             # 1. Attempt to get book via client (more direct)
             book = self.client.get_order_book(token_id)
-            
+
             # 2. Extract bids and asks based on object type
             bids = []
             asks = []
-            
+
             if hasattr(book, "bids"):
                 bids = book.bids
                 asks = book.asks
             elif isinstance(book, dict):
                 bids = book.get("bids", [])
                 asks = book.get("asks", [])
-            
+
             if not bids or not asks:
                 return 0.0
-                
+
             # 3. Calculate mid-price
             def get_price(level):
                 if hasattr(level, "price"): return float(level.price)
@@ -227,7 +227,7 @@ class FreqAIEngine:
 
             best_bid = get_price(bids[0])
             best_ask = get_price(asks[0])
-            
+
             if best_bid > 0 and best_ask > 0:
                 return (best_bid + best_ask) / 2.0
             return 0.0

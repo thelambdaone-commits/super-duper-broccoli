@@ -1,7 +1,6 @@
-from typing import Optional
 
 from eth_account import Account
-from py_clob_client_v2 import ClobClient
+from py_clob_client import ClobClient
 
 from utils.secret_validation import validate_private_key_or_raise
 

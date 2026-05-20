@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Callable, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -7,7 +7,7 @@ import pandas as pd
 from engine.backtest.costs import CostModel
 from engine.backtest.metrics import (
     sharpe_ratio, sortino_ratio, max_drawdown, calmar_ratio,
-    information_coefficient, hit_rate,
+    hit_rate,
 )
 
 logger = logging.getLogger("Backtester")

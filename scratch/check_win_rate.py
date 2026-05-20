@@ -10,7 +10,7 @@ def main():
     print("=======================================")
     print("📊 LOBSTAR PERFORMANCE & WIN-RATE AUDIT")
     print("=======================================")
-    
+
     # 1. PAPER TRADING
     print("\n[PAPER TRADING]")
     try:

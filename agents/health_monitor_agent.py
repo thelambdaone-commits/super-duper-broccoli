@@ -132,12 +132,12 @@ class HealthMonitorAgent:
             logger.info("Health monitor already running")
             return
         self._running = True
-        
+
         # Récupération des seuils pour affichage au boot
         max_binance_stale = os.getenv("MAX_BINANCE_STALENESS_SECONDS", "3.0")
         max_mem = os.getenv("MAX_MEMORY_MB_THRESHOLD", str(int(self.config.max_memory_rss_mb)))
         wallet_drift = os.getenv("MAX_WALLET_DRIFT_USDC", "0.01")
-        
+
         logger.info("==========================================================")
         logger.info("🛡️  [HEALTH SIDECAR] INITIALIZATION & BOOT SEQUENCE STARTED")
         logger.info("==========================================================")
@@ -149,7 +149,7 @@ class HealthMonitorAgent:
         logger.info("----------------------------------------------------------")
         logger.info("⚡ [HEALTH SIDECAR] Daemon successfully armed and running.")
         logger.info("==========================================================")
-        
+
         poll_interval = poll_interval or self.config.heartbeat_interval_seconds
         while self._running:
             try:

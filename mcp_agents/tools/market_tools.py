@@ -3,7 +3,6 @@ import numpy as np
 from typing import Optional
 from user_data.strategies.hmm_filter import HMMRegimeFilter
 from user_data.strategies.arbitrage_scanner import ArbitrageScanner
-from utils.regime_utils import get_regime_label
 
 def get_market_tools(mcp, hmm: Optional[HMMRegimeFilter], arb_scanner: Optional[ArbitrageScanner]):
     @mcp.tool(

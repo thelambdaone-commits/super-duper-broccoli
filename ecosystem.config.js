@@ -83,7 +83,7 @@ module.exports = {
         // Quick start: pm2 start ecosystem.config.js --only quant-agentic-api
         name: "quant-agentic-api",
         script: ".venv/bin/uvicorn",
-        args: "api.api_server:app --host 0.0.0.0 --port 8000 --log-level info",
+        args: "api.api_server:app --host 127.0.0.1 --port 8000 --log-level info",
         cwd: __dirname,
         interpreter: ".venv/bin/python",
         instances: 1,

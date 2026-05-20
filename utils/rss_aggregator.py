@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import time
 import feedparser
 from typing import List, Dict, Optional, Any
 
@@ -62,7 +61,7 @@ class RSSAggregator:
                     logger.debug(f"New article: {item['title']}")
             except Exception as e:
                 logger.warning(f"Failed to fetch RSS from {url}: {e}")
-        
+
         if new_items:
             self._latest_news = (new_items + self._latest_news)[:100] # Keep last 100
         return new_items
@@ -73,7 +72,7 @@ class RSSAggregator:
     def search_news(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         query = query.lower()
         results = [
-            n for n in self._latest_news 
+            n for n in self._latest_news
             if query in (n.get("title") or "").lower() or query in (n.get("summary") or "").lower()
         ]
         return results[:limit]
@@ -87,5 +86,5 @@ if __name__ == "__main__":
         print(f"Total news: {len(agg.get_latest_news())}")
         for n in agg.get_latest_news(5):
             print(f"- {n['title']}")
-    
+
     asyncio.run(test())

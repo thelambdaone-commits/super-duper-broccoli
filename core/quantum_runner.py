@@ -1,7 +1,7 @@
 import asyncio
 import time
 import logging
-from typing import Dict, Any, List, Callable, Coroutine
+from typing import Any, List, Callable, Coroutine
 
 logger = logging.getLogger("LOBSTAR_QuantumRunner")
 
@@ -37,10 +37,10 @@ class LobstarQuantumRunner:
         """Démarre le Runner Bot et active la montre interne."""
         self._is_running = True
         logger.info("🚀 [RUNNER BOT] Démarrage du moteur d'exécution et de la montre interne...")
-        
+
         while self._is_running:
             temps_actuel = time.monotonic()
-            
+
             # Parcours des tâches enregistrées pour vérification de l'échéance
             tasks = []
             for job in self.jobs:
@@ -48,11 +48,11 @@ class LobstarQuantumRunner:
                     # L'échéance est atteinte, on prépare l'exécution asynchrone
                     job.last_run = temps_actuel
                     tasks.append(self._executer_job_safely(job))
-            
+
             # Lancement simultané des tâches prêtes sans bloquer la montre
             if tasks:
                 asyncio.create_task(self._run_concurrent_batch(tasks))
-                
+
             # Battement de cœur de la montre interne (10ms)
             await asyncio.sleep(self.montre_interne_tick_rate)
 

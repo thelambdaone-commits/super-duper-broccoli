@@ -25,19 +25,19 @@ def test_format_unified_feed_report() -> None:
     from utils.message_formatter import format_unified_feed_report
     from utils.crypto_market_intelligence import IntelligenceReport, IntelligenceSignal
     from datetime import datetime, timezone
-    
+
     # 1. Mock general markets
     class MockMarket:
         def __init__(self, question, yes_price):
             self.question = question
             self.yes_price = yes_price
             self.probability_pct = yes_price * 100.0
-            
+
     markets_general = [
         MockMarket("Will Aberdeen FC win on 2026-05-17?", 0.33),
         MockMarket("Will SD Huesca win on 2026-05-18?", 0.76)
     ]
-    
+
     # 2. Mock intelligence report
     signals = [
         IntelligenceSignal(
@@ -55,7 +55,7 @@ def test_format_unified_feed_report() -> None:
             rationale=["probabilite equilibree avec activite exploitable"]
         )
     ]
-    
+
     report = IntelligenceReport(
         generated_at=datetime.now(timezone.utc).isoformat(),
         source="test",
@@ -72,9 +72,9 @@ def test_format_unified_feed_report() -> None:
             "risk_flag_count": 1,
         }
     )
-    
+
     text = format_unified_feed_report(markets_general, report)
-    
+
     assert "📡 LIVE MARKET FEED" in text
     assert "Will Aberdeen FC win on 2026-05-17?" in text
     assert "███░░░░░░░ 33%" in text

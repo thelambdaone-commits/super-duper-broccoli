@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import time
-from types import SimpleNamespace
 
-import pandas as pd
 
 from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
 

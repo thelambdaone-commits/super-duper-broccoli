@@ -40,7 +40,7 @@ class TargetTrade:
     condition_id: str
 
 
-@dataclass 
+@dataclass
 class CopyConfig:
     """Configuration du copy trading."""
     target_wallet: str
@@ -99,10 +99,10 @@ class CopyTradingAgent:
         """Vérifie les limites de risque."""
         if self._session_notional + copy_notional > SESSION_NOTIONAL_CAP:
             return False, "Session notional cap exceeded"
-        
+
         if copy_notional > self.config.max_copy_notional:
             return False, "Max copy notional exceeded"
-            
+
         return True, "OK"
 
     async def fetch_target_trades(self, limit: int = 50) -> list[TargetTrade]:
@@ -121,15 +121,15 @@ class CopyTradingAgent:
                 params=params,
                 headers={"Accept": "application/json"},
             )
-            
+
             if response.status_code != 200:
                 logger.warning(f"Data API returned {response.status_code}: {response.text}")
                 return []
-            
+
             data = response.json()
             if not data:
                 return []
-            
+
             trades = [
                 TargetTrade(
                     id=item.get("id", ""),
@@ -145,9 +145,9 @@ class CopyTradingAgent:
                 )
                 for item in data
             ]
-            
+
             return trades
-            
+
         except Exception as e:
             logger.error(f"Failed to fetch target trades: {e}")
             return []
@@ -156,7 +156,7 @@ class CopyTradingAgent:
         """Scanne pour nouveaux trades depuis le dernier check."""
         trades = await self.fetch_target_trades(limit=20)
         now = time.time()
-        
+
         new_trades = []
         for trade in trades:
             if trade.id in self._copied_trades:
@@ -165,12 +165,12 @@ class CopyTradingAgent:
                 continue
             if now - trade.timestamp > RECENT_TRADE_WINDOW_SECONDS:
                 continue
-                
+
             new_trades.append(trade)
-        
+
         if trades:
             self._last_trade_timestamp = trades[0].timestamp
-            
+
         return new_trades
 
     async def process_trade(self, trade: TargetTrade) -> Optional[dict[str, Any]]:
@@ -231,7 +231,7 @@ class CopyTradingAgent:
         """
         if signal.get("source") != "polymarket_onchain":
             return None
-        
+
         # Convert signal to TargetTrade format
         trade = TargetTrade(
             id=signal.get("tx_hash", "onchain-" + str(time.time())),
@@ -245,11 +245,11 @@ class CopyTradingAgent:
             market="",
             condition_id="",
         )
-        
+
         # If we have a target wallet, verify it
         if self.config.target_wallet and trade.wallet.lower() != self.config.target_wallet.lower():
             return None
-            
+
         return await self.process_trade(trade)
 
     async def start_monitoring(
@@ -264,7 +264,7 @@ class CopyTradingAgent:
 
         self._running = True
         self.reset_session()
-        
+
         logger.info(f"🎯 Starting copy trading monitor for {self.config.target_wallet[:10]}...")
         logger.info(f"   Multiplier: {self.config.copy_multiplier*100}%")
         logger.info(f"   Max copy: ${self.config.max_copy_notional}")
@@ -273,21 +273,21 @@ class CopyTradingAgent:
         while self._running:
             try:
                 new_trades = await self.scan_for_new_trades()
-                
+
                 for trade in new_trades:
                     copy_signal = await self.process_trade(trade)
-                    
+
                     if copy_signal and on_new_trade:
                         result = on_new_trade(copy_signal)
                         if inspect.isawaitable(result):
                             await result
-                        
+
                 if time.time() - self._session_start > SESSION_RESET_SECONDS:
                     self.reset_session()
                     logger.info("🔄 Session reset (hourly)")
-                    
+
                 await asyncio.sleep(poll_interval)
-                
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -320,28 +320,28 @@ async def test_copy_trading():
         min_copy_notional=1.0,
         buy_only=True,
     )
-    
+
     agent = CopyTradingAgent(config)
-    
+
     print("🧪 Testing Copy Trading Agent...")
-    
+
     # Test fetch
     trades = await agent.fetch_target_trades(limit=5)
     print(f"Found {len(trades)} recent trades")
-    
+
     # Test with real wallet
     config2 = CopyConfig(
         target_wallet="0xB986E807Ccbefe514F41c628F0893b8ac8253A78",
         copy_multiplier=0.1,
     )
-    
+
     agent2 = CopyTradingAgent(config2)
     trades2 = await agent2.fetch_target_trades(limit=3)
     print(f"Found {len(trades2)} trades for own wallet (should be 0)")
-    
+
     await agent.close()
     await agent2.close()
-    
+
     return agent.get_stats()
 
 

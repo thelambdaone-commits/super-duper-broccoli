@@ -1,8 +1,7 @@
 import logging
 import os
 import json
-import time
-from typing import Any, List, Optional
+from typing import Optional
 from datetime import datetime
 
 logger = logging.getLogger("SelfImprovementAgent")
@@ -78,7 +77,7 @@ class SelfImprovementAgent:
         try:
             import shutil
             import subprocess
-            
+
             # 0. Check if tool exists in PATH
             if not shutil.which(tool):
                 return None
@@ -89,7 +88,7 @@ class SelfImprovementAgent:
                 cmd = ["codex", "suggest", prompt]
             elif tool == "copilot":
                 cmd = ["copilot", "explain", "--fix", prompt]
-                
+
             process = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if process.returncode == 0:
                 return process.stdout.strip()
@@ -138,7 +137,7 @@ class SelfImprovementAgent:
             report += f"📍 *{f['type']}*\n"
             report += f"Issue: {f['issue']}\n"
             report += f"Optimization: {f['suggestion']}\n\n"
-        
+
         report += "Status: Awaiting validation before autonomous implementation."
         return report
 
@@ -146,4 +145,3 @@ class SelfImprovementAgent:
         """Placeholder for autonomous PR generation."""
         logger.info(f"Executing autonomous refactor: {plan['type']}")
         # In a real setup, this would use a git agent to create a branch and PR.
-        pass

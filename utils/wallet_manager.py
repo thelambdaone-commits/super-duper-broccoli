@@ -2,9 +2,16 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from web3 import Web3
-from web3.contract import Contract
-from web3.exceptions import Web3ValidationError, BlockNotFound
+try:
+    from web3 import Web3
+    from web3.contract import Contract
+    from web3.exceptions import Web3ValidationError
+    WEB3_AVAILABLE = True
+except ImportError:
+    WEB3_AVAILABLE = False
+    Web3 = None
+    Contract = None
+    Web3ValidationError = Exception
 
 from utils.rpc_provider import resolve_rpc_with_fallback
 
@@ -66,12 +73,15 @@ class WalletManager:
     """Manages wallet balance tracking on Polygon."""
 
     def __init__(self, polygon_rpc_url: Optional[str] = None, chain_id: int = 137):
+        if not WEB3_AVAILABLE:
+            raise ImportError("web3 is required for WalletManager. Install it with: pip install web3")
+        
         self.chain_id = chain_id
         self.rpc_url = polygon_rpc_url or resolve_rpc_with_fallback("polygon")
-        
+
         if not self.rpc_url:
             raise ValueError("Could not resolve Polygon RPC URL. Check env vars.")
-        
+
         try:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
             if not self.w3.is_connected():
@@ -81,7 +91,7 @@ class WalletManager:
         except Exception as e:
             logger.error(f"Failed to initialize Web3: {e}")
             raise
-        
+
         self._token_contracts: dict[str, Contract] = {}
         self._token_decimals: dict[str, int] = {}
         self._balance_cache: dict[str, tuple[float, TokenBalance]] = {}
@@ -130,7 +140,7 @@ class WalletManager:
     ) -> Optional[TokenBalance]:
         """Get ERC20 token balance."""
         token_upper = token.upper()
-        
+
         if token_upper not in self._token_contracts:
             logger.error(f"Token {token} not found. Supported: {list(POLYGON_TOKENS.keys())}")
             return None
@@ -142,14 +152,14 @@ class WalletManager:
             ts, cached_bal = self._balance_cache[cache_key]
             if now - ts < 10.0:
                 return cached_bal
-        
+
         try:
             address = Web3.to_checksum_address(wallet_address)
             contract = self._token_contracts[token_upper]
             raw_balance = contract.functions.balanceOf(address).call()
             decimals = self._token_decimals[token_upper]
             formatted = raw_balance / (10 ** decimals)
-            
+
             balance = TokenBalance(
                 token=token_upper,
                 address=wallet_address,
@@ -178,31 +188,31 @@ class WalletManager:
     def get_all_balances(self, wallet_address: str) -> dict[str, TokenBalance | float]:
         """Get all tracked balances for a wallet."""
         balances = {}
-        
+
         # ETH/MATIC balance
         eth_bal = self.get_eth_balance(wallet_address)
         balances["MATIC"] = eth_bal
-        
+
         # Token balances
         for token in POLYGON_TOKENS.keys():
             bal = self.get_token_balance(wallet_address, token)
             if bal:
                 balances[token] = bal
-        
+
         return balances
 
     def get_snapshot(self, wallet_address: str) -> WalletSnapshot:
         """Get a full wallet snapshot."""
         import time
-        
+
         balances = {}
         eth_balance = self.get_eth_balance(wallet_address)
-        
+
         for token in POLYGON_TOKENS.keys():
             bal = self.get_token_balance(wallet_address, token)
             if bal:
                 balances[token] = bal
-        
+
         return WalletSnapshot(
             wallet_address=Web3.to_checksum_address(wallet_address),
             timestamp=time.time(),
@@ -213,14 +223,14 @@ class WalletManager:
     def format_balance_report(self, wallet_address: str) -> str:
         """Generate a human-readable balance report."""
         lines = [f"💰 **Wallet Balances** (`{wallet_address[:6]}...{wallet_address[-4:]}`)\n"]
-        
+
         snapshot = self.get_snapshot(wallet_address)
-        
+
         lines.append(f"• MATIC: `{snapshot.eth_balance:.6f}`")
         for token, bal in snapshot.balances.items():
             if isinstance(bal, TokenBalance):
                 lines.append(f"• {token}: `{bal.formatted_balance:.6f}`")
-        
+
         return "\n".join(lines)
 
     def is_valid_address(self, address: str) -> bool:

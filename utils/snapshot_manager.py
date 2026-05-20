@@ -3,7 +3,7 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 import duckdb
 
 logger = logging.getLogger("SnapshotManager")
@@ -49,7 +49,7 @@ class SnapshotManager:
             # Encrypt sensitive data blob
             encrypted_data = encrypt_data(data_json)
             tags_list = tags if tags else []
-            
+
             self.conn.execute(
                 "INSERT INTO snapshots VALUES (?, ?, ?, ?, ?, ?)",
                 (ts, dt, category, component, encrypted_data, tags_list)
@@ -64,7 +64,7 @@ class SnapshotManager:
             query += " AND component = ?"
             params.append(component)
         query += " ORDER BY timestamp DESC LIMIT 1"
-        
+
         from utils.security_utils import decrypt_data
         res = self.conn.execute(query, params).fetchone()
         if res:
@@ -82,7 +82,7 @@ class SnapshotManager:
             query += " AND category = ?"
             params.append(category)
         query += " ORDER BY timestamp ASC"
-        
+
         from utils.security_utils import decrypt_data
         rows = self.conn.execute(query, params).fetchall()
         results = []
@@ -97,9 +97,11 @@ class SnapshotManager:
 
     def export_session(self, output_path: str, start_ts: float = 0, end_ts: float = 0):
         """Exports a session to Parquet for offline analysis/replay."""
-        if end_ts == 0: end_ts = time.time()
+        if end_ts == 0:
+            end_ts = time.time()
         self.conn.execute(
-            f"COPY (SELECT * FROM snapshots WHERE timestamp >= {start_ts} AND timestamp <= {end_ts}) TO '{output_path}' (FORMAT PARQUET)"
+            "COPY (SELECT * FROM snapshots WHERE timestamp >= ? AND timestamp <= ?) TO ? (FORMAT PARQUET)",
+            [start_ts, end_ts, output_path],
         )
         logger.info(f"Session exported to {output_path}")
 

@@ -8,9 +8,8 @@ Récupère les 3 premiers niveaux du carnet d'ordres pour les marchés actifs.
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 
 import httpx
 
@@ -208,20 +207,20 @@ class PolymarketOrderbookScraper:
 async def test_scraper():
     """Test du scraper."""
     scraper = PolymarketOrderbookScraper()
-    
+
     print("🧪 Testing Polymarket Orderbook Scraper...")
-    
+
     snapshots = await scraper.scan_markets(max_markets=10)
-    
+
     print(f"\n✅ Found {len(snapshots)} orderbooks:\n")
-    
+
     for s in snapshots[:5]:
         print(f"📊 {s.question[:50]}...")
         print(f"   Mid: {s.mid_price:.2f} | Spread: {s.spread_bps:.1f}bps")
         print(f"   Depth: Bids={s.depth_bid_3:.0f} | Asks={s.depth_ask_3:.0f}")
         print(f"   Imbalance: {s.imbalance:.2%}")
         print()
-    
+
     await scraper.close()
     return snapshots
 

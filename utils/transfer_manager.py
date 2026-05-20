@@ -1,15 +1,20 @@
 import logging
 from dataclasses import dataclass
 from typing import Optional
-from decimal import Decimal
 
 from eth_account import Account
-from web3 import Web3
-from web3.contract import Contract
-from web3.exceptions import Web3ValidationError
+
+try:
+    from web3 import Web3
+    from web3.exceptions import Web3ValidationError
+    WEB3_AVAILABLE = True
+except ImportError:
+    WEB3_AVAILABLE = False
+    Web3 = None
+    Web3ValidationError = Exception
 
 from utils.rpc_provider import resolve_rpc_with_fallback
-from utils.wallet_manager import WalletManager, POLYGON_TOKENS, ERC20_ABI
+from utils.wallet_manager import WalletManager, POLYGON_TOKENS
 
 logger = logging.getLogger("TransferManager")
 
@@ -66,6 +71,9 @@ class TransferManager:
         private_key: Optional[str] = None,
         polygon_rpc_url: Optional[str] = None,
     ):
+        if not WEB3_AVAILABLE:
+            raise ImportError("web3 is required for TransferManager. Install it with: pip install web3")
+        
         self.wallet_manager = wallet_manager
         self.rpc_url = polygon_rpc_url or resolve_rpc_with_fallback("polygon")
         self.w3 = wallet_manager.w3
@@ -145,13 +153,13 @@ class TransferManager:
     ) -> TransferReceipt:
         """
         Transfer tokens to an address.
-        
+
         Args:
             to_address: Destination address
             token: Token name (e.g., "USDC", "POL", "MATIC")
             amount: Amount in human-readable form
             dry_run: If True, don't actually send the transaction
-        
+
         Returns:
             TransferReceipt with transaction details
         """
@@ -287,7 +295,7 @@ class TransferManager:
     def format_transfer_receipt(self, receipt: TransferReceipt) -> str:
         """Format a transfer receipt for display."""
         lines = [f"📤 **Transfer Receipt**\n"]
-        
+
         if receipt.status == "failed":
             lines.append(f"❌ Status: FAILED")
             lines.append(f"Error: {receipt.error_message}")
@@ -297,12 +305,12 @@ class TransferManager:
             lines.append(f"• Amount: `{receipt.amount}`")
             lines.append(f"• From: `{receipt.from_address[:6]}...{receipt.from_address[-4:]}`")
             lines.append(f"• To: `{receipt.to_address[:6]}...{receipt.to_address[-4:]}`")
-            
+
             if receipt.gas_used:
                 lines.append(f"• Gas Used: `{receipt.gas_used}`")
             if receipt.gas_price_gwei:
                 lines.append(f"• Gas Price: `{receipt.gas_price_gwei:.2f} GWEI`")
-            
+
             lines.append(f"• TX: [{receipt.tx_hash[:10]}...](https://polygonscan.com/tx/{receipt.tx_hash})")
-        
+
         return "\n".join(lines)

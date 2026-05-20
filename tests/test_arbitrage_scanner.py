@@ -1,7 +1,7 @@
 import pytest
 
 from user_data.strategies.arbitrage_scanner import (
-    ArbitrageScanner, MIN_PROFIT_THRESHOLD, MISPRICING_ZSCORE_THRESHOLD,
+    ArbitrageScanner, MISPRICING_ZSCORE_THRESHOLD,
 )
 
 

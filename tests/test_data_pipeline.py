@@ -1,9 +1,8 @@
 import os
 import json
-import time
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch
 
 from scrapers.data_pipeline import JSONLStorageEngine, PredictiveOpinionEngine
 from scripts.rl_feedback_loop import run_rl_feedback_loop
@@ -16,16 +15,16 @@ async def test_jsonl_storage_engine_archives_successfully() -> None:
         os.remove(test_path)
 
     payload = {"message_id": 123, "chat_id": 456, "text": "hello", "update": object()}
-    
+
     await JSONLStorageEngine.archiver_evenement("test_event", payload, custom_path=test_path)
-    
+
     # Wait for ThreadPoolExecutor to finish writing
     await asyncio.sleep(0.05)
 
     assert os.path.exists(test_path)
     with open(test_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
-        
+
     assert len(lines) == 1
     event = json.loads(lines[0])
     assert event["type"] == "test_event"
@@ -41,7 +40,7 @@ async def test_jsonl_storage_engine_archives_successfully() -> None:
 async def test_predictive_opinion_engine_fallback() -> None:
     engine = PredictiveOpinionEngine(api_key="")
     opinion = await engine.analyse_signal("Signal: BUY SOL", ticker="SOL")
-    
+
     assert isinstance(opinion, dict)
     assert "reasoning" in opinion
     assert "confidence" in opinion
@@ -54,7 +53,7 @@ async def test_predictive_opinion_engine_parse_json_result() -> None:
     engine = PredictiveOpinionEngine(api_key="mock")
     content = '{"reasoning": "Regime looks flat.", "confidence": 0.82, "verdict": "BUY", "target_asset": "BTC", "recommended_sizing_pct": 12.5}'
     parsed = engine._parse_json_result(content, "SOL")
-    
+
     assert parsed["reasoning"] == "Regime looks flat."
     assert parsed["confidence"] == 0.82
     assert parsed["verdict"] == "BUY"

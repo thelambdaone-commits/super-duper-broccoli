@@ -1,10 +1,9 @@
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 import httpx
 
 logger = logging.getLogger("SignalFusion")

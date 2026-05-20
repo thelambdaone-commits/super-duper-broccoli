@@ -1,7 +1,6 @@
-import logging
 from datetime import datetime, timezone
 from html import escape
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 def _html(value: Any) -> str:
@@ -20,7 +19,7 @@ class InstitutionalMessageFormatter:
     Formats system events into high-fidelity institutional reports.
     Focuses on explainability, data richness, and professional aesthetics.
     """
-    
+
     @staticmethod
     def format_trade_execution(data: Dict[str, Any]) -> str:
         """📈 TRADE EXECUTED Report"""
@@ -114,9 +113,9 @@ class InstitutionalMessageFormatter:
         winners = data.get("winners", [])
         surebets = data.get("surebets", [])
         core_signals = data.get("core_signals", [])
-        
+
         report = f"📊 *QUANT INTELLIGENCE SUMMARY*\n\n"
-        
+
         if core_signals:
             report += "💎 *CORE CRYPTO SIGNALS* (BTC/ETH/SOL)\n"
             for s in core_signals[:3]:
@@ -129,7 +128,7 @@ class InstitutionalMessageFormatter:
             for s in surebets[:3]:
                 report += f"• {s['ticker']}: Sum={s['sum_price']:.3f} -> *SUREBET*\n"
             report += "\n"
-            
+
         report += f"🔍 *SCAN METRICS*\n"
         report += f"• Markets Analyzed: `{data.get('total', 0)}`\n"
         report += f"• Alpha Signals: `{len(winners)}` (near resolution)\n"
@@ -141,12 +140,12 @@ def format_scan_report(result) -> str:
     sentiment_data = getattr(result, "aggregate_sentiment", {"sentiment": "NEUTRAL", "bullish_pct": 50})
     sent_label = sentiment_data.get("sentiment", "NEUTRAL")
     bull_pct = sentiment_data.get("bullish_pct", 50)
-    
+
     parts = [
         f"📊 *QUANT MARKET SCAN* — `{result.total_markets_scanned}` markets",
         f"🌍 *Market Feeling:* `{sent_label}` ({bull_pct:.1f}% bullish)\n"
     ]
-    
+
     from utils.market_scanner import _fmt_signal
 
     if hasattr(result, 'winning_bets') and result.winning_bets:
@@ -236,12 +235,12 @@ def format_unified_feed_report(markets_general: list, intelligence_report) -> st
             pct = getattr(m, 'probability_pct', None)
             if pct is None:
                 pct = getattr(m, 'yes_price', 0.0) * 100.0
-            
+
             yes_price = getattr(m, 'yes_price', 0.0)
             question = getattr(m, 'question', 'Unknown Market')
             days = _days_to_resolution(m)
             horizon = f" | T- {days:.1f}j" if isinstance(days, (int, float)) else ""
-            
+
             bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
             parts.append(f"  • {question[:52]}\n    {bar} {pct:.0f}% | ${yes_price:.3f}{horizon}\n")
         except Exception:

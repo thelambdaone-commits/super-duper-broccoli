@@ -175,7 +175,7 @@ def main():
     dump = dump_repo_snapshot(tag)
 
     prompt = """
-You are an automated code fixer. A failing test run and repository snapshot are attached. 
+You are an automated code fixer. A failing test run and repository snapshot are attached.
 Provide a unified-diff patch that fixes the root cause. If multiple fixes are needed, produce a single patch.
 
 PyTest output:

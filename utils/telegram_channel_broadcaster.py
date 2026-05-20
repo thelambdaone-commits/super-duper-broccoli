@@ -19,7 +19,7 @@ class TelegramChannelBroadcaster:
     def __init__(self, bot_instance: Any = None, formatter: Optional[TelegramMessageFormatter] = None, transport: Optional[TelegramTransportClient] = None) -> None:
         """
         Initialise le broadcaster avec l'instance du bot Telegram.
-        
+
         Args:
             bot_instance: Instance du bot Telegram (python-telegram-bot)
         """
@@ -35,7 +35,7 @@ class TelegramChannelBroadcaster:
     async def diffuser_signal_au_canal(self, data: Dict[str, Any]) -> bool:
         """
         Pousse le signal prédictif validé directement dans le canal d'abonnés.
-        
+
         Args:
             data: Dictionnaire contenant :
                 - ticker: Symbol du marché
@@ -45,7 +45,7 @@ class TelegramChannelBroadcaster:
                 - p_real: Probabilité calibrée de l'IA
                 - edge: Edge absolu en pourcentage
                 - kelly: Fraction de Kelly recommandée
-                
+
         Returns:
             bool: True si l'envoi a réussi, False sinon
         """
@@ -69,13 +69,13 @@ class TelegramChannelBroadcaster:
     async def diffuser_alerte_risque_au_canal(self, alert_data: Dict[str, Any]) -> bool:
         """
         Envoie une alerte de risque au canal (par ex. Circuit Breaker activé).
-        
+
         Args:
             alert_data: Dictionnaire contenant :
                 - title: Titre de l'alerte
                 - message: Corps du message
                 - severity: "warning", "critical", "info"
-                
+
         Returns:
             bool: True si l'envoi a réussi, False sinon
         """

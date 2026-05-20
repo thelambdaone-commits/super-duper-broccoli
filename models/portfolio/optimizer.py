@@ -95,7 +95,6 @@ class PortfolioOptimizer:
 
     def _optimize_equal_weight(self, prices_df: Any) -> dict:
         try:
-            import pandas as pd
             cols = list(prices_df.columns) if hasattr(prices_df, "columns") else []
             n = len(cols)
             weights = {c: round(1.0 / n, 4) for c in cols} if n > 0 else {}

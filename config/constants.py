@@ -27,3 +27,16 @@ POLYMARKET_MICROFISH_TICKERS = [
     "ETHEREUM",
     "SOLANA",
 ]
+
+CONTINUOUS_MARKET_TICKERS_BINANCE = ["BTCUSDT", "ETHUSDT"]
+CONTINUOUS_MARKET_TICKERS_YFINANCE = ["SPY", "QQQ"]
+CONTINUOUS_PREDICTION_HORIZON = 3
+CONTINUOUS_CANDLE_INTERVAL = "5m"
+
+CONTINUOUS_FEATURE_NAMES = [
+    "open", "high", "low", "close", "volume",
+    "rsi_14", "macd", "macd_signal", "bb_upper", "bb_lower",
+    "log_return_1", "log_return_3", "log_return_5",
+    "spread_bps", "order_imbalance",
+]
+CONTINUOUS_TARGET_FEATURE = "close"

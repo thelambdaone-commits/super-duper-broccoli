@@ -1,10 +1,8 @@
 import logging
 import os
-import shutil
 import tarfile
 import time
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
 
 logger = logging.getLogger("DataArchiver")
 

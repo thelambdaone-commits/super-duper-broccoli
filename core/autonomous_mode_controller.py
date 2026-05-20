@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
 
 from core.strategy_lifecycle_manager import StrategyLifecycleManager, StrategyPhase
 from ledger.ledger_db import Ledger

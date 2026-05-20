@@ -8,7 +8,6 @@ from core.portfolio_risk_engine import PortfolioRiskEngine
 from execution.passive_executor import PassiveExecutor
 from ledger.ledger_db import Ledger
 from mcp_agents.lobstar_agent import LobstarAgent
-from user_data.strategies.hmm_filter import HMMRegimeFilter
 from utils.feature_store import FeatureStore
 from utils.regime_utils import get_regime_label
 
@@ -179,7 +178,7 @@ async def _execute_guarded(
             confidence=confidence, regime_label=regime, signal_source=signal_source,
             tenant_wallet=tenant_wallet,
         )
-        if risk and mode == "PAPER": 
+        if risk and mode == "PAPER":
             risk.book_exposure(ticker, size, side)
     except Exception as e:
         logger.error(f"Concurrent Paper recording failed: {e}")
@@ -289,7 +288,7 @@ async def execute_regex_signal(
     signal: dict, ledger: Ledger, freqai: FreqAIEngine, **kwargs
 ) -> Dict[str, Any]:
     ticker, side, price = signal["asset"], signal["action"], signal["price"]
-    
+
     # Resolve ticker to Token ID if scanner is available
     scanner = kwargs.get("scanner")
     if scanner:
@@ -297,11 +296,11 @@ async def execute_regex_signal(
         if token_id:
             logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
             ticker = token_id
-    
+
     mode = ledger.get_execution_mode()
     regime = get_regime_label(kwargs.get("hmm"), ticker)
     confidence = _apply_cognitive_confidence(signal, _regex_confidence(price))
-    
+
     risk = kwargs.get("risk")
     sizing = risk.compute_position_size(
         ticker=ticker, side=side, price=price,
@@ -321,7 +320,7 @@ async def execute_lobstar_signal(
     decision = await lobstar.analyser_signal_contextuel(signal.get("raw", ""))
     if not decision:
         return {"status": "FAILED", "reason": "Invalid LLM decision"}
-        
+
     ticker = decision.get("ticker", "")
     side = decision.get("side", "")
     price = decision.get("price_limite", 0.0)
@@ -335,10 +334,10 @@ async def execute_lobstar_signal(
     if confidence < 0.3:
         logger.warning(f"LOBSTAR: Low confidence ({confidence:.2f}), skipping.")
         return {"status": "FAILED", "reason": "Low LLM confidence"}
-    
+
     mode = ledger.get_execution_mode()
     regime = get_regime_label(kwargs.get("hmm"), ticker)
-    
+
     risk = kwargs.get("risk")
     sizing = risk.compute_position_size(
         ticker=ticker, side=side, price=price,
@@ -353,7 +352,7 @@ async def execute_lobstar_signal(
         if token_id:
             logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
             ticker = token_id
-            
+
     return await _execute_guarded(
         ticker, side, price, sizing["size"], confidence, regime, sizing,
         ledger, freqai, risk, kwargs.get("store"),

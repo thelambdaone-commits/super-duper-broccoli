@@ -1,6 +1,5 @@
-import os
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from ledger.ledger_db import Ledger, EXECUTION_MODES
 from core.signal_executor import _execute_guarded, execute_regex_signal

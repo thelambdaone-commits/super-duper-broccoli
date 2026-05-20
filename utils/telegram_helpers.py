@@ -1,4 +1,3 @@
-from typing import Optional
 
 def split_telegram_message(text: str, limit: int = 3900) -> list[str]:
     if len(text) <= limit:

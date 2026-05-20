@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
-from unittest.mock import MagicMock
-import pytest
 import core.health_monitor as health_monitor
-from core.health_monitor import LobstarHealthMonitor
 
 
 class FakeTask:

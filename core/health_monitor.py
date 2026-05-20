@@ -17,7 +17,7 @@ _runner = None
 @app.get("/liveness")
 def get_liveness():
     global _orchestrator, _runner
-    
+
     orchestrator_status = "UP"
     if not _orchestrator or not _orchestrator._queue_worker_task or _orchestrator._queue_worker_task.done():
         orchestrator_status = "DOWN"
@@ -34,7 +34,7 @@ def get_liveness():
             "quantum_runner": runner_status,
         }
     }
-    
+
     if status_dict["status"] == "DOWN":
         return Response(
             content=json.dumps(status_dict),

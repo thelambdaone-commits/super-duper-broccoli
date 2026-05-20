@@ -33,7 +33,7 @@ class SecuritySkill(Skill):
             "core/freqai_engine.py",
             "api/api_server.py",
             "mcp_agents/mcp_server.py",
-            "telegram_scraper/telegram_listener.py",
+            "scrappers/mets_telegram_scraper.py",
         ]
 
     def detect_issues(self, paths: Optional[list[str]] = None) -> list[dict[str, Any]]:

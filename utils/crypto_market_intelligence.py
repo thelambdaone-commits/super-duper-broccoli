@@ -232,12 +232,12 @@ def format_intelligence_report(report: IntelligenceReport) -> str:
     summary = data["summary"]
     avg_confidence = float(summary.get("avg_signal_confidence", 0.0))
     bias = _report_bias(report)
-    
+
     bias_emoji = {"BULLISH": "📈 BULLISH", "BEARISH": "📉 BEARISH", "NEUTRAL": "⚖️ NEUTRE", "NEUTRE": "⚖️ NEUTRE"}.get(bias, bias)
-    
+
     vol = summary['total_crypto_volume']
     liq = summary['total_crypto_liquidity']
-    
+
     vol_str = f"${vol/1_000_000:.2f}M" if vol >= 1_000_000 else f"${vol/1_000:.1f}K" if vol >= 1_000 else f"${vol:.0f}"
     liq_str = f"${liq/1_000_000:.2f}M" if liq >= 1_000_000 else f"${liq/1_000:.1f}K" if liq >= 1_000 else f"${liq:.0f}"
 

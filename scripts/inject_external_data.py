@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import os
-import time
 import logging
-from datetime import datetime, timedelta
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,7 +20,7 @@ def inject_yahoo_data(ticker: str, symbol: str):
         import yfinance as yf
         logger.info(f"Fetching data for {symbol} from Yahoo Finance...")
         data = yf.download(symbol, period="1d", interval="5m")
-        
+
         if data.empty:
             logger.warning(f"No data found for {symbol}")
             return
@@ -34,7 +32,7 @@ def inject_yahoo_data(ticker: str, symbol: str):
             # Record Close price as an external feature
             store.record_feature(ts, ticker, f"external_px_{symbol.lower()}", float(row['Close']))
             count += 1
-            
+
         logger.info(f"Successfully injected {count} features for {ticker} from {symbol}")
     except ImportError:
         logger.error("yfinance not installed. Run: pip install yfinance")

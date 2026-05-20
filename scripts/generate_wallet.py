@@ -16,12 +16,12 @@ def main():
         sys.exit(1)
 
     mgr = CredentialManager(encryption_key=encryption_key)
-    
+
     print("--- Institutional Wallet Generation ---")
     pk = mgr.get_or_generate_private_key()
     # Also generate CLOB credentials
     mgr.get_or_generate_creds(pk)
-    
+
     print("\nSUCCESS: Institutional wallet and CLOB credentials generated and encrypted.")
     print(f"Files created in: {os.getenv('DATA_PATH', './data')}/")
     print(" - clob_wallet.enc (Private Key)")

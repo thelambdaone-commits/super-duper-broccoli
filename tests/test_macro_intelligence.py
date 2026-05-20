@@ -1,4 +1,3 @@
-import pytest
 
 from utils.macro_intelligence import MacroIntelligence
 

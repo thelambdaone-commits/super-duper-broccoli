@@ -4,7 +4,7 @@ import asyncio
 import time
 import os
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 logger = logging.getLogger("ArbitrageEngine")
@@ -41,7 +41,7 @@ from utils.config_loader import TRADING_PARAMS
 class LobstarArbitrageEngine:
     """
     Moteur d'Arbitrage Auto-Apprenant pour l'essaim Ruflo.
-    Audite les paniers de contrats Polymarket, gère le risque d'exécution partielle 
+    Audite les paniers de contrats Polymarket, gère le risque d'exécution partielle
     et enregistre la télémétrie des opérations dans un fichier JSONL.
     """
 
@@ -56,7 +56,6 @@ class LobstarArbitrageEngine:
         trigger_threshold: float = DEFAULT_TRIGGER_THRESHOLD,
         telemetry_path: str = "user_data/data/raw_stream"
     ):
-        import os
         self.execution_mode = execution_mode
         self.slippage_tolerance = slippage_tolerance
         self.trigger_threshold = trigger_threshold

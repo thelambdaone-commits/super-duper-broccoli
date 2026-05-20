@@ -80,7 +80,7 @@ class TelegramNotifier:
     async def send_async(self, message: str, parse_mode: str = "Markdown") -> bool:
         if not self.enabled:
             return False
-        
+
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
         payload = {
             "chat_id": self.chat_id,

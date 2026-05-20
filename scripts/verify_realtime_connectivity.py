@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import asyncio
-import json
 import requests
 from dotenv import load_dotenv
 
@@ -20,7 +19,7 @@ async def test_rpc_solana():
     url = os.getenv("SOL_RPC_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "SOL_RPC_URL not configured."}
-    
+
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -44,7 +43,7 @@ async def test_rpc_polygon():
     url = os.getenv("POLYGON_RPC_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "POLYGON_RPC_URL not configured."}
-    
+
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -69,7 +68,7 @@ async def test_websocket_polygon():
     url = os.getenv("WS_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "WS_URL not configured."}
-    
+
     # We can test websocket by attempting a socket connection
     import websockets
     t0 = time.perf_counter()
@@ -84,7 +83,7 @@ async def test_openrouter():
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "OPENROUTER_API_KEY not configured."}
-    
+
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -118,7 +117,7 @@ async def test_groq():
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "GROQ_API_KEY not configured."}
-    
+
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
@@ -150,7 +149,7 @@ async def test_brave_search():
     key = os.getenv("BRAVE_SEARCH_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "BRAVE_SEARCH_API_KEY not configured."}
-    
+
     headers = {
         "Accept": "application/json",
         "Accept-Encoding": "gzip",
@@ -177,7 +176,7 @@ async def test_coingecko():
     key = os.getenv("COINGECKO_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "COINGECKO_API_KEY not configured."}
-    
+
     t0 = time.perf_counter()
     try:
         r = requests.get(
@@ -213,7 +212,7 @@ async def run_diagnostics():
     print("Testing credentials, rate-limits, block latencies, and server handshakes...\n")
 
     results = {}
-    
+
     # 1. Solana RPC
     print(f" • [RPC] Testing Solana Helius Endpoint... ", end="", flush=True)
     results["Solana RPC"] = await test_rpc_solana()
@@ -266,7 +265,7 @@ async def run_diagnostics():
             print(f"   - {key:<15}: {GREEN}OK{NC} (Latency: {val['latency']})")
         else:
             print(f"   - {key:<15}: {YELLOW}SKIPPED{NC} ({val['msg']})")
-    
+
     print("═" * 70 + "\n")
     # Always exit cleanly so that the command executes and outputs in the shell without returning non-zero code to pytest/runner
     sys.exit(0)

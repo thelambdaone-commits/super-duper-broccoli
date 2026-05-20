@@ -2,7 +2,6 @@ import pytest
 import numpy as np
 
 try:
-    import torch
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
@@ -72,7 +71,7 @@ class TestHedgingEnv:
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestDDPGAgent:
     def test_agent_init(self):
-        from models.hedging.ddpg_agent import DDPGHedgingAgent, ReplayBuffer
+        from models.hedging.ddpg_agent import DDPGHedgingAgent
         agent = DDPGHedgingAgent()
         assert agent.actor is not None
         assert agent.critic is not None

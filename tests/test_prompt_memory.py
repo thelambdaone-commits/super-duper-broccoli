@@ -63,10 +63,10 @@ def test_build_project_prompt_context_includes_memory_and_graphify_policy() -> N
 
 def test_entropy_based_secret_redaction(tmp_path) -> None:
     memory_path = tmp_path / "project_memory.json"
-    
+
     # Highly random high-entropy hex string (looks like a private key)
     random_hex = "f3a29b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a"
-    
+
     entry = record_project_memory(
         component="execution",
         summary=f"Executing order with key {random_hex}",
@@ -74,6 +74,6 @@ def test_entropy_based_secret_redaction(tmp_path) -> None:
         tags=["risk"],
         path=str(memory_path),
     )
-    
+
     assert random_hex not in entry["summary"]
     assert "<redacted_high_entropy_key>" in entry["summary"]

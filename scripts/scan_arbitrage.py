@@ -11,10 +11,10 @@ from user_data.strategies.arbitrage_scanner import ArbitrageScanner
 def main():
     client = PolymarketClient()
     scanner = ArbitrageScanner(min_profit_threshold=0.01)
-    
+
     print("Fetching markets...")
     markets = client.list_markets(limit=100, sort_by="volume")
-    
+
     market_outcomes = {}
     for m in markets:
         if m.active and not m.closed:
@@ -24,10 +24,10 @@ def main():
                     "YES": m.yes_price,
                     "NO": m.no_price
                 }
-    
+
     print(f"Scanning {len(market_outcomes)} binary markets for sum inefficiency...")
     opportunities = scanner.scan_sum_inefficiency(market_outcomes)
-    
+
     if opportunities:
         print("\n--- ARBITRAGE OPPORTUNITIES (SUM INEFFICIENCY) ---")
         for opp in opportunities:

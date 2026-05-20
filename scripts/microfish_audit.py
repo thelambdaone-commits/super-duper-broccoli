@@ -34,7 +34,7 @@ async def run_audit():
     # STEP 1: Flush Feature Store Temp Files & Streams
     # ---------------------------------------------------------
     logger.info("🧹 STEP 1: Flushing raw streams and temporary JSONL caches...")
-    
+
     # 1.1 Flush raw stream jsonl files
     raw_stream_dir = Path("user_data/data/raw_stream")
     if raw_stream_dir.exists():
@@ -65,7 +65,7 @@ async def run_audit():
     # STEP 2: Trigger Microfish_Ingest_Agent Self-Test
     # ---------------------------------------------------------
     logger.info("📡 STEP 2: Triggering MicrofishIngestAgent self-test on core tickers...")
-    
+
     agent = MicrofishIngestAgent(storage_path=str(transient_stream))
     auto_only = str(os.getenv("POLYMARKET_WATCHLIST_AUTO_ONLY", "")).lower() in {"1", "true", "yes", "on"}
     tickers = get_polymarket_watchlist(limit=100, auto_discover_only=auto_only)
@@ -74,7 +74,7 @@ async def run_audit():
     records_per_cycle = max(len(tickers), 1)
     cycles_needed = math.ceil(min_records / records_per_cycle)
     eta_minutes = (cycles_needed * interval_seconds) / 60.0
-    
+
     logger.info(f"Capturing order books for tickers: {tickers}...")
     logger.info(
         "  Threshold: %s records, %s tickers/cycle, interval %.1fs -> ~%.1f minutes to fill a fresh stream.",

@@ -88,7 +88,7 @@ def test_end_date_naive_tz() -> None:
     naive_future_date = (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
     market = make_market("btc-updown-5m", "BTC up or down 5m?", 0.65, 0.35)
     market.end_date = naive_future_date
-    
+
     analyzer = CryptoHorizonSentiment(client=FakeClient([market]))
     assert analyzer._matches_horizon(market, "15") is True
 
@@ -108,7 +108,7 @@ def test_midpoint_fallback_for_zero_prices() -> None:
 
     analyzer = CryptoHorizonSentiment(client=MockClient())
     sentiment = analyzer.analyze("BTC", "5")
-    
+
     assert sentiment is not None
     assert sentiment.sentiment == "BULLISH"
     assert sentiment.yes_price == 0.75
@@ -127,7 +127,7 @@ def test_composite_proxy_fallback_when_no_candidates() -> None:
 
     analyzer = CryptoHorizonSentiment(client=MockClient())
     sentiment = analyzer.analyze("XRP", "5")
-    
+
     assert sentiment is not None
     assert sentiment.asset == "XRP"
     assert sentiment.market_slug == "composite-proxy-btc-eth-sol"
@@ -157,13 +157,13 @@ def test_market_with_up_down_outcomes() -> None:
         volume=10_000,
         liquidity=5_000,
     )
-    
+
     # Verify generalized outcome_prices mappings on Market property methods
     assert m.yes_price == 0.55
     assert m.no_price == 0.45
     assert m.yes_token_id == "token-up"
     assert m.no_token_id == "token-down"
-    
+
     # Also verify that the analyzer is able to analyze it properly
     analyzer = CryptoHorizonSentiment(client=FakeClient([m]))
     sentiment = analyzer.analyze("BTC", "15")

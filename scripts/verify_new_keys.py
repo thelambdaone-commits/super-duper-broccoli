@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import os
-import sys
 import time
 import asyncio
-import json
 import requests
 from dotenv import load_dotenv
 
@@ -20,7 +18,7 @@ async def test_nvidia():
     key = os.getenv("NVIDIA_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "NVIDIA_API_KEY not configured."}
-    
+
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
@@ -51,7 +49,7 @@ async def test_mistral():
     key = os.getenv("MISTRAL_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "MISTRAL_API_KEY not configured."}
-    
+
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
@@ -81,7 +79,7 @@ async def test_deepseek():
     key = os.getenv("DEEPSEEK_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "DEEPSEEK_API_KEY not configured."}
-    
+
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
@@ -111,7 +109,7 @@ async def test_huggingface():
     key = os.getenv("HUGGINGFACE_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "HUGGINGFACE_API_KEY not configured."}
-    
+
     headers = {"Authorization": f"Bearer {key}"}
     t0 = time.perf_counter()
     try:
@@ -133,7 +131,7 @@ async def test_groq():
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "GROQ_API_KEY not configured."}
-    
+
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
@@ -163,7 +161,7 @@ async def test_coingecko():
     key = os.getenv("COINGECKO_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "COINGECKO_API_KEY not configured."}
-    
+
     t0 = time.perf_counter()
     try:
         # Testing CoinGecko Pro/Demo API key
@@ -192,7 +190,7 @@ async def run_diagnostics():
     print("═" * 70)
 
     results = {}
-    
+
     tests = [
         ("NVIDIA", test_nvidia),
         ("Groq", test_groq),
@@ -222,7 +220,7 @@ async def run_diagnostics():
             print(f"   - {key:<15}: {GREEN}OK{NC} (Latency: {val['latency']})")
         else:
             print(f"   - {key:<15}: {YELLOW}SKIPPED{NC} ({val['msg']})")
-    
+
     print("═" * 70 + "\n")
 
 if __name__ == "__main__":

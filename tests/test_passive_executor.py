@@ -296,9 +296,9 @@ class TestStrictMakerOnly:
                 "status": "POST_ONLY_REJECTED",
                 "error": "post only would match",
             }
-            
+
             result = await executor.execute("SOL", "BUY", 0.50, 100.0)
-            
+
             assert result["status"] == "POST_ONLY_REJECTED"
             assert "Taker fallback denied" in result["error"]
             mock_freqai.create_order.assert_not_called()
@@ -315,9 +315,9 @@ class TestStrictMakerOnly:
                 "order": {"remaining_size": 100, "size": 100},
             }
             mock_freqai.cancel_order.return_value = {"status": "CANCELLED"}
-            
+
             result = await executor.execute("SOL", "BUY", 0.50, 100.0)
-            
+
             assert result["status"] == "CANCELLED"
             assert "Taker fallback denied" in result["error"]
             mock_freqai.create_order.assert_not_called()

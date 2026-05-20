@@ -1,7 +1,7 @@
 import json
 import os
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 from utils.prompt_memory import build_project_prompt_context
 

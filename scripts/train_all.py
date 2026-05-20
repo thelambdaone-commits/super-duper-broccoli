@@ -7,7 +7,7 @@ import sys
 import time
 import warnings
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
@@ -39,6 +39,7 @@ TOP_PCT_PATH = os.path.join(
 )
 
 DEFAULT_TICKERS = ["SOL", "BTC", "ETH", "LINK", "ARB", "OP"]
+CONTINUOUS_TICKERS = ["BTCUSDT", "ETHUSDT", "SPY", "QQQ"]
 FEATURES = ["oi_5min", "tam_state", "spread_bps", "mid_price"]
 TARGET = "mid_price"
 N_SAMPLES = 1000
@@ -226,6 +227,7 @@ def main(
     db_path: Optional[str] = None,
     allow_synthetic_live: bool = False,
     tickers: Optional[list[str]] = None,
+    continuous: bool = False,
 ) -> None:
     tickers = tickers or DEFAULT_TICKERS
     store = FeatureStore(db_path=db_path) if db_path else FeatureStore()
@@ -309,13 +311,34 @@ def main(
         json.dump(summary, f, indent=2)
     logger.info(f"Summary saved to {summary_path}")
 
+    # ── Continuous market training (additive) ──
+    if continuous:
+        from config.constants import CONTINUOUS_FEATURE_NAMES, CONTINUOUS_TARGET_FEATURE
+        cont_tickers = [t for t in tickers if t in CONTINUOUS_TICKERS] if tickers else CONTINUOUS_TICKERS
+        logger.info(f"\n{SECTION_SEPARATOR}\nContinuous market training: {cont_tickers}\n{SECTION_SEPARATOR}")
+
+        for cticker in cont_tickers:
+            pipeline.register_continuous_features(
+                cticker,
+                feature_names=CONTINUOUS_FEATURE_NAMES,
+                target_feature=CONTINUOUS_TARGET_FEATURE,
+                horizon=3,
+            )
+            runs = train_configs(
+                pipeline, cticker, HYPERPARAM_GRID,
+                validation_split=0.2,
+                progress=Progress(total=len(HYPERPARAM_GRID)),
+            )
+            all_runs.extend(runs)
+            save_tracking(runs)
+
     # Telegram Notification
     try:
         vault = VaultHandler()
         secrets = vault.fetch_quantum_secrets()
         bot_token = secrets.get("TELEGRAM_BOT_TOKEN")
         chat_id = os.getenv("CHAT_ID")
-        
+
         if bot_token and chat_id:
             msg = (
                 f"🎯 *Training Complete*\n\n"
@@ -355,10 +378,16 @@ if __name__ == "__main__":
         default=None,
         help="Tickers to train (default: all 6). Example: --tickers ETH LINK ARB",
     )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Also train on continuous market tickers (BTCUSDT, ETHUSDT, SPY, QQQ)",
+    )
     args = parser.parse_args()
     main(
         dry_run=args.dry_run,
         db_path=args.db_path,
         allow_synthetic_live=args.allow_synthetic_live,
         tickers=args.tickers,
+        continuous=args.continuous,
     )

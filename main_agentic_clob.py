@@ -3,14 +3,12 @@ import asyncio
 import contextlib
 import fcntl
 import getpass
-import logging
 import os
 import sys
 import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable
 from dotenv import load_dotenv
 from pydantic import SecretStr
 
@@ -25,7 +23,6 @@ from utils.localization_sync import apply_backward_compatible_aliases
 apply_backward_compatible_aliases()
 
 from core.container import ServiceContainer
-from core.wallet_manager import PolymarketWalletManager
 from core.lobstar_cognitive_brain import LobstarCognitiveBrain
 from core.training_pipeline import TrainingPipeline
 from mcp_agents.lobstar_agent import LobstarAgent
@@ -94,7 +91,7 @@ from core.health_supervisor_agent import HealthSupervisorAgent, HealthSupervisor
 from agents.health_monitor_agent import HealthMonitorAgent, HealthMonitorConfig
 from scrapers.clob_listener import CLOBListener
 from scrapers.user_clob_listener import UserCLOBListener
-from py_clob_client_v2 import ApiCreds
+from py_clob_client import ApiCreds
 
 logger = setup_logging()
 
@@ -176,8 +173,7 @@ def build_access_control(secrets: dict, execution_mode: str) -> tuple[AccessCont
     chat_id = int(raw_chat_id) if raw_chat_id else None
 
     private_key_raw = secrets.get("CLOB_PRIVATE_KEY")
-    private_key_wrapped = SecretStr(private_key_raw) if private_key_raw else None
-    tenant_wallet = _derive_public_wallet(private_key_wrapped)
+    tenant_wallet = _derive_public_wallet(private_key_raw)
     if chat_id and tenant_wallet:
         access_control.assigner_wallet_a_chat(chat_id, tenant_wallet)
     return access_control, chat_id
@@ -223,7 +219,9 @@ def build_telegram_listener(
     )
 
 
-def build_broadcaster(container: ServiceContainer, pipeline: TrainingPipeline, scanner: MarketScanner) -> TelegramBroadcaster:
+def build_broadcaster(
+    container: ServiceContainer, pipeline: TrainingPipeline, scanner: MarketScanner
+) -> TelegramBroadcaster:
     broadcaster_channel = os.getenv("TELEGRAM_BROADCASTER_CHANNEL_ID", "") or os.getenv("CHAT_ID")
     broadcaster_notifier = TelegramNotifier(
         bot_token=container.secrets.get("TELEGRAM_BOT_TOKEN"),
@@ -295,13 +293,6 @@ async def run_blocking(label: str, func: Callable[..., Any], *args: Any, timeout
             f"   Kwargs: {list(kwargs.keys())}"
         )
         raise
-    except Exception as e:
-        logger.error(
-            f"❌ [BLOCKING ERROR] {label} failed\n"
-            f"   Function: {func.__name__}\n"
-            f"   Error: {type(e).__name__}: {e}"
-        )
-        raise
 
 
 def _fetch_rpc_blocking(rpc_url: str) -> dict[str, Any]:
@@ -313,7 +304,10 @@ def _fetch_rpc_blocking(rpc_url: str) -> dict[str, Any]:
         data=b'{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}',
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                " AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
         },
     )
     with urllib.request.urlopen(req, timeout=5) as response:  # nosec B310
@@ -727,12 +721,6 @@ async def _run_services_loop(
                 logger.debug("✅ HealthSupervisor stopped")
             except Exception as e:
                 logger.warning(f"Error stopping health_supervisor: {e}")
-        if health_supervisor:
-            try:
-                health_supervisor.stop()
-                logger.debug("✅ HealthSupervisor stopped")
-            except Exception as e:
-                logger.warning(f"Error stopping health_supervisor: {e}")
         if health_sidecar:
             try:
                 health_sidecar.stop()
@@ -917,12 +905,17 @@ async def main(
     )
 
     api_check = get_api_key_notifier().check_all_keys(runtime_secrets=secrets)
-    
+
     # Get System Metrics for the Dashboard
-    import psutil
-    cpu_usage = psutil.cpu_percent()
-    ram_usage = psutil.virtual_memory().percent
-    
+    try:
+        import psutil
+        cpu_usage = psutil.cpu_percent()
+        ram_usage = psutil.virtual_memory().percent
+    except ImportError:
+        logger.warning("psutil not installed; using placeholder metrics")
+        cpu_usage = 0.0
+        ram_usage = 0.0
+
     # Build a "Perfect & Intuitive" Startup Dashboard
     alert = get_api_key_notifier().format_telegram_alert(api_check)
     dashboard_msg = (
@@ -934,7 +927,7 @@ async def main(
         f"{alert}\n\n"
         f"🔗 _Tapez /help pour explorer les fonctions._"
     )
-    
+
     try:
         if chat_id:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -997,7 +990,7 @@ async def main(
             timeout=30.0,
         )
         live_token_ids = extract_live_clob_token_ids(top_markets)
-        
+
         # Add tickers from currently open positions to ensure SL/TP monitoring is live
         if ledger:
             try:
@@ -1020,7 +1013,7 @@ async def main(
                     data=snapshot,
                     tags=["live", "clob", snapshot.get("token_id", "unknown")],
                 )
-                
+
                 # Fast Path: Check SL/TP directly from live snapshots
                 if ledger:
                     ticker = snapshot.get("token_id")
@@ -1042,11 +1035,11 @@ async def main(
                 pos_id = pos.get("position_id", "")
                 entry = float(pos.get("entry_price", 0.0))
                 exit_p = float(pos.get("exit_price", 0.0))
-                
+
                 entry_side = pos.get("side", "BUY").upper()
                 exit_side = "SELL" if entry_side == "BUY" else "BUY"
                 size = float(pos.get("size", 0.0))
-                
+
                 try:
                     exec_res = await passive_executor.execute(
                         ticker=ticker,
@@ -1058,7 +1051,10 @@ async def main(
                     if exec_res.get("status") in ("FILLED", "TAKER_FILLED"):
                         ledger.close_position(pos_id, exit_price=exit_p)
                         pnl_pct = ((exit_p - entry) / entry * 100) if entry > 0 else 0.0
-                        msg = f"⏹ *[FAST-PATH] Position Closed: {reason}*\nTicker: `{ticker}`\nExit: `${exit_p:.4f}`\nPnL: `{pnl_pct:+.2f}%`"
+                        msg = (
+                            f"⏹ *[FAST-PATH] Position Closed: {reason}*\n"
+                            f"Ticker: `{ticker}`\nExit: `${exit_p:.4f}`\nPnL: `{pnl_pct:+.2f}%`"
+                        )
                         await listener.send_message(msg, parse_mode="Markdown")
                     else:
                         logger.error(f"Fast-path SL/TP failed for {ticker}: {exec_res}")
@@ -1305,7 +1301,7 @@ async def main(
                                 # Dynamically subscribe to CLOB feed for this market if not already present
                                 if clob_listener:
                                     clob_listener.subscribe([bet.ticker])
-                                    
+
                                 signal = {
                                     "ticker": bet.ticker,
                                     "side": bet.side,
@@ -1434,12 +1430,12 @@ async def main(
                 entry = float(pos.get("entry_price", 0.0))
                 exit_p = float(pos.get("exit_price", 0.0))
                 pnl_pct = ((exit_p - entry) / entry * 100) if entry > 0 else 0.0
-                
+
                 # Determine target exit side: opposite of the entry side
                 entry_side = pos.get("side", "BUY").upper()
                 exit_side = "SELL" if entry_side == "BUY" else "BUY"
                 size = float(pos.get("size", 0.0))
-                
+
                 if size > 0:
                     logger.info(f"🔄 [SL/TP TRIGGERED] Closing position on exchange: {exit_side} {size} {ticker} @ {exit_p}")
                     success = False
@@ -1458,7 +1454,7 @@ async def main(
                             logger.error(f"SL/TP exchange order failed or was rejected: {exec_res}")
                     except Exception as exec_err:
                         logger.error(f"Failed to execute SL/TP close on exchange: {exec_err}")
-                    
+
                     if not success:
                         warn_msg = (
                             f"⚠️ *WARNING: SL/TP CLOSURE FAILED*\n"

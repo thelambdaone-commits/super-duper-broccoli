@@ -2,7 +2,6 @@ import logging
 import re
 import os
 from cryptography.fernet import Fernet
-from typing import Any, Optional
 
 logger = logging.getLogger("SecurityUtils")
 
@@ -23,7 +22,7 @@ class SecretScrubbingFilter(logging.Filter):
         redacted = message
         for pattern in self._patterns:
             redacted = pattern.sub("<REDACTED>", redacted)
-        
+
         if redacted != message:
             record.msg = redacted
             record.args = ()
@@ -35,7 +34,7 @@ def setup_secure_logging():
     root = logging.getLogger()
     for handler in root.handlers:
         handler.addFilter(scrubber)
-    
+
     # Also apply to common noisy libraries
     for name in ["httpx", "httpcore", "telegram", "telegram.ext", "hvac"]:
         logging.getLogger(name).addFilter(scrubber)
@@ -46,7 +45,7 @@ def get_encryption_key() -> bytes:
     if os.path.exists(key_path):
         with open(key_path, "rb") as f:
             return f.read()
-    
+
     # Generate 32 bytes for DuckDB (256-bit)
     key = os.urandom(32).hex().encode()
     os.makedirs(os.path.dirname(key_path), exist_ok=True)

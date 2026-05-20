@@ -1,9 +1,5 @@
-import os
-import sys
 import logging
-import asyncio
-from datetime import datetime
-from typing import List, Dict, Any, Callable, Coroutine
+from typing import Dict, Any, Callable, Coroutine
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -16,7 +12,7 @@ class LobstarCommandRouter:
     """
     def __init__(self, platform_core: Any) -> None:
         self.core = platform_core
-        
+
         # Mappage strict des commandes d'administration et de télémétrie
         self.command_mapping: Dict[str, Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]] = {
             "status": self.system_pm2_diagnostic,
@@ -182,10 +178,10 @@ class LobstarCommandRouter:
         /liquidate: BOUTON ROUGE. Purge absolue du capital vers 100% Cash.
         """
         logger.critical("🚨 PANIC BUTTON INITIATED! CLEARING ALL ORDERS AND POSITIONS!")
-        
+
         # 1. Annulation atomique de tous les ordres limit ouverts
         # await self.core.clob_client.cancel_all_orders()
-        
+
         # 2. Vente au marché forcée de toutes les lignes de positions actives
         # await self.core.clob_client.market_sell_all_exposure()
 
@@ -212,7 +208,7 @@ class LobstarCommandRouter:
         """
         # Scraping de l'API en deux étapes simulé pour extraire les structures d'événements
         sentiment_score = 74 if ticker == "sol" else 58
-        
+
         analysis_report = (
             f"🪙 LOBSTAR INTELLIGENCE LAYER: {ticker.upper()}\n"
             f"• Granularity Engine : {timeframe} Rolling Frame\n"

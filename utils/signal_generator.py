@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from typing import Optional, Callable
 
@@ -57,7 +57,7 @@ class TradingSignal:
             f"• Signal: `{self.signal_type.name}`",
             f"• Confidence: `{self.confidence:.2%}`",
         ]
-        
+
         if self.price:
             lines.append(f"• Price: `${self.price:.2f}`")
         if self.rsi is not None:
@@ -70,7 +70,7 @@ class TradingSignal:
             lines.append(f"• Volume: `{self.volume_signal}`")
         if self.reason:
             lines.append(f"• Reason: {self.reason}")
-        
+
         return "\n".join(lines)
 
 
@@ -85,7 +85,7 @@ class SignalGenerator:
     ):
         """
         Initialize signal generator with optional components.
-        
+
         Args:
             hmm_filter: HMM regime filter for regime detection
             feature_store: Feature store for technical indicators
@@ -94,7 +94,7 @@ class SignalGenerator:
         self.hmm_filter = hmm_filter
         self.feature_store = feature_store
         self.market_scanner = market_scanner
-        
+
         self._signals_cache: dict[str, dict[str, TradingSignal]] = {}
         self._last_signal_time: dict[str, datetime] = {}
         self._signal_history: list[TradingSignal] = []
@@ -118,7 +118,7 @@ class SignalGenerator:
         try:
             if not self.hmm_filter:
                 return True, "No HMM filter"
-            
+
             allowed, regime = self.hmm_filter.is_trading_allowed(asset)
             return allowed, regime
         except Exception as e:
@@ -137,7 +137,7 @@ class SignalGenerator:
     ) -> TradingSignal:
         """
         Generate a trading signal based on provided indicators.
-        
+
         Args:
             asset: Asset symbol (e.g., "BTC", "SOL", "ETH")
             timeframe: Timeframe (e.g., "5m", "15m", "1h")
@@ -146,7 +146,7 @@ class SignalGenerator:
             macd_signal: "bullish" or "bearish"
             volume_increasing: Whether volume is increasing
             price_above_ma: Whether price is above moving average
-        
+
         Returns:
             TradingSignal with confidence and reasoning
         """
@@ -242,12 +242,12 @@ class SignalGenerator:
     ) -> list[TradingSignal]:
         """
         Generate signals for an asset across multiple timeframes.
-        
+
         Args:
             asset: Asset symbol
             timeframes: List of timeframes (default: ["5m", "15m", "1h"])
             fetch_fn: Optional async function to fetch price data
-        
+
         Returns:
             List of TradingSignal for each timeframe
         """
@@ -281,11 +281,11 @@ class SignalGenerator:
     def format_signals_report(self, asset: str = None) -> str:
         """Format signals as a report."""
         signals = self.get_latest_signals(asset)
-        
+
         if not signals:
             return "No signals generated yet"
-        
-        lines = [f"📊 **Trading Signals Report**\n"]
+
+        lines = ["📊 **Trading Signals Report**\n"]
         for tf, signal in signals.items():
             lines.append(signal.to_markdown())
             lines.append("")  # Blank line between signals
@@ -299,11 +299,11 @@ class SignalGenerator:
     ):
         """
         Start periodic signal generation.
-        
+
         Args:
             assets: List of assets to generate signals for
             interval_seconds: Interval between signal generations
-        
+
         Returns:
             asyncio Task that runs the signal generator
         """

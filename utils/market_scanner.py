@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from utils.crypto_market_intelligence import CryptoMarketIntelligence, DEFAULT_CRYPTO_KEYWORDS
 from utils.market_watchlist import get_polymarket_watchlist
@@ -123,11 +121,11 @@ class MarketScanner:
                     # Handle different ISO formats from Polymarket
                     end_dt_str = market.end_date.replace("Z", "+00:00")
                     end_dt = datetime.fromisoformat(end_dt_str)
-                    
+
                     # Ensure end_dt is aware
                     if end_dt.tzinfo is None:
                         end_dt = end_dt.replace(tzinfo=timezone.utc)
-                        
+
                     now = datetime.now(timezone.utc)
                     days_to_res = (end_dt - now).total_seconds() / (24 * 3600)
                     if days_to_res > 3:
@@ -247,52 +245,51 @@ class MarketScanner:
         for market in markets:
             if not self._is_crypto_market(market):
                 continue
-                
+
             slug = market.slug
             # Record base price/probability
             store.record_feature(slug, "mid_price", market.yes_price)
             store.record_feature(slug, "volume", market.volume)
-            
+
             # Record order book features if available
             outcome_prices = getattr(market, "outcome_prices", None)
             if outcome_prices:
                 # Approximate spread from YES/NO prices if book is not fetched
                 spread = abs(market.yes_price - (1 - market.no_price))
                 store.record_feature(slug, "spread_bps", spread * 10000)
-                
+
             # Open Interest (if available from Gamma/CLOB)
             # Using liquidity as a proxy for depth/OI if specific OI is not in Market object
             store.record_feature(slug, "oi_5min", market.liquidity)
-            
+
             # Sentiment
             sentiment_val = 1.0 if self._get_sentiment(market) == "BULLISH" else (-1.0 if self._get_sentiment(market) == "BEARISH" else 0.0)
             store.record_feature(slug, "tam_state", sentiment_val)
-            
+
         logger.info(f"Recorded features for {len(markets)} markets in FeatureStore.")
 
     def get_aggregate_sentiment(self) -> dict[str, Any]:
         """Calculate aggregate sentiment across all scanned crypto markets."""
-        from typing import Any
         if not self._last_scan or not self._last_scan.total_markets_scanned:
             return {"sentiment": "NEUTRAL", "bullish_pct": 50, "total": 0}
-        
+
         all_signals = (
-            self._last_scan.winning_bets + 
-            self._last_scan.trending_markets + 
+            self._last_scan.winning_bets +
+            self._last_scan.trending_markets +
             self._last_scan.competitive_markets
         )
-        
+
         if not all_signals:
             return {"sentiment": "NEUTRAL", "bullish_pct": 50, "total": 0}
-            
+
         bullish_count = sum(1 for s in all_signals if s.sentiment == "BULLISH")
         total = len(all_signals)
         bullish_pct = (bullish_count / total) * 100
-        
+
         sentiment = "NEUTRAL"
         if bullish_pct > 60: sentiment = "BULLISH"
         elif bullish_pct < 40: sentiment = "BEARISH"
-        
+
         return {
             "sentiment": sentiment,
             "bullish_pct": round(bullish_pct, 1),
@@ -334,7 +331,7 @@ class MarketScanner:
                 return market.get_token_id(outcome)
             except ValueError:
                 pass
-        
+
         # 2. Try search if it looks like a generic asset (BTC, ETH, SOL)
         watchlist = set(get_polymarket_watchlist(limit=100, auto_discover_only=False))
         if ticker.upper() in watchlist or ticker.upper() in ["BITCOIN", "ETHEREUM", "SOLANA"]:
@@ -348,7 +345,7 @@ class MarketScanner:
                     return best_market.get_token_id(outcome)
                 except ValueError:
                     pass
-                    
+
         return None
 
 

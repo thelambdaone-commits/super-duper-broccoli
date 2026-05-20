@@ -1,5 +1,4 @@
 import pytest
-from datetime import datetime
 from utils.signal_generator import SignalGenerator, SignalType, TradingSignal
 
 
@@ -21,7 +20,7 @@ def test_generate_signal_neutral():
         macd_signal=None,
         price_above_ma=None,
     )
-    
+
     assert signal.asset == "BTC"
     assert signal.timeframe == "15m"
     assert signal.signal_type == SignalType.NEUTRAL
@@ -39,7 +38,7 @@ def test_generate_signal_bullish():
         price_above_ma=True,
         volume_increasing=True,
     )
-    
+
     assert signal.asset == "SOL"
     assert signal.signal_type in (SignalType.BUY, SignalType.STRONG_BUY)
     assert signal.confidence >= 0.5
@@ -56,7 +55,7 @@ def test_generate_signal_bearish():
         price_above_ma=False,
         volume_increasing=False,
     )
-    
+
     assert signal.asset == "ETH"
     assert signal.signal_type in (SignalType.SELL, SignalType.STRONG_SELL)
     assert signal.confidence >= 0.5
@@ -65,13 +64,13 @@ def test_generate_signal_bearish():
 def test_signal_cache():
     """Test signal caching."""
     generator = SignalGenerator()
-    
+
     signal1 = generator.generate_signal(
         asset="BTC",
         timeframe="15m",
         rsi=40,
     )
-    
+
     cached = generator.get_latest_signals("BTC")
     assert "15m" in cached
     assert cached["15m"] == signal1
@@ -80,10 +79,10 @@ def test_signal_cache():
 def test_signal_history():
     """Test signal history tracking."""
     generator = SignalGenerator()
-    
+
     signal1 = generator.generate_signal("BTC", "5m", rsi=40)
     signal2 = generator.generate_signal("SOL", "15m", rsi=60)
-    
+
     history = generator.get_signal_history()
     assert len(history) >= 2
     assert signal1 in history
@@ -101,7 +100,7 @@ def test_signal_format_markdown():
         rsi=35,
         reason="RSI oversold",
     )
-    
+
     markdown = signal.to_markdown()
     assert "📈" in markdown or "BUY" in markdown
     assert "BTC" in markdown
@@ -118,7 +117,7 @@ def test_signal_format_for_display():
         confidence=0.92,
         reason="Multiple bearish indicators",
     )
-    
+
     display = str(signal)
     assert "💥" in display
     assert "ETH" in display
@@ -129,10 +128,10 @@ def test_signal_format_for_display():
 def test_format_signals_report():
     """Test signals report formatting."""
     generator = SignalGenerator()
-    
+
     generator.generate_signal("BTC", "5m", rsi=40)
     generator.generate_signal("BTC", "15m", rsi=50)
-    
+
     report = generator.format_signals_report("BTC")
     assert "📊" in report
     assert "BTC" in report
@@ -144,12 +143,12 @@ def test_format_signals_report():
 async def test_generate_signals_for_asset():
     """Test multi-timeframe signal generation."""
     generator = SignalGenerator()
-    
+
     signals = await generator.generate_signals_for_asset(
         "SOL",
         timeframes=["5m", "15m", "1h"],
     )
-    
+
     assert len(signals) == 3
     assert all(s.asset == "SOL" for s in signals)
     assert {s.timeframe for s in signals} == {"5m", "15m", "1h"}
@@ -158,7 +157,7 @@ async def test_generate_signals_for_asset():
 def test_signal_confidence_calculation():
     """Test confidence score calculation."""
     generator = SignalGenerator()
-    
+
     # Strong bullish signal
     strong_bull = generator.generate_signal(
         asset="BTC",
@@ -168,7 +167,7 @@ def test_signal_confidence_calculation():
         price_above_ma=True,
         volume_increasing=True,
     )
-    
+
     # Weak signal
     weak = generator.generate_signal(
         asset="ETH",
@@ -177,5 +176,5 @@ def test_signal_confidence_calculation():
         macd_signal=None,
         price_above_ma=None,
     )
-    
+
     assert strong_bull.confidence > weak.confidence

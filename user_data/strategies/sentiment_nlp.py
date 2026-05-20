@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 from typing import Optional
 
 import numpy as np
@@ -34,7 +33,7 @@ class SentimentAnalyzer:
         self._finbert_pipeline: Optional[object] = None
         self._hf_client_deberta: Optional[object] = None
         self._hf_client_finbert: Optional[object] = None
-        
+
         if use_deberta:
             self._init_deberta()
         if use_finbert:
@@ -119,7 +118,7 @@ class SentimentAnalyzer:
     def analyze_finbert(self, text: str) -> dict[str, float]:
         if self._hf_client_finbert is None and self._finbert_pipeline is None:
             return self.analyze_keyword(text)
-        
+
         try:
             # Option A: API
             if self._hf_client_finbert:
@@ -132,7 +131,7 @@ class SentimentAnalyzer:
                     )
                     def query_api(t):
                         return self._hf_client_finbert.text_classification(t[:512])
-                    
+
                     res = query_api(text)
                     if res:
                         best = max(res, key=lambda x: x["score"])
@@ -171,7 +170,7 @@ class SentimentAnalyzer:
     def analyze_deberta(self, text: str) -> dict[str, float]:
         if self._hf_client_deberta is None and self._deberta_pipeline is None:
             return self.analyze_keyword(text)
-        
+
         try:
             # Option A: API
             if self._hf_client_deberta:
@@ -184,7 +183,7 @@ class SentimentAnalyzer:
                     )
                     def query_api(t):
                         return self._hf_client_deberta.text_classification(t[:512])
-                    
+
                     res = query_api(text)
                     if res:
                         label_map = {r["label"]: r["score"] for r in res}

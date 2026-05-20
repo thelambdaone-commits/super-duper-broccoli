@@ -1,4 +1,3 @@
-import pytest
 
 from utils.chart_pattern_detector import ChartPatternDetector
 

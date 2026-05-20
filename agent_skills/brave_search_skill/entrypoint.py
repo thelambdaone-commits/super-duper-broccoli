@@ -1,7 +1,3 @@
-import os
-import urllib.request
-import urllib.parse
-import json
 import logging
 from utils.rss_aggregator import RSSAggregator
 
@@ -24,14 +20,14 @@ def search_brave_web(query: str, count: int = 5) -> dict:
     Replaces paid Brave Search API with free RSS feeds.
     """
     agg = _get_aggregator()
-    
+
     # In a sync context, we use a small trick to run async fetch if needed
     import asyncio
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
             # If we're already in a loop, we can't easily run another one.
-            # But since this is a skill often called via dispatch, 
+            # But since this is a skill often called via dispatch,
             # we'll hope the aggregator was already populated or we use the existing results.
             pass
         else:
@@ -40,7 +36,7 @@ def search_brave_web(query: str, count: int = 5) -> dict:
         logger.warning(f"Failed to fetch fresh news for query '{query}': {e}")
 
     results = agg.search_news(query, limit=count)
-    
+
     if results:
         formatted_results = [
             {
@@ -57,11 +53,11 @@ def search_brave_web(query: str, count: int = 5) -> dict:
             "results_count": len(formatted_results),
             "results": formatted_results
         }
-            
+
     # Premium context-aware fallback (used if RSS has no matches)
     q_lower = query.lower()
     fallback_results = []
-    
+
     if "solana" in q_lower or "sol" in q_lower:
         fallback_results = [
             {
@@ -91,7 +87,7 @@ def search_brave_web(query: str, count: int = 5) -> dict:
                 "description": f"Real-time sentiment and search results matching your query: '{query}'. Overall prediction market consensus shows neutral trends."
             }
         ]
-        
+
     return {
         "status": "SUCCESS",
         "source": "RSS_FALLBACK_ENGINE",

@@ -17,6 +17,7 @@ INCLUDE_DIRS = [
     "monitors",
     "scrapers",
     "telegram_scraper",
+    "scrappers",
     "user_data/freqaimodels",
     "user_data/strategies",
     "utils",

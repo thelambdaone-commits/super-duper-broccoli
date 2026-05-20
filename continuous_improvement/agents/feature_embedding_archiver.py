@@ -1,9 +1,7 @@
 import asyncio
 import logging
-import time
 import numpy as np
-from typing import Dict, List, Optional, Any
-from datetime import datetime, timezone
+from typing import Dict, List, Any
 
 from utils.market_watchlist import get_polymarket_watchlist
 

@@ -8,11 +8,9 @@ Verifies all core trading functions in a sandboxed, multi-tenant environment.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import sys
-import uuid
 import time
 from pathlib import Path
 from typing import Any, Dict, List
@@ -38,7 +36,7 @@ class BacktestOrchestrator:
     def __init__(self, asset: str = "SOL", chat_id: int = 12345678):
         self.asset = asset
         self.chat_id = chat_id
-        
+
         # Ensure data folder exists
         os.makedirs(os.path.dirname(SANDBOX_DB), exist_ok=True)
         if os.path.exists(SANDBOX_DB):
@@ -46,11 +44,11 @@ class BacktestOrchestrator:
                 os.remove(SANDBOX_DB)
             except Exception:
                 pass
-                
+
         # 1. Initialize core services
         self.ledger = Ledger(db_path=SANDBOX_DB)
         self.ledger.set_execution_mode("PAPER")
-        
+
         # Seed simulated capital allocation for risk engine compute_position_size
         cursor = self.ledger.conn.cursor()
         cursor.execute(
@@ -58,12 +56,12 @@ class BacktestOrchestrator:
             "VALUES (10000.0, 10000.0, 10.0)"
         )
         self.ledger.conn.commit()
-        
+
         self.hmm = HMMRegimeFilter()
         self.risk = PortfolioRiskEngine(ledger=self.ledger, hmm_filter=self.hmm)
         self.access = AccessControlManager(admin_chat_ids=[chat_id])
         self.brain = LobstarCognitiveBrain(None, None)
-        
+
         # Whitelist dynamic wallets
         self.tenant_wallet = "0xBacktestTenantAddress"
         self.access.assigner_wallet_a_chat(chat_id, self.tenant_wallet)
@@ -77,13 +75,13 @@ class BacktestOrchestrator:
             rounds=20,
             agents=45
         )
-        
+
         # Extract cohorts & workflows
         cohorts = brief.get("agent_cohorts", [])
         logger.info(f"🐟 [MiroFish] Spawned {brief.get('agents')} agents across {len(cohorts)} trader cohorts.")
         for cohort in cohorts[:3]:
             logger.info(f"   • Cohort '{cohort.get('name')}': {cohort.get('description')}")
-            
+
         # Simulate emergent swarm prediction path
         simulated_consensus_prob = 0.72 # Simulated YES outcome probability
         logger.info(f"🐟 [MiroFish] Cohort Swarm Consensus Probability: {simulated_consensus_prob:.2f}")
@@ -99,12 +97,12 @@ class BacktestOrchestrator:
         Orchestrates 5 specialized agents (Ruflo style) to analyze, size, and execute.
         """
         print(f"\n─────────────────── [ TICK {tick:02d} — RUFLO MULTI-AGENT SWARM ] ───────────────────")
-        
+
         # Agent 1: Market Analyst Specialist
         logger.info("🛡️ [Agent 1: Market Analyst] Fetching market microstructures...")
         price = 0.58 + (tick * 0.03) # Price tick simulation
         logger.info(f"   • Scanned ticker: {self.asset} | YES Price: ${price:.3f}")
-        
+
         # Agent 2: Swarm Oracle (MiroFish)
         logger.info("🛡️ [Agent 2: Swarm Oracle] Extracting emergent consensus...")
         prob = sim_data["consensus_prob"] * 100
@@ -144,18 +142,18 @@ class BacktestOrchestrator:
             "source": "lobstar_llm",
             "raw": f"SOL yes price at {price:.3f}"
         }
-        
+
         # Simulated cognitive decision enrichment
         cognitive_decision = type('Decision', (), {
             'reason': 'Swarm and Kelly validation align perfectly',
             'action': 'EXECUTE',
             'confidence': confidence
         })()
-        
+
         # Secure tenant routing
         tenant = self.access.obtenir_wallet_associe(self.chat_id)
         logger.info(f"   • Whitelisted Wallet Isolated: `{tenant}`")
-        
+
         # 2. Record simulated order inside Ledger DB (Paper)
         order_res = self.ledger.record_paper_order(
             ticker=self.asset,
@@ -167,10 +165,10 @@ class BacktestOrchestrator:
             signal_source="backtest_swarm",
             tenant_wallet=tenant
         )
-        
+
         pos_id = order_res["position_id"]
         logger.info(f"📥 [Agent 5] Paper order booked cleanly. Position ID: `{pos_id}`")
-        
+
         return {
             "tick": tick,
             "position_id": pos_id,
@@ -188,7 +186,7 @@ class BacktestOrchestrator:
             # Alternate wins/losses
             is_win = (i % 2 == 0)
             pnl = t["size"] * 0.15 if is_win else -t["size"] * 0.10
-            
+
             # Close trade inside sandboxed ledger
             cursor = self.ledger.conn.cursor()
             cursor.execute(
@@ -196,12 +194,12 @@ class BacktestOrchestrator:
                 (pnl, t["price"] * 1.15 if is_win else t["price"] * 0.9, int(time.time()), 1 if is_win else 0, pos_id)
             )
             self.ledger.conn.commit()
-            
+
             logger.info(f"📊 Resolved Position `{pos_id}`: {'🏆 WIN' if is_win else '⚠️ LOSS'} | PnL: ${pnl:+.2f}")
             t["pnl"] = pnl
             t["is_win"] = is_win
             resolved.append(t)
-            
+
         return resolved
 
     def generate_backtest_report(self, resolved_trades: List[Dict[str, Any]]):
@@ -212,7 +210,7 @@ class BacktestOrchestrator:
         wins = sum(1 for t in resolved_trades if t["is_win"])
         losses = len(resolved_trades) - wins
         win_rate = (wins / len(resolved_trades) * 100) if resolved_trades else 0
-        
+
         print("\n" + "═" * 70)
         print(" 🦞 LOBSTAR QUANT OS — MULTI-AGENT SWARM BACKTEST REPORT")
         print("═" * 70)
@@ -238,29 +236,29 @@ class BacktestOrchestrator:
 
 async def main():
     print("🚀 Starting Multi-Agent backtest simulation...")
-    
+
     # Run backtest for SOL asset
     backtest = BacktestOrchestrator(asset="SOL", chat_id=12345678)
-    
+
     # 1. Run MiroFish swarm simulation
     sim_data = backtest.run_mirofish_simulation()
-    
+
     # 2. Run 4 simulated market ticks sequentially (Ruflo multi-agent flow)
     trades = []
     for tick in range(1, 5):
         trade = await backtest.execute_ruflo_orchestration_step(tick, sim_data)
         trades.append(trade)
         await asyncio.sleep(0.5)
-        
+
     # 3. Simulate outcomes & close trades
     resolved = backtest.simulate_trade_resolution(trades)
-    
+
     # 4. Trigger local RL feedback weights tuner using sandboxed ledger
     # To run the RL Tuner against our sandbox db, we patch the main Ledger instance temporarily
     import unittest.mock as mock
     with mock.patch("scripts.rl_feedback_loop.Ledger", return_value=backtest.ledger):
         run_rl_feedback_loop()
-        
+
     # 5. Render gorgeous report
     backtest.generate_backtest_report(resolved)
 
