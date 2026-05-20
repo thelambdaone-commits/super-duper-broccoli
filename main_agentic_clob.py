@@ -942,8 +942,16 @@ async def main(
                 InlineKeyboardButton("📖 Manuel", callback_data="help_menu"),
                 InlineKeyboardButton("📊 Statut", callback_data="help_page_3")
             ]])
-            await listener.send_message(dashboard_msg, chat_id=chat_id, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
-            logger.info("📡 [STARTUP] Intuitive Command Center dashboard sent.")
+            sent = await listener.send_message(
+                dashboard_msg,
+                chat_id=chat_id,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup,
+            )
+            if sent:
+                logger.info("📡 [STARTUP] Intuitive Command Center dashboard sent.")
+            else:
+                logger.warning("📡 [STARTUP] Intuitive Command Center dashboard deferred: Telegram bot not ready.")
     except Exception as e:
         logger.error(f"❌ Failed to send Startup Dashboard: {e}")
 
@@ -1675,10 +1683,17 @@ if __name__ == "__main__":
     else:
         try:
             from ledger.ledger_db import Ledger
-            resolved_mode = Ledger().get_execution_mode()
-            logger.info(f"Loaded execution mode from SQLite ledger database: `{resolved_mode}`")
+            from core.autonomous_mode_controller import select_autonomous_execution_mode
+            startup_ledger = Ledger()
+            decision = select_autonomous_execution_mode(startup_ledger)
+            resolved_mode = decision.mode
+            logger.info(
+                "Autonomous execution mode selected: `%s` (%s)",
+                resolved_mode,
+                decision.reason,
+            )
         except Exception as e:
-            logger.debug(f"Failed to read execution mode from database: {e}")
+            logger.debug(f"Failed to resolve autonomous execution mode: {e}")
             resolved_mode = "PAPER"
 
     try:

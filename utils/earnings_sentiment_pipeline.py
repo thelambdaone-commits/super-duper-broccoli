@@ -1,5 +1,6 @@
 import logging
 import os
+import warnings
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -46,18 +47,25 @@ class EarningsSentimentPipeline:
         self._hf_pipeline: Any = None
         self._hf_client: Any = None
         self._analyzer: Any = None
+        self._quick_sentiment: Any = None
         self._earnings_analyzer_available = False
         self._init_earnings_analyzer()
 
     def _init_earnings_analyzer(self) -> None:
         try:
-            from earnings_analyzer.api import quick_sentiment_analysis
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                from earnings_analyzer.api import quick_sentiment_analysis
             self._quick_sentiment = quick_sentiment_analysis
             self._earnings_analyzer_available = True
             logger.info("earnings-analyzer package available")
         except ImportError:
             self._earnings_analyzer_available = False
             logger.info("earnings-analyzer not installed; use pip install earnings-analyzer")
+        except Exception as exc:
+            self._quick_sentiment = None
+            self._earnings_analyzer_available = False
+            logger.warning("earnings-analyzer import failed; disabling earnings calls: %s", exc)
 
     def _get_hf_sentiment(self, text: str) -> dict:
         if not self.use_huggingface:
@@ -136,7 +144,7 @@ class EarningsSentimentPipeline:
         quarter: Optional[str] = None,
         year: Optional[int] = None,
     ) -> EarningsResult:
-        if self._earnings_analyzer_available and self.gemini_api_key:
+        if self._earnings_analyzer_available and self._quick_sentiment and self.gemini_api_key:
             try:
                 result = self._quick_sentiment(
                     ticker=ticker,
@@ -160,6 +168,8 @@ class EarningsSentimentPipeline:
                 logger.warning("earnings-analyzer failed for %s: %s", ticker, e)
         return EarningsResult(
             ticker=ticker, quarter=quarter or "", year=year or 0,
+            sentiment_score=0.0,
+            confidence=0.0,
             error="earnings-analyzer not configured",
         )
 

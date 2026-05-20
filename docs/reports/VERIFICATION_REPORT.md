@@ -10,7 +10,7 @@
 
 This performance audit evaluates the **Triple Decision-Making Stack** of the Polymarket Algorithmic Trading Bot. Specifically, we isolate, analyze, and profile each decision layer—**Calcul Pur (Deterministic Math)**, **Cognitive IA (LLM Semantic Parsing)**, and **Machine Learning (Predictive Modeling & HMM)**—to identify latencies, cross-component blocking, and potential *data slippage* (opportunistic expiration) on the Polygon blockchain.
 
-Additionally, to transition the system to peak institutional reliability, we have already **implemented and fully validated three core performance hardening upgrades** (In-Memory LLM Semantic Cache, Local RPC Wallet Balance Cache, and a 1.5% Slippage Gate). The complete virtualenv suite of **658 unit & integration tests is 100% green**.
+Additionally, the audit context describes three core performance hardening upgrades as already integrated or in progress (In-Memory LLM Semantic Cache, Local RPC Wallet Balance Cache, and a 1.5% Slippage Gate). The test suite is reported as green in the audit context and should be rechecked against the current branch when making release decisions.
 
 ---
 
@@ -128,7 +128,7 @@ Cette section analyse l'utilisation de l'écosystème Hugging Face pour les briq
 ### 1. Statut Actuel : Hybride API/Local (OPTIMISÉ)
 *   **Mode d'Exécution :** Priorité à l'**API d'Inférence Serverless** (déporté). Fallback local uniquement si la clé API est absente.
 *   **Modèles Détectés :** `ProsusAI/finbert` et `microsoft/deberta-v3-base`.
-*   **Impact Ressources :** Consommation RAM locale réduite à **~0 Mo** pour la partie ML (si clé API active).
+*   **Impact Ressources :** Consommation RAM locale fortement réduite pour la partie ML lorsque l'API serverless est active.
 *   **Temps de Réponse :**
     *   *API (Optimal) :* 100-300ms (dépend du réseau).
     *   *Retry Logic :* Gestion automatique du "Cold Start" (erreur 503) via `tenacity`.
@@ -141,4 +141,4 @@ Nous avons déjà mis à jour les composants suivants pour supporter l'inférenc
 
 ---
 > [!TIP]
-> L'optimisation Hugging Face est **terminée et validée**. Le bot est désormais compatible avec les environnements à très faibles ressources (VPS gratuits, instances t2.micro).
+> L'optimisation Hugging Face doit rester vérifiée sur la branche courante. Le mode serverless + fallback léger est l'option la plus compatible avec les environnements à faibles ressources.

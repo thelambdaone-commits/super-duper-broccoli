@@ -1,10 +1,39 @@
 import asyncio
 import logging
 import os
+import socket
 import httpx
 from typing import Optional
 
 logger = logging.getLogger("Notifier")
+
+
+def _is_transient_network_error(exc: Exception) -> bool:
+    transient_types = (
+        socket.gaierror,
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+        httpx.RemoteProtocolError,
+        httpx.NetworkError,
+        httpx.PoolTimeout,
+    )
+    if isinstance(exc, transient_types):
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "temporary failure in name resolution",
+            "name resolution",
+            "nodename nor servname provided",
+            "getaddrinfo failed",
+            "network is unreachable",
+            "connection refused",
+            "connection reset",
+            "timed out",
+        )
+    )
 
 class TelegramNotifier:
     def __init__(self, bot_token: Optional[str] = None, chat_id: Optional[str] = None) -> None:
@@ -42,7 +71,10 @@ class TelegramNotifier:
             response = httpx.post(url, json=payload, timeout=5.0)
             return response.status_code == 200
         except Exception as e:
-            logger.warning(f"Failed to send Telegram notification: {e}")
+            if _is_transient_network_error(e):
+                logger.info("Telegram notification skipped due to transient network issue: %s", e)
+            else:
+                logger.warning(f"Failed to send Telegram notification: {e}")
             return False
 
     async def send_async(self, message: str, parse_mode: str = "Markdown") -> bool:
@@ -60,7 +92,10 @@ class TelegramNotifier:
                 response = await client.post(url, json=payload, timeout=5.0)
                 return response.status_code == 200
         except Exception as e:
-            logger.warning(f"Failed to send async Telegram notification: {e}")
+            if _is_transient_network_error(e):
+                logger.info("Async Telegram notification skipped due to transient network issue: %s", e)
+            else:
+                logger.warning(f"Failed to send async Telegram notification: {e}")
             return False
 
     def _handle_task_result(self, task: asyncio.Task) -> None:

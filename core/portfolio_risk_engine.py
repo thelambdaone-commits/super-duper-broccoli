@@ -106,7 +106,11 @@ class PortfolioRiskEngine:
             self._peak_equity = current_capital
             
         if hasattr(self.ledger, "get_global_drawdown"):
-            global_drawdown = self.ledger.get_global_drawdown()
+            global_drawdown_raw = self.ledger.get_global_drawdown()
+            try:
+                global_drawdown = float(global_drawdown_raw)
+            except (TypeError, ValueError):
+                global_drawdown = 0.0
             if global_drawdown <= -0.10:
                 self._is_drawdown_tripped = True
                 try:
@@ -245,6 +249,20 @@ class PortfolioRiskEngine:
         side = str(signal.get("side", "BUY"))
         price = float(signal.get("price", 0.0) or 0.0)
         confidence = float(signal.get("confidence", 0.5))
+        predictive_edge = signal.get("predictive_edge", signal.get("estimated_edge"))
+        is_fallback = bool(signal.get("is_fallback", signal.get("ml_is_fallback", False)))
+        ood_alert = bool(signal.get("ood_alert", False))
+
+        if ood_alert:
+            return False, "ML_OOD_ALERT"
+        if is_fallback:
+            try:
+                edge_value = float(predictive_edge)
+            except (TypeError, ValueError):
+                return False, "ML_FALLBACK_NO_EDGE"
+            if edge_value < 0.105:
+                return False, f"ML_FALLBACK_EDGE_TOO_LOW:{edge_value:+.4f}"
+            confidence = min(confidence, confidence * 0.67)
 
         regime_label = str(signal.get("regime_label", "LOW_VOLATILITY"))
         if regime_label in BLOCKED_REGIMES:

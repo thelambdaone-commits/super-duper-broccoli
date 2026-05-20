@@ -1,5 +1,16 @@
 # Rapport d'Audit : WebSockets & Optimisation de la Latence
 
+## 0. Synthèse Exécutive
+
+La stack dispose déjà de vrais flux temps réel pour le carnet d'ordres Polymarket et pour certains événements on-chain. Le point faible principal n'est pas l'absence de WebSockets, mais la présence persistante de chemins HTTP polling pour la découverte de marchés et la fragmentation des consommateurs d'événements.
+
+Les priorités d'optimisation sont donc:
+
+1. Réduire `WebScraper` à un fallback.
+2. Centraliser les flux `CLOB`, `user events` et `Polygon WS` dans un hub interne.
+3. Brancher explicitement les événements utilisateur sur le ledger et l'exécution.
+4. Passer Telegram à un streaming MTProto si la latence devient critique.
+
 ## 1. Diagnostic des Flux de Données
 
 | Flux de Données | Méthode Actuelle | Latence Estimée | Impact | Recommandation |
@@ -59,3 +70,21 @@ Modifier `CLOBListener` pour permettre l'ajout dynamique de `token_ids` sans red
 ## 5. Prochaines Étapes Recommandées
 1.  **RPC Privé** : Remplacer `wss://polygon-rpc.com/ws` par une clé Alchemy/Infura pour éviter le throttling du mempool.
 2.  **MTProto (Telethon)** : Pour les signaux Telegram, passer du Bot API (Polling) à un Userbot (Streaming) pour gagner ~1-2 secondes sur l'ingestion.
+
+## 6. Recommandations Prioritaires
+
+1. Conserver `CLOBListener` et `PolymarketMonitor` comme sources temps réel principales.
+2. Réduire `WebScraper` à un rôle de fallback pour la metadata marché, pas à un flux critique.
+3. Brancher explicitement `UserCLOBListener` sur le ledger et l'executor pour capter les `fills` et `cancels` en temps réel.
+4. Si un vrai streaming Telegram est requis, passer de Bot API à `Telethon` ou `Pyrogram`.
+5. Ajouter un bus interne d'événements pour faire un fan-out unique vers tous les consommateurs au lieu de relire chaque flux séparément.
+
+## 7. Bloc Prêt à Coller
+
+### Diagnostic WebSockets & Optimisation Latence
+
+- `CLOBListener` et `PolymarketMonitor` sont déjà bien intégrés et doivent rester les flux temps réel principaux.
+- `WebScraper` fonctionne en polling HTTP et doit être relégué au fallback.
+- `UserCLOBListener` existe, mais doit être relié explicitement au ledger et à l'executor pour exploiter les événements utilisateur en temps réel.
+- Le flux Telegram reste non optimal pour la latence si l'on reste sur Bot API; `Telethon` ou `Pyrogram` seraient plus adaptés.
+- Un bus interne d'événements centralisé réduirait les doublons, la latence de fan-out et la fragmentation des consommateurs.

@@ -352,8 +352,9 @@ class CommandRouter:
 
     async def _cmd_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
-        if context.args:
-            asset = CRYPTO_ALIAS_MAP.get(context.args[0].lower(), context.args[0].upper())
+        args = getattr(context, "args", None) or []
+        if args:
+            asset = CRYPTO_ALIAS_MAP.get(args[0].lower(), args[0].upper())
         else:
             command = (update.effective_message.text or "").split()[0].lstrip("/").split("@")[0].lower()
             asset = CRYPTO_ALIAS_MAP.get(command, command.upper())
@@ -682,7 +683,7 @@ class CommandRouter:
             from utils.ai_specialists import list_ai_specialists
             specialists = list_ai_specialists()
             msg = (
-                "🧠 *CONSEIL D'IA LOBSTAR*\n"
+                "🧠 *AI Agents Status / CONSEIL D'IA LOBSTAR*\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"• *Spécialistes* : `{len(specialists)} agents` actifs\n"
                 "• *LLM Council* : `OpenRouter / Groq` ✅\n"
@@ -698,9 +699,10 @@ class CommandRouter:
                 msg = "🚨 *DERNIÈRES ERREURS AI*\n━━━━━━━━━━━━━━━━━━━━\n```\n" + "".join(lines) + "\n```"
                 await self.listener.reply_to(msg, update)
             except Exception as e:
-                await self.listener.reply_to(f"❌ Échec lecture: {e}", update)
+                await self.listener.reply_to(f"❌ Failed to read logs: {e}", update)
         else:
             status_msg = await self.listener.reply_to(
+                "🤔 *Lobstar AI Council is reflecting...*\n"
                 "🤔 *Le Conseil d'IA Lobstar réfléchit...*\n\n"
                 "• Analyse des signaux de marché...\n"
                 "• Consultation des agents spécialistes...\n"
@@ -714,7 +716,11 @@ class CommandRouter:
                 api_key = resolve_openrouter_api_key(council.config)
 
                 if not api_key:
-                    final_msg = "🚨 *CLEF API MANQUANTE*\n\nLa synthèse multi-agent nécessite une `OPENROUTER_API_KEY`."
+                    final_msg = (
+                        "🚨 *OPENROUTER API KEY MISSING*\n\n"
+                        "🚨 *CLEF API MANQUANTE*\n\n"
+                        "La synthèse multi-agent nécessite une `OPENROUTER_API_KEY`."
+                    )
                     await status_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
                     return
 

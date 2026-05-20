@@ -13,7 +13,7 @@ from py_clob_client_v2 import ApiCreds
 logger = logging.getLogger("UserCLOBListener")
 
 USER_CLOB_WS_URL = os.getenv(
-    "USER_CLOB_WS_URL", "wss://ws-subscriptions-clob.polymarket.com/ws/"
+    "USER_CLOB_WS_URL", "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 )
 
 UserEventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]

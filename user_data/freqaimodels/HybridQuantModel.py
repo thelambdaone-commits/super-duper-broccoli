@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import tempfile
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
@@ -15,11 +16,43 @@ from xgboost import XGBClassifier
 
 logger = logging.getLogger("HybridQuantModel")
 
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:  # pragma: no cover - exercised by adapter behavior
+    torch = None
+    HAS_TORCH = False
+
 
 MODEL_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
     "user_data", "models"
 )
+
+
+@dataclass(frozen=True)
+class UnifiedScoringOutput:
+    market_id: str
+    ml_calibrated_score: float
+    estimated_edge: float
+    is_fallback: bool
+    ood_alert: bool = False
+    dissimilarity_index: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def is_tradable(self, min_edge: float) -> bool:
+        min_edge = float(min_edge)
+        required_edge = min_edge * 1.5 if self.is_fallback else min_edge
+        return self.estimated_edge >= required_edge and not self.ood_alert
+
+    def to_signal_fields(self) -> dict[str, Any]:
+        return {
+            "predictive_probability": self.ml_calibrated_score,
+            "predictive_edge": self.estimated_edge,
+            "is_fallback": self.is_fallback,
+            "ood_alert": self.ood_alert,
+            "dissimilarity_index": self.dissimilarity_index,
+        }
 
 
 class TFTEmbeddingHook:
@@ -29,12 +62,14 @@ class TFTEmbeddingHook:
 
     def load_tft(self, checkpoint_path: str) -> bool:
         try:
-            import torch
             from user_data.hypernetworks.tft_layers import TemporalFusionTransformer
+            if not HAS_TORCH:
+                logger.warning("TFT load skipped: torch is not installed")
+                return False
             self._model = TemporalFusionTransformer(
                 d_features=self.d_model, d_model=self.d_model
             )
-            state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+            state = torch.load(checkpoint_path, map_location=torch.device("cpu"), weights_only=True)
             self._model.load_state_dict(state)
             self._model.eval()
             logger.info(f"TFT loaded from {checkpoint_path}")
@@ -47,7 +82,6 @@ class TFTEmbeddingHook:
         if self._model is None:
             return X
         try:
-            import torch
             with torch.no_grad():
                 x_t = torch.tensor(X, dtype=torch.float32).unsqueeze(1)
                 _ = self._model(x_t)
@@ -58,6 +92,101 @@ class TFTEmbeddingHook:
         except Exception as e:
             logger.warning(f"TFT embedding extraction failed: {e}")
             return X
+
+
+class HybridQuantModelAdapter:
+    """
+    Optional CPU-first tensor scoring adapter.
+
+    Runtime risk remains scalar; this adapter only produces normalized scoring
+    fields and falls back to deterministic NumPy when tensor inference is unsafe.
+    """
+
+    def __init__(
+        self,
+        model_path: Optional[str] = None,
+        model: Any = None,
+        expected_features: Optional[int] = None,
+        ood_threshold: float = 0.85,
+    ) -> None:
+        self.has_torch = HAS_TORCH
+        self.model = model
+        self.expected_features = expected_features
+        self.ood_threshold = float(ood_threshold)
+        if self.has_torch and model_path:
+            self._load_tensor_model(model_path)
+
+    def _load_tensor_model(self, path: str) -> None:
+        try:
+            self.model = torch.jit.load(path, map_location=torch.device("cpu"))
+            self.model.eval()
+            logger.info("Tensor scoring model loaded on CPU: %s", path)
+        except Exception as e:
+            logger.warning("Tensor model load failed; using deterministic fallback: %s", e)
+            self.model = None
+
+    def score_market(self, live_features: dict[str, Any], current_odds: float) -> UnifiedScoringOutput:
+        if self.has_torch and self.model is not None:
+            try:
+                return self._execute_tensor_path(live_features, current_odds)
+            except Exception as tensor_err:
+                logger.warning(
+                    "Tensor scoring failed; using deterministic fallback: %s",
+                    tensor_err,
+                )
+        return self._execute_deterministic_fallback(live_features, current_odds)
+
+    def _execute_tensor_path(
+        self,
+        features: dict[str, Any],
+        current_odds: float,
+    ) -> UnifiedScoringOutput:
+        raw_vector = np.asarray(features.get("microstructure_vector", []), dtype=np.float32)
+        raw_vector = np.ravel(raw_vector)
+        if raw_vector.size == 0:
+            raise ValueError("empty microstructure_vector")
+        if self.expected_features is not None and raw_vector.size != self.expected_features:
+            raise ValueError(f"expected {self.expected_features} features, got {raw_vector.size}")
+        if not np.all(np.isfinite(raw_vector)):
+            raise ValueError("microstructure_vector contains NaN or Inf")
+
+        feat_tensor = torch.from_numpy(raw_vector).to(torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            model_output = self.model(feat_tensor)
+        out = model_output.detach().cpu().numpy() if hasattr(model_output, "detach") else np.asarray(model_output)
+        out = np.ravel(out).astype(np.float64)
+        if out.size == 0 or not np.all(np.isfinite(out)):
+            raise ValueError("tensor model output is empty or non-finite")
+
+        pred_score = float(np.clip(out[0], 0.0, 1.0))
+        dissimilarity = float(out[1]) if out.size > 1 else 0.0
+        edge = pred_score - float(current_odds)
+        return UnifiedScoringOutput(
+            market_id=str(features.get("market_id", "unknown")),
+            ml_calibrated_score=pred_score,
+            estimated_edge=edge,
+            is_fallback=False,
+            ood_alert=dissimilarity > self.ood_threshold,
+            dissimilarity_index=dissimilarity,
+            metadata={"path": "tensor"},
+        )
+
+    def _execute_deterministic_fallback(
+        self,
+        features: dict[str, Any],
+        current_odds: float,
+    ) -> UnifiedScoringOutput:
+        history = np.asarray(features.get("historical_closes", [current_odds]), dtype=np.float64)
+        history = history[np.isfinite(history)]
+        fallback_score = float(current_odds) if history.size == 0 else float(np.clip(np.mean(history), 0.0, 1.0))
+        return UnifiedScoringOutput(
+            market_id=str(features.get("market_id", "unknown")),
+            ml_calibrated_score=fallback_score,
+            estimated_edge=fallback_score - float(current_odds),
+            is_fallback=True,
+            ood_alert=False,
+            metadata={"path": "deterministic_fallback"},
+        )
 
 
 class HybridQuantModel(BaseEstimator, ClassifierMixin):

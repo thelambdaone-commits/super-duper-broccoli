@@ -1,4 +1,5 @@
 import pytest
+import builtins
 
 from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline, EarningsResult
 from utils.sentiment_ensemble import SentimentEnsemble
@@ -17,6 +18,23 @@ class TestEarningsSentimentPipeline:
         assert "score" in result
         assert "label" in result
         assert "confidence" in result
+
+    def test_broken_earnings_analyzer_import_fails_closed(self, monkeypatch):
+        real_import = builtins.__import__
+
+        def fail_earnings_import(name, *args, **kwargs):
+            if name == "earnings_analyzer.api":
+                raise RuntimeError("broken dependency")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fail_earnings_import)
+
+        pipeline = EarningsSentimentPipeline(use_huggingface=False)
+
+        assert pipeline.get_status()["earnings_analyzer_available"] is False
+        result = pipeline.analyze_earnings_call("AAPL")
+        assert isinstance(result, EarningsResult)
+        assert result.error == "earnings-analyzer not configured"
 
 
 class TestSentimentEnsemble:

@@ -71,7 +71,14 @@ class CLOBListener:
     def parse_message(self, message: str | bytes) -> list[dict[str, Any]]:
         if isinstance(message, bytes):
             message = message.decode("utf-8")
-        payload = json.loads(message)
+        message = message.strip()
+        if not message:
+            return []
+        try:
+            payload = json.loads(message)
+        except json.JSONDecodeError:
+            logger.debug("Ignoring non-JSON CLOB websocket frame: %r", message[:120])
+            return []
         items = payload if isinstance(payload, list) else [payload]
         snapshots = []
         for item in items:
@@ -155,10 +162,13 @@ class CLOBListener:
                     
                     try:
                         async for message in websocket:
-                            await self.handle_message(message, callback=callback)
-                    except Exception as e:
-                        logger.warning("CLOB websocket stream error: %s", e)
-                        raise
+                            try:
+                                await self.handle_message(message, callback=callback)
+                            except json.JSONDecodeError as exc:
+                                logger.debug("Skipping malformed CLOB frame: %s", exc)
+                            except Exception as e:
+                                logger.warning("CLOB websocket stream error: %s", e)
+                                raise
                     finally:
                         worker_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):

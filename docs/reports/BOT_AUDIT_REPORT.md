@@ -83,13 +83,13 @@ Nous avons audité l'intégralité des boucles infinies de contrôle et démons 
 
 Cet audit certifie que 100% des agents (Calcul, ML, IA) ont un accès synchrone et complet à l'historique des discussions et à l'état du système.
 
-*   **Persistance et Partage** : Migration réussie vers une architecture à trois niveaux. Utilisation de **DuckDB** pour les données froides/structurées et **Redis** pour la mémoire vive de l'essaim.
+*   **Persistance et Partage** : Architecture à plusieurs niveaux. DuckDB sert de base de persistance pour les données structurées; une mémoire vive distribuée n'est à considérer que si elle est effectivement activée dans le runtime.
 *   **Alignement IA Synchrone** : L'implémentation de `SIGNAL_RECEIVED` et `SIGNAL_EXECUTED` sur le bus d'événements Swarm garantit que toutes les IA partagent le même "fil d'actualité" instantanément.
 *   **Optimisation Financière (Anti-Saturation)** : Le cache sémantique distribué avec TTL intelligent réduit la consommation de tokens de 30 à 60% dans les environnements multi-instances.
 
 | Critère | Statut | Observation |
 | :--- | :--- | :--- |
-| **Stockage** | 🟢 Excellent | Combinaison DuckDB (persistance) + Redis (vitesse). |
+| **Stockage** | 🟢 Bon | DuckDB pour la persistance; Redis uniquement si le runtime l'active réellement. |
 | **Alignement** | 🟢 Parfait | Synchronisation temps réel via SwarmSupervisor. |
 | **Coût Tokens** | 🟢 Optimisé | Partage universel des inférences IA. |
 | **Fraîcheur** | 🟢 Temps Réel | Ingestion asynchrone sans latence perceptible. |
@@ -102,7 +102,7 @@ Pour corriger les vulnérabilités détectées au cours de cet audit de perfecti
 
 ### ✅ 1. Cache Sémantique Distribué (Vitesse IA Swarm)
 * **Fichier** : [mcp_agents/lobstar_agent.py](file:///home/ogj9f33gvvzc/quant-agentic-trading-core-v2/mcp_agents/lobstar_agent.py)
-* **Mécanisme** : Mise en cache distribuée (L1: Local, L2: Redis via SwarmSupervisor) des analyses de signaux avec TTL de 60s.
+* **Mécanisme** : Mise en cache locale avec TTL pour les analyses de signaux; toute extension Redis doit rester conditionnée à sa présence réelle dans le runtime.
 * **Gain** : **Inférence partagée instantanément** entre toutes les instances de l'essaim. Élimination totale de la redondance LLM et alignement parfait des agents.
 
 ### ✅ 2. Cache Local des Balances RPC (Contournement du Bottleneck Réseau)
@@ -131,7 +131,7 @@ Pour corriger les vulnérabilités détectées au cours de cet audit de perfecti
 | **Agent ML** (`FreqAI / Regime`) | Probabilités calibrées et détection de régime (HMM). | LightGBM, HMM Filter, Feature Engineering. | **Excellente** (Statistique) |
 | **Agent Exécuteur** (`PassiveExecutor`) | Gestion maker/taker. Optimisation spread. | Polymarket API, FragmentedOrderExecutor. | **Optimale** (Déterministe) |
 | **LLM Council** | Consensus multi-modèle & recherche. | OpenRouter (4+ modèles), Synthesis Prompts. | **Très Bonne** |
-| **Ruflo Swarm Supervisor** | État de l'essaim, Circuit Breaker & Transition PROD. | Redis, JSONL Telemetry, MLOps Monitoring. | **N/A** (Code-driven) |
+| **Ruflo Swarm Supervisor** | État de l'essaim, Circuit Breaker & Transition PROD. | JSONL Telemetry, MLOps Monitoring, stockage optionnel si activé. | **N/A** (Code-driven) |
 
 ---
 

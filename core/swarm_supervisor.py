@@ -128,6 +128,7 @@ class RufloSwarmSupervisor:
             "duckdb": False,
             "sentiment": False,
         }
+        self._last_gap_report: Dict[str, bool] = dict(self._data_gaps)
 
         # Callbacks pour événements
         self._on_mode_change: Optional[Callable] = None
@@ -312,8 +313,14 @@ class RufloSwarmSupervisor:
             edge_override = self.SENTIMENT_FALLBACK_EDGE
             logger.warning(f"⚠️ Sentiment feed missing. Edge threshold raised to {edge_override}")
 
-        if any(self._data_gaps.values()):
-            logger.warning(f"⚠️ Data gaps detected: {[k for k, v in self._data_gaps.items() if v]}")
+        current_gaps = {k: v for k, v in self._data_gaps.items() if v}
+        previous_gaps = {k: v for k, v in self._last_gap_report.items() if v}
+        if current_gaps != previous_gaps:
+            if current_gaps:
+                logger.warning(f"⚠️ Data gaps detected: {list(current_gaps.keys())}")
+            else:
+                logger.info("✅ Data gaps cleared.")
+            self._last_gap_report = dict(self._data_gaps)
 
         return {
             "gaps": gaps,

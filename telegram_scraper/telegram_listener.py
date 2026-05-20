@@ -219,6 +219,7 @@ class TelegramListener:
         chat_id: Optional[int] = None,
         parse_mode: Optional[str] = None,
         disable_notification: Optional[bool] = None,
+        reply_markup: Any | None = None,
     ) -> bool:
         if not self.application:
             logger.warning("send_message: bot not started")
@@ -234,6 +235,8 @@ class TelegramListener:
                     kwargs["parse_mode"] = parse_mode
                 if disable_notification is not None:
                     kwargs["disable_notification"] = disable_notification
+                if reply_markup is not None:
+                    kwargs["reply_markup"] = reply_markup
                 await self._telegram_call_with_retry(
                     self.application.bot.send_message,
                     **kwargs,
@@ -695,6 +698,7 @@ class TelegramListener:
             f"⏰ *System Time* : `{current_time}`\n"
             f"⏱️ *System Uptime* : `{uptime}`\n"
             f"💬 *Active Wallet* : `{wallet_label}` | `{wallet_display}`\n"
+            f"🔗 *Wallet Address* : `{wallet_addr}`\n"
             f"⚙️ *Execution Mode* : `{mode}`\n"
             f"📊 *System Regime* : `{regime}`\n"
             "────────────────────────\n"

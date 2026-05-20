@@ -28,11 +28,16 @@ class SentimentEnsemble:
     def _init_models(self) -> None:
         if self.use_vader:
             try:
+                from utils.local_dependency_loader import configure_nltk_data_path
+                configure_nltk_data_path()
                 import nltk
                 try:
                     nltk.data.find('sentiment/vader_lexicon.zip')
                 except LookupError:
-                    nltk.download('vader_lexicon', quiet=True)
+                    if os.getenv("NLTK_ALLOW_DOWNLOAD", "").strip().lower() in {"1", "true", "yes"}:
+                        nltk.download('vader_lexicon', quiet=True)
+                    else:
+                        raise
                 
                 from nltk.sentiment import SentimentIntensityAnalyzer
                 self._vader = SentimentIntensityAnalyzer()

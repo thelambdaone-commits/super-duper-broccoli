@@ -100,7 +100,10 @@ class ServiceContainer:
             logger.warning(f"VolSurfaceAdapter init failed: {e}")
         try:
             from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline
-            self.earnings = EarningsSentimentPipeline(use_huggingface=True)
+            self.earnings = EarningsSentimentPipeline(
+                gemini_api_key=self.secrets.get("GEMINI_API_KEY"),
+                use_huggingface=True,
+            )
         except Exception as e:
             logger.warning(f"EarningsSentimentPipeline init failed: {e}")
         try:
