@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from bootstrap.helpers import check_rpc_dry_run
@@ -19,6 +18,7 @@ async def dry_run_report(
     hmm: Any,
     risk: Any,
     executor: Any,
+    rpc_url: str | None = None,
 ) -> None:
     if logger is None:
         import logging
@@ -42,7 +42,7 @@ async def dry_run_report(
     except Exception as e:
         logger.info(f"Vault Check: ERROR ({e})")
 
-    rpc_url = secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL")
+    rpc_url = rpc_url or secrets.get("POLYGON_RPC_URL")
     if rpc_url:
         try:
             res = await check_rpc_dry_run(rpc_url)

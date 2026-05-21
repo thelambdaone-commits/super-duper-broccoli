@@ -17,8 +17,13 @@ NC = "\033[0m"
 
 load_dotenv()
 
+
+def _secrets() -> dict[str, str]:
+    return VaultHandler().fetch_quantum_secrets()
+
 async def test_rpc_solana():
-    url = os.getenv("SOL_RPC_URL")
+    secrets = _secrets()
+    url = secrets.get("SOL_RPC_URL") or secrets.get("WS_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "SOL_RPC_URL not configured."}
 
@@ -42,7 +47,7 @@ async def test_rpc_solana():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_rpc_polygon():
-    secrets = VaultHandler().fetch_quantum_secrets()
+    secrets = _secrets()
     url = secrets.get("POLYGON_RPC_URL") or secrets.get("ETH_RPC_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "POLYGON_RPC_URL not configured."}
@@ -68,7 +73,7 @@ async def test_rpc_polygon():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_websocket_polygon():
-    url = os.getenv("WS_URL")
+    url = _secrets().get("WS_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "WS_URL not configured."}
 
@@ -83,7 +88,7 @@ async def test_websocket_polygon():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_openrouter():
-    key = VaultHandler().fetch_quantum_secrets().get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+    key = _secrets().get("OPENROUTER_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "OPENROUTER_API_KEY not configured."}
 
@@ -117,7 +122,7 @@ async def test_openrouter():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_groq():
-    key = VaultHandler().fetch_quantum_secrets().get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+    key = _secrets().get("GROQ_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "GROQ_API_KEY not configured."}
 
@@ -149,7 +154,7 @@ async def test_groq():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_brave_search():
-    key = os.getenv("BRAVE_SEARCH_API_KEY")
+    key = _secrets().get("BRAVE_SEARCH_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "BRAVE_SEARCH_API_KEY not configured."}
 
@@ -176,7 +181,7 @@ async def test_brave_search():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_coingecko():
-    key = os.getenv("COINGECKO_API_KEY")
+    key = _secrets().get("COINGECKO_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "COINGECKO_API_KEY not configured."}
 

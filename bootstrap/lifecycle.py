@@ -160,7 +160,18 @@ class BotLifecycle:
         autonomic_healer = LobstarAutonomicHealer(log_file_path="logs/pm2-out.log")
         mlops_engine = LobstarMLOpsEngine()
         runner = LobstarQuantumRunner()
-        _setup_quantum_runner(runner, container, freqai, cognitive_brain, mlops_engine, autonomic_healer, broadcaster)
+        _setup_quantum_runner(
+            runner,
+            freqai,
+            cognitive_brain,
+            mlops_engine,
+            autonomic_healer,
+            broadcaster,
+            runtime_secrets=secrets,
+            feature_store=store,
+            ledger=ledger,
+            training_pipeline=training_pipeline,
+        )
         listener = build_telegram_listener(secrets=secrets, on_signal=None, chat_id=chat_id, access_control=access_control)
         validate_config_required()
         orchestrator = LobstarOrchestrator(
@@ -274,14 +285,14 @@ class BotLifecycle:
         runner.register_job("Model_Health_And_Drift", model_drift_loop.run, interval_sec=14400.0)
         runner.register_job("HMM_Training", hmm_training_loop.run, interval_sec=21600.0)
         runner.register_job("SLTP_Monitoring", sltp_monitoring_loop.run, interval_sec=10.0)
-        ws_url = secrets.get("WS_URL") or os.getenv("WS_URL", "")
-        polygon_rpc = secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL") or os.getenv("RPC_URL", "")
+        ws_url = secrets.get("WS_URL", "")
+        polygon_rpc = secrets.get("POLYGON_RPC_URL") or secrets.get("RPC_URL", "")
         polymarket_monitor = None
         onchain_monitor_enabled = _env_bool("POLYMARKET_ONCHAIN_MONITOR_ENABLED", False)
         if onchain_monitor_enabled and ws_url:
-            target_wallet = os.getenv("TARGET_WALLET", "")
+            target_wallet = secrets.get("TARGET_WALLET", "")
             polymarket_monitor = PolymarketMonitor(on_signal=orchestrator.on_signal, target_wallet=target_wallet or None, ws_url=ws_url, rpc_url=polygon_rpc)
-        health_supervisor = HealthSupervisorAgent(feature_store=store, ledger=ledger, wallet_manager=__import__("core.wallet_manager", fromlist=["PolymarketWalletManager"]).PolymarketWalletManager(vault_handler=container.vault, polygon_rpc_url=polygon_rpc), data_archiver=DataArchiver(db_path=os.getenv("API_FEATURE_STORE_PATH", os.path.join(os.getenv("DATA_PATH", "user_data/data"), "feature_store.duckdb"))), broadcaster=orchestrator.broadcaster, secrets=secrets, config=HealthSupervisorConfig(staleness_threshold_seconds=float(get_health_config("polymarket_staleness_seconds", 60.0, env_key="MAX_POLYMARKET_STALENESS_SECONDS")), memory_warning_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), memory_critical_mb=float(get_health_config("memory_critical_mb", 1536)), wallet_reconciliation_interval_seconds=3600.0, maintenance_interval_seconds=86400.0, check_interval_seconds=5.0, wallet_drift_tolerance_usd=float(get_health_config("wallet_drift_tolerance_usdc", 0.01, env_key="MAX_WALLET_DRIFT_USDC")), disk_usage_warning_bytes=5_000_000_000, disk_usage_critical_bytes=8_000_000_000))
+        health_supervisor = HealthSupervisorAgent(feature_store=store, ledger=ledger, wallet_manager=__import__("core.wallet_manager", fromlist=["PolymarketWalletManager"]).PolymarketWalletManager(vault_handler=container.vault, polygon_rpc_url=polygon_rpc), data_archiver=DataArchiver(db_path=os.path.join(os.getenv("DATA_PATH", "user_data/data"), "feature_store.duckdb")), broadcaster=orchestrator.broadcaster, secrets=secrets, config=HealthSupervisorConfig(staleness_threshold_seconds=float(get_health_config("polymarket_staleness_seconds", 60.0, env_key="MAX_POLYMARKET_STALENESS_SECONDS")), memory_warning_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), memory_critical_mb=float(get_health_config("memory_critical_mb", 1536)), wallet_reconciliation_interval_seconds=3600.0, maintenance_interval_seconds=86400.0, check_interval_seconds=5.0, wallet_drift_tolerance_usd=float(get_health_config("wallet_drift_tolerance_usdc", 0.01, env_key="MAX_WALLET_DRIFT_USDC")), disk_usage_warning_bytes=5_000_000_000, disk_usage_critical_bytes=8_000_000_000))
         health_sidecar = HealthMonitorAgent(config=HealthMonitorConfig(heartbeat_interval_seconds=30.0, duckdb_prune_interval_seconds=86400.0, memory_check_interval_seconds=60.0, max_memory_rss_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), enable_ledger_reconciliation=_env_bool("HEALTH_SIDE_CAR_ENABLE_LEDGER_RECONCILIATION", True), enable_feature_store_maintenance=_env_bool("HEALTH_SIDE_CAR_ENABLE_FEATURE_STORE_MAINTENANCE", True)), feature_store=store, ledger=ledger, broadcaster=orchestrator.broadcaster)
         user_ws_coro = None
         if secrets.get("CLOB_API_KEY") and secrets.get("CLOB_API_SECRET") and secrets.get("CLOB_API_PASSPHRASE"):
@@ -320,6 +331,7 @@ class BotLifecycle:
             hmm=self.ctx.hmm,
             risk=self.ctx.risk,
             executor=self.ctx.passive_executor,
+            rpc_url=self.ctx.secrets.get("POLYGON_RPC_URL"),
         )
 
     async def stop(self) -> None:

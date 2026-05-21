@@ -9,6 +9,7 @@ from core.orchestrator import LobstarOrchestrator
 from core.services.circuit_breaker import CircuitBreakerConfig, CircuitBreakerService
 from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
 from core.services.signal_router import SignalRouter
+from core.services.trade_notification_service import TradeNotificationService
 
 
 class FakeSnapshotManager:
@@ -202,7 +203,16 @@ def _build_orchestrator(
 
     circuit_breaker = CircuitBreakerService(CircuitBreakerConfig(failure_threshold=2, recovery_timeout_seconds=60))
     orchestrator = LobstarOrchestrator(
-        container=container,
+        ledger=container.ledger,
+        risk=container.risk,
+        store=container.store,
+        notifier=container.notifier,
+        executor=container.executor,
+        hmm=container.hmm,
+        freqai=container.freqai,
+        history=SimpleNamespace(),
+        trade_notifications=TradeNotificationService(container.notifier),
+        metrics_exporter=container.metrics_exporter,
         secrets={"TELEGRAM_BOT_TOKEN": "x"},
         execution_mode="PAPER",
         listener=listener,

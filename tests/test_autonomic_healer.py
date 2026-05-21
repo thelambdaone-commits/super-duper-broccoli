@@ -56,8 +56,7 @@ def test_autonomic_healer_scans_and_detects_errors(temp_log_file: str) -> None:
 @pytest.mark.asyncio
 async def test_autonomic_healer_cooldown(temp_log_file: str) -> None:
     healer = LobstarAutonomicHealer(log_file_path=temp_log_file)
-    healer._repair_cooldown = 1.0
-
+    healer._repair_cooldown = 5.0
     # First attempt should run
     result1 = await healer.deployer_correctif_autonome("MEMORY_LEAK_DETECTION")
     assert result1["statut"] == "REPAIRED"
@@ -68,7 +67,7 @@ async def test_autonomic_healer_cooldown(temp_log_file: str) -> None:
     assert result2["raison"] == "En cooldown"
 
     # Sleep past cooldown and try again
-    await asyncio.sleep(1.1)
+    await asyncio.sleep(5.1)
     result3 = await healer.deployer_correctif_autonome("MEMORY_LEAK_DETECTION")
     assert result3["statut"] == "REPAIRED"
 

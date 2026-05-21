@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from utils.presentation_formatters import (
     format_cognitive_decision_notification,
 )
+from utils.config_loader import get_trading_config
 from core.services.signal_decision_service import SignalDecisionService
 from core.services.post_trade_service import PostTradeService
 from utils.telegram_channel_broadcaster import TelegramChannelBroadcaster
@@ -453,14 +454,16 @@ class LobstarOrchestrator:
     def _normalize_signal_router(self) -> SignalRouter:
         from core.signal_executor import execute_lobstar_signal, execute_regex_signal
 
+        fragmented_executor_config = {
+            "twap_default_slices": int(get_trading_config("twap_default_slices", 5, allow_env=False)),
+            "twap_interval_seconds": float(get_trading_config("twap_interval_seconds", 15.0, allow_env=False)),
+            "max_first_level_participation_rate": float(get_trading_config("twap_participation_rate", 0.10, allow_env=False)),
+            "max_participation_rate": float(get_trading_config("vwap_participation_rate", 0.10, allow_env=False)),
+            "min_size_for_fragmentation_usd": float(get_trading_config("twap_min_size_usd", 0.0, allow_env=False)),
+        }
+
         fragmented_executor = FragmentedOrderExecutor(
-            config={
-                "twap_default_slices": int(os.getenv("TWAP_DEFAULT_SLICES", "5")),
-                "twap_interval_seconds": float(os.getenv("TWAP_INTERVAL_SECONDS", "15")),
-                "max_first_level_participation_rate": float(os.getenv("TWAP_PARTICIPATION_RATE", "0.10")),
-                "max_participation_rate": float(os.getenv("VWAP_PARTICIPATION_RATE", "0.10")),
-                "min_size_for_fragmentation_usd": float(os.getenv("TWAP_MIN_SIZE_USD", "0.0")),
-            },
+            config=fragmented_executor_config,
             immediate_executor=self.executor,
             feature_store=self.store,
         )

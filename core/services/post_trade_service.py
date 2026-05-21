@@ -45,7 +45,7 @@ class PostTradeService:
         if self.trade_notifications:
             self.trade_notifications.send_trade_execution(signal, result, execution_mode, success=True)
         else:
-            self.notifier.send("Trade executed")
+            self.notifier.send("Trade Executed")
 
         if self.metrics_exporter:
             try:

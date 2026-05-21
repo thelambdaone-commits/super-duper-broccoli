@@ -5,7 +5,7 @@ from execution.paper_engine import PolymarketPaperEngine
 
 @pytest.mark.asyncio
 async def test_market_order_sweeps_book_and_marks_partial_all_in_cost() -> None:
-    engine = PolymarketPaperEngine(latency_min_ms=0, latency_max_ms=0)
+    engine = PolymarketPaperEngine(latency_min_ms=0, latency_max_ms=0, friction_per_contract=0.005)
     orderbook = {
         "bids": [[0.49, 100]],
         "asks": [[0.50, 50], [0.60, 50]],

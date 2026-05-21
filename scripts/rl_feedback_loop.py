@@ -8,6 +8,7 @@ import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ledger.ledger_db import Ledger
+from utils.config_loader import get_trading_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("RLFeedbackLoop")
@@ -53,7 +54,7 @@ def run_rl_feedback_loop() -> None:
     new_wins = 0
     new_losses = 0
 
-    lambda_smooth = float(os.getenv("RL_SMOOTHING_FACTOR", "0.98"))
+    lambda_smooth = float(get_trading_config("rl_smoothing_factor", 0.98, allow_env=False))
     lambda_smooth = max(0.8, min(lambda_smooth, 0.999))
 
     for pos in closed_positions:

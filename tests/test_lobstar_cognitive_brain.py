@@ -207,8 +207,8 @@ def test_cognitive_brain_legging_risk_degradation() -> None:
             {
                 "ticker": "SOL",
                 "orderbook": {
-                    "bids": [{"price": 0.50, "size": 5.0}],
-                    "asks": [{"price": 0.51, "size": 5.0}],
+                    "bids": [{"price": 0.50, "size": 2.0}],
+                    "asks": [{"price": 0.51, "size": 2.0}],
                 }
             }
         ]

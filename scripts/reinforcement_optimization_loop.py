@@ -12,6 +12,7 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.strategy_lifecycle_manager import StrategyLifecycleManager, StrategyPhase
+from utils.config_loader import get_trading_config
 
 logger = logging.getLogger("ReinforcementOptimizationLoop")
 
@@ -90,8 +91,15 @@ def run_loop(interval_seconds: float = 3600.0, once: bool = False, paper_events_
 def main() -> None:
     parser = argparse.ArgumentParser(description="Self-improving strategy optimization loop")
     parser.add_argument("--once", action="store_true", help="Run one optimization pass and exit")
-    parser.add_argument("--interval-seconds", type=float, default=float(os.getenv("STRATEGY_OPT_INTERVAL_SECONDS", "3600")))
-    parser.add_argument("--paper-events", default=os.getenv("STRATEGY_PAPER_EVENTS_JSONL", ""))
+    parser.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=float(get_trading_config("strategy_opt_interval_seconds", 3600.0, allow_env=False)),
+    )
+    parser.add_argument(
+        "--paper-events",
+        default=str(get_trading_config("strategy_paper_events_jsonl", "", allow_env=False)),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

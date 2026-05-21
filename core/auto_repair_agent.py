@@ -18,6 +18,7 @@ import subprocess
 import sys
 import os
 import shlex
+import re
 from pathlib import Path
 import tempfile
 import datetime
@@ -28,6 +29,12 @@ REPO_ROOT = Path(__file__).resolve().parent
 DUMP_DIR = REPO_ROOT / "dumps"
 COAUTHOR = "Copilot <223556219+Copilot@users.noreply.github.com>"
 AI_COMMANDS = ["opencode", "codex", "copilot"]
+SECRET_PATTERNS = (
+    re.compile(r"(sk-[A-Za-z0-9_-]{10,})"),
+    re.compile(r"(gsk_[A-Za-z0-9_-]{10,})"),
+    re.compile(r"([A-Za-z0-9_-]{24,}:[A-Za-z0-9_-]{16,})"),
+    re.compile(r"(0x[a-fA-F0-9]{64})"),
+)
 
 
 def run(cmd, cwd=REPO_ROOT, capture_output=True, check=False, env=None, timeout=120):
@@ -43,17 +50,52 @@ def run(cmd, cwd=REPO_ROOT, capture_output=True, check=False, env=None, timeout=
 
 def run_tests():
     print("Running pytest...")
-    proc = run(f"python3 -m pytest -q --tb=short", capture_output=True, check=False, timeout=300)
+    proc = run(build_test_command(), capture_output=True, check=False, timeout=300)
     return proc.returncode, proc.stdout + (proc.stderr or "")
 
 
 def collect_failures(output: str):
-    # crude: look for 'FAILED' and stack traces
+    lowered = output.lower()
     failures = []
-    lines = output.splitlines()
-    if "failed" in output.lower():
-        failures.append("Test failures detected. Full pytest output attached.")
-    return failures
+    if "errors during collection" in lowered or "importerror" in lowered or "modulenotfounderror" in lowered:
+        failures.append("import")
+    if "syntaxerror" in lowered or "indentationerror" in lowered:
+        failures.append("syntax")
+    if "fixture" in lowered and "not found" in lowered:
+        failures.append("fixture")
+    if "failed" in lowered or "error" in lowered:
+        failures.append("test")
+    return sorted(set(failures))
+
+
+def redact_secrets(text: str) -> str:
+    redacted = text
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub("<redacted>", redacted)
+    return redacted
+
+
+def infer_targeted_tests(output: str) -> list[str]:
+    targets: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"FAILED\s+([^\s:]+\.py)::([^\s]+)", output):
+        path = match.group(1)
+        if path not in seen:
+            seen.add(path)
+            targets.append(path)
+    for match in re.finditer(r"ERROR collecting ([^\s]+\.py)", output):
+        path = match.group(1)
+        if path not in seen:
+            seen.add(path)
+            targets.append(path)
+    return targets
+
+
+def build_test_command(targets: list[str] | None = None) -> str:
+    if targets:
+        quoted = " ".join(shlex.quote(t) for t in targets)
+        return f"{shlex.quote(sys.executable)} -m pytest -q --tb=short {quoted}"
+    return f"{shlex.quote(sys.executable)} -m pytest -q --tb=short"
 
 
 def dump_repo_snapshot(tag: str) -> Path:
@@ -94,7 +136,7 @@ def call_ai_cli(cmd_name: str, prompt: str, timeout=120) -> str:
     if not shutil_which(cmd_name):
         raise FileNotFoundError(f"AI CLI '{cmd_name}' not found in PATH")
     try:
-        proc = subprocess.run([cmd_name], input=prompt, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run([cmd_name], input=redact_secrets(prompt), capture_output=True, text=True, timeout=timeout)
         if proc.returncode != 0:
             print(f"{cmd_name} returned code {proc.returncode}, stderr:\n{proc.stderr}")
         out = proc.stdout or proc.stderr
@@ -173,13 +215,16 @@ def main():
 
     tag = 'pytest-failure'
     dump = dump_repo_snapshot(tag)
+    targeted_tests = infer_targeted_tests(output)
 
     prompt = """
 You are an automated code fixer. A failing test run and repository snapshot are attached.
 Provide a unified-diff patch that fixes the root cause. If multiple fixes are needed, produce a single patch.
 
 PyTest output:
-""" + output + "\n\n" + f"Repository dump: {dump}\n"
+""" + redact_secrets(output) + "\n\n" + f"Repository dump: {dump}\n"
+    if targeted_tests:
+        prompt += "\nTargeted tests to rerun after patch:\n" + "\n".join(f"- {t}" for t in targeted_tests) + "\n"
 
     # Try AI CLIs in order
     import shutil
@@ -204,7 +249,15 @@ PyTest output:
             # commit and test
             branch = f"auto-repair/{datetime.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}/{ai}"
             create_branch_and_commit(branch, f"auto-repair: fix tests using {ai}\n\nCo-authored-by: {COAUTHOR}")
-            rc2, out2 = run_tests()
+            rc2, out2 = (1, "")
+            if targeted_tests:
+                targeted_proc = run(build_test_command(targeted_tests), capture_output=True, check=False, timeout=300)
+                rc2, out2 = targeted_proc.returncode, targeted_proc.stdout + (targeted_proc.stderr or "")
+                if rc2 == 0:
+                    print("Targeted tests passed; running full suite.")
+                    rc2, out2 = run_tests()
+            else:
+                rc2, out2 = run_tests()
             if rc2 == 0:
                 print("Tests passed after applying patch. Preparing to push/PR.")
                 pushed = push_and_create_pr(branch)

@@ -70,19 +70,11 @@ def build_telegram_listener(
 
 def build_broadcaster(notifier: Any, training_pipeline: Any, market_scanner: Any) -> Any:
     from scrapers.telegram_broadcaster import TelegramBroadcaster
-    from utils.message_formatter import (
-        format_scan_report,
-        format_market_report,
-        format_winning_bets_alert,
-    )
 
     return TelegramBroadcaster(
         notifier=notifier,
         training_pipeline=training_pipeline,
         market_client=getattr(market_scanner, "client", market_scanner),
-        format_scan_report=format_scan_report,
-        format_market_report=format_market_report,
-        format_winning_bets_alert=format_winning_bets_alert,
     )
 
 

@@ -15,6 +15,7 @@ from core.autonomous_trading_loop import AutonomousTradingConfig, AutonomousTrad
 from core.autonomous_mode_controller import AutonomousModeController
 from core.strategy_lifecycle_manager import StrategyLifecycleManager, StrategyPhase
 from ledger.ledger_db import Ledger
+from utils.config_loader import get_trading_config
 
 
 def load_features_jsonl(path: str) -> list[dict[str, Any]]:
@@ -72,7 +73,10 @@ async def run_once(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run autonomous Polymarket strategy loop")
     parser.add_argument("--once", action="store_true", help="Run one pass and exit")
-    parser.add_argument("--features-jsonl", default=os.getenv("AUTONOMOUS_FEATURES_JSONL", ""))
+    parser.add_argument(
+        "--features-jsonl",
+        default=str(get_trading_config("autonomous_features_jsonl", "", allow_env=False)),
+    )
     parser.add_argument(
         "--paper-enable-backtest",
         action="store_true",
@@ -81,7 +85,7 @@ def main() -> None:
     parser.add_argument(
         "--bootstrap-paper-trades",
         type=int,
-        default=int(os.getenv("AUTONOMOUS_BOOTSTRAP_PAPER_TRADES", "0")),
+        default=int(get_trading_config("autonomous_bootstrap_paper_trades", 0, allow_env=False)),
         help="Create and close this many bootstrap paper trades before the main loop.",
     )
     args = parser.parse_args()

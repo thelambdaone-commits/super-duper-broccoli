@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -13,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.wallet_manager import PolymarketWalletManager
 from utils.credential_manager import CredentialManager
+from utils.config_loader import get_trading_config
 from utils.polymarket_wallet_journal import PolymarketWalletJournal, WalletIdentity
 from utils.vault_handler import VaultHandler
 
@@ -31,7 +31,7 @@ def resolve_wallet(chat_id: str) -> WalletIdentity:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Append a Polymarket wallet snapshot to data/wallet.jsonl")
-    parser.add_argument("--chat-id", default=os.getenv("TELEGRAM_OWNER_CHAT_ID") or os.getenv("CHAT_ID", ""))
+    parser.add_argument("--chat-id", default=str(get_trading_config("telegram_owner_chat_id", "", allow_env=False)))
     parser.add_argument("--output", default="data/wallet.jsonl")
     parser.add_argument("--print", action="store_true", dest="print_snapshot")
     args = parser.parse_args()

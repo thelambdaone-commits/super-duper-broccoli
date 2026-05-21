@@ -5,10 +5,11 @@ import os
 from typing import Any
 
 from bootstrap.helpers import run_blocking
+from utils.config_loader import get_trading_config
 
 
 def _setup_ml_features(training_pipeline: Any, tickers: list[str] | None = None) -> None:
-    tickers = tickers or ["SOL", "BTC", "ETH"]
+    tickers = tickers or get_trading_config("model_tickers", ["SOL", "BTC", "ETH"], allow_env=False)
     default_features = ["oi_5min", "tam_state", "spread_bps", "mid_price"]
     for ticker in tickers:
         training_pipeline.register_features(ticker, default_features, target_feature="mid_price")
@@ -16,20 +17,25 @@ def _setup_ml_features(training_pipeline: Any, tickers: list[str] | None = None)
 
 def _setup_quantum_runner(
     runner: Any,
-    container: Any,
     freqai: Any,
     cognitive_brain: Any,
     mlops_engine: Any,
     autonomic_healer: Any,
     broadcaster: Any,
+    *,
+    runtime_secrets: dict[str, str] | None = None,
+    feature_store: Any = None,
+    ledger: Any = None,
+    training_pipeline: Any = None,
 ) -> None:
+    runtime_secrets = runtime_secrets or {}
     runner.register_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
     if getattr(cognitive_brain, "arbitrage_engine", None):
         runner.register_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
     runner.register_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
 
     async def prune_feature_store():
-        store = getattr(cognitive_brain, "store", None) or getattr(container, "store", None)
+        store = feature_store or getattr(cognitive_brain, "store", None)
         if store and mlops_engine.should_prune(interval_hours=24):
             mlops_engine.prune_feature_store(store, raw_retention_days=7, vacuum=True)
 
@@ -47,7 +53,7 @@ def _setup_quantum_runner(
         import httpx
         from utils.api_key_check import get_api_key_notifier
 
-        api_check = get_api_key_notifier().check_all_keys(runtime_secrets=container.secrets)
+        api_check = get_api_key_notifier().check_all_keys(runtime_secrets=runtime_secrets)
         if api_check["missing"]:
             alert = get_api_key_notifier().format_telegram_alert(api_check)
             if broadcaster and broadcaster.notifier:
@@ -55,7 +61,7 @@ def _setup_quantum_runner(
 
         timeout = httpx.Timeout(5.0, connect=3.0)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            rpc_url = container.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL")
+            rpc_url = runtime_secrets.get("POLYGON_RPC_URL")
             if rpc_url:
                 try:
                     await asyncio.to_thread(lambda: None)
@@ -69,7 +75,6 @@ def _setup_quantum_runner(
     runner.register_job("System_Connectivity_Check", system_connectivity_check, interval_sec=1800.0)
 
     async def db_storage_optimization():
-        ledger = getattr(container, "ledger", None)
         if not ledger:
             return
         try:
@@ -84,16 +89,16 @@ def _setup_quantum_runner(
     runner.register_job("DB_Storage_Optimization", db_storage_optimization, interval_sec=7200.0)
 
     async def dynamic_ml_reinforcement():
-        pipeline = getattr(container, "training_pipeline", None)
-        ledger = getattr(container, "ledger", None)
-        if not pipeline or not ledger:
+        if not training_pipeline or not ledger:
             return
         from scripts.rl_feedback_loop import run_rl_feedback_loop
 
         await run_blocking("RL feedback loop", run_rl_feedback_loop, timeout=120.0)
-        tickers = os.getenv("MODEL_TICKERS", "SOL,BTC,ETH").split(",")
-        for ticker in [t.strip().upper() for t in tickers if t.strip()]:
-            pipeline.update_calibration_from_paper_trades(ticker, ledger)
+        tickers = get_trading_config("model_tickers", ["SOL", "BTC", "ETH"], allow_env=False)
+        if isinstance(tickers, str):
+            tickers = tickers.split(",")
+        for ticker in [str(t).strip().upper() for t in tickers if str(t).strip()]:
+            training_pipeline.update_calibration_from_paper_trades(ticker, ledger)
 
     runner.register_job("Dynamic_ML_Reinforcement", dynamic_ml_reinforcement, interval_sec=1800.0)
 
@@ -106,8 +111,7 @@ def _setup_quantum_runner(
     runner.register_job("Daily_TCA_Report", daily_tca_report_job, interval_sec=86400.0)
 
     async def train_and_rotate_models():
-        pipeline = getattr(container, "training_pipeline", None)
-        if pipeline:
-            await run_blocking("training rotation", pipeline.run_cycle, timeout=300.0)
+        if training_pipeline:
+            await run_blocking("training rotation", training_pipeline.run_cycle, timeout=300.0)
 
     runner.register_job("Train_And_Rotate_Models", train_and_rotate_models, interval_sec=21600.0)

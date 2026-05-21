@@ -35,11 +35,19 @@ def validate_required() -> None:
     _load_all()
 
 
-def get_config(section: str, key: str, default: Any = None, env_key: str | None = None) -> Any:
-    env_name = env_key or key.upper()
-    raw_env = os.getenv(env_name)
-    if raw_env is not None and raw_env != "":
-        return _coerce_like(default, raw_env)
+def get_config(
+    section: str,
+    key: str,
+    default: Any = None,
+    env_key: str | None = None,
+    *,
+    allow_env: bool = True,
+) -> Any:
+    if allow_env:
+        env_name = env_key or key.upper()
+        raw_env = os.getenv(env_name)
+        if raw_env is not None and raw_env != "":
+            return _coerce_like(default, raw_env)
 
     data = _load_all().get(section, {})
     if key in data:
@@ -47,21 +55,35 @@ def get_config(section: str, key: str, default: Any = None, env_key: str | None 
     return default
 
 
-def get_health_config(key: str, default: Any = None, env_key: str | None = None) -> Any:
-    return get_config("health", key, default=default, env_key=env_key)
+def get_health_config(
+    key: str,
+    default: Any = None,
+    env_key: str | None = None,
+    *,
+    allow_env: bool = True,
+) -> Any:
+    return get_config("health", key, default=default, env_key=env_key, allow_env=allow_env)
 
 
-def get_trading_config(key: str, default: Any = None, env_key: str | None = None) -> Any:
-    return get_config("trading", key, default=default, env_key=env_key)
+def get_trading_config(
+    key: str,
+    default: Any = None,
+    env_key: str | None = None,
+    *,
+    allow_env: bool = True,
+) -> Any:
+    return get_config("trading", key, default=default, env_key=env_key, allow_env=allow_env)
 
 
 TRADING_PARAMS = {
-    "FRICTION_PER_CONTRACT": get_trading_config("friction_per_contract", 0.0),
-    "MIN_EDGE_THRESHOLD": get_trading_config("min_edge_threshold", 0.07),
-    "MAX_REAL_NOTIONAL_USDC": get_trading_config("max_real_notional_usdc", 6.0),
-    "PSI_THRESHOLD": get_trading_config("psi_threshold", 0.2),
-    "KL_THRESHOLD": get_trading_config("kl_threshold", 0.1),
-    "BRIER_THRESHOLD": get_trading_config("brier_threshold", 0.2),
+    "FRICTION_PER_CONTRACT": get_trading_config("friction_per_contract", 0.0, allow_env=False),
+    "LEGGING_LIQUIDITY_MIN": get_trading_config("legging_liquidity_min", 10.0, allow_env=False),
+    "ARBITRAGE_TRIGGER_THRESHOLD": get_trading_config("arbitrage_trigger_threshold", 0.02, allow_env=False),
+    "MIN_EDGE_THRESHOLD": get_trading_config("min_edge_threshold", 0.07, allow_env=False),
+    "MAX_REAL_NOTIONAL_USDC": get_trading_config("max_real_notional_usdc", 6.0, allow_env=False),
+    "PSI_THRESHOLD": get_trading_config("psi_threshold", 0.2, allow_env=False),
+    "KL_THRESHOLD": get_trading_config("kl_threshold", 0.1, allow_env=False),
+    "BRIER_THRESHOLD": get_trading_config("brier_threshold", 0.2, allow_env=False),
 }
 
 
