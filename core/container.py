@@ -5,6 +5,9 @@ from typing import Optional, TYPE_CHECKING
 from core.freqai_engine import FreqAIEngine
 from core.portfolio_risk_engine import PortfolioRiskEngine
 from core.services.metrics_exporter import ExecutionMetricsExporter
+from core.services.history_access_service import HistoryAccessService
+from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
+from core.services.trade_notification_service import TradeNotificationService
 from execution.passive_executor import PassiveExecutor
 from ledger.ledger_db import Ledger
 from user_data.strategies.hmm_filter import HMMRegimeFilter
@@ -69,11 +72,18 @@ class ServiceContainer:
             os.path.join(default_data_dir, "feature_store.duckdb"),
         )
         self.store = FeatureStore(db_path=api_store_path)
+        self.history = HistoryAccessService(self.store, self.ledger)
+        self.store.history_access = self.history
+        self.predictive_gate_service = PredictiveGateService(
+            config=PredictiveGateConfig(min_edge_threshold=0.07),
+            feature_store=self.store,
+        )
 
         self.notifier = TelegramNotifier(
             bot_token=self.secrets.get("TELEGRAM_BOT_TOKEN"),
-            chat_id=os.getenv("CHAT_ID"),
+            chat_id=os.getenv("TRADE_ALERT_CHAT_ID") or os.getenv("CHAT_ID"),
         )
+        self.trade_notifications = TradeNotificationService(self.notifier)
         self.metrics_exporter = ExecutionMetricsExporter(
             config={
                 "metrics_log_path": os.getenv(
@@ -141,11 +151,8 @@ class ServiceContainer:
             self.backtester = Backtester(initial_capital=10000.0)
         except Exception as e:
             logger.warning(f"Backtester init failed: {e}")
-        try:
-            from utils.feature_factory import FeatureFactory
-            self.feature_factory = FeatureFactory()
-        except Exception as e:
-            logger.warning(f"FeatureFactory init failed: {e}")
+        self.feature_factory = None
+        logger.info("FeatureFactory initialization deferred until OHLCV data is available.")
 
     @classmethod
     def get_instance(cls) -> "ServiceContainer":

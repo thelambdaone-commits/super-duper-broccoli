@@ -29,7 +29,11 @@ def load_features_jsonl(path: str) -> list[dict[str, Any]]:
     return rows
 
 
-async def run_once(features_path: str | None = None, paper_enable_backtest: bool = False) -> None:
+async def run_once(
+    features_path: str | None = None,
+    paper_enable_backtest: bool = False,
+    bootstrap_paper_trades: int = 0,
+) -> None:
     ledger = Ledger()
     lifecycle = StrategyLifecycleManager()
     if paper_enable_backtest:
@@ -48,6 +52,18 @@ async def run_once(features_path: str | None = None, paper_enable_backtest: bool
         config=AutonomousTradingConfig(mode=ledger.get_execution_mode()),
     )
     features = load_features_jsonl(features_path) if features_path else []
+    if bootstrap_paper_trades > 0:
+        bootstrap_actions = await loop.bootstrap_paper_history(features, target_trades=bootstrap_paper_trades)
+        for action in bootstrap_actions:
+            print(json.dumps(action.__dict__, sort_keys=True))
+        decision = loop.mode_controller.apply()
+        print(json.dumps({
+            "mode": decision.mode,
+            "reason": decision.reason,
+            "profit_directive": decision.profit_directive,
+            "shadow_ready": decision.shadow_ready,
+            "real_ready": decision.real_ready,
+        }, sort_keys=True))
     actions = await loop.run_once(features)
     for action in actions:
         print(json.dumps(action.__dict__, sort_keys=True))
@@ -62,11 +78,23 @@ def main() -> None:
         action="store_true",
         help="Dry-run override: allow BACKTEST strategies to open PAPER positions.",
     )
+    parser.add_argument(
+        "--bootstrap-paper-trades",
+        type=int,
+        default=int(os.getenv("AUTONOMOUS_BOOTSTRAP_PAPER_TRADES", "0")),
+        help="Create and close this many bootstrap paper trades before the main loop.",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     if not args.once:
         raise SystemExit("Use --once for now; daemon mode should be supervised explicitly via PM2 after paper validation.")
-    asyncio.run(run_once(args.features_jsonl or None, paper_enable_backtest=args.paper_enable_backtest))
+    asyncio.run(
+        run_once(
+            args.features_jsonl or None,
+            paper_enable_backtest=args.paper_enable_backtest,
+            bootstrap_paper_trades=args.bootstrap_paper_trades,
+        )
+    )
 
 
 if __name__ == "__main__":

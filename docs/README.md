@@ -52,7 +52,7 @@ These pages are intentionally narrow:
 - [`api/api_server.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/api/api_server.py)
 - [`mcp_agents/mcp_server.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/mcp_agents/mcp_server.py)
 - [`core/portfolio_risk_engine.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/core/portfolio_risk_engine.py)
-- [`telegram_scraper/telegram_listener.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/telegram_scraper/telegram_listener.py)
+- [`scrappers/mets_telegram_scraper.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/scrappers/mets_telegram_scraper.py)
 - [`ledger/ledger_db.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/ledger/ledger_db.py)
 - [`config/constants.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/config/constants.py)
 - [`utils/vault_handler.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/utils/vault_handler.py)

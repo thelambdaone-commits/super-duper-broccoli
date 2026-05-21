@@ -5,6 +5,8 @@ import asyncio
 import requests
 from dotenv import load_dotenv
 
+from utils.vault_handler import VaultHandler
+
 # Colors for premium CLI styling
 RED = "\033[0;31m"
 GREEN = "\033[0;32m"
@@ -128,7 +130,7 @@ async def test_huggingface():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_groq():
-    key = os.getenv("GROQ_API_KEY")
+    key = VaultHandler().fetch_quantum_secrets().get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "GROQ_API_KEY not configured."}
 

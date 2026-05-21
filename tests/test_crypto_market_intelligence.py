@@ -106,9 +106,8 @@ def test_report_format_and_json_are_stable() -> None:
     payload = report_to_json(report)
 
     assert "Lobstar Crypto Intelligence" in text
-    assert "Biais marché:" in text
-    assert "Commandes rapides:" in text
-    assert "Avis consultatif" in text
+    assert "conf." in text
+    assert "Commandes" in text
     assert "*" not in text
     assert "`" not in text
     assert '"crypto_market_count": 1' in payload

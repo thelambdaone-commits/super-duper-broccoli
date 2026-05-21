@@ -215,7 +215,7 @@ class HybridQuantModel(BaseEstimator, ClassifierMixin):
             "n_estimators": self.n_estimators,
             "max_depth": self.max_depth,
             "random_state": self.random_state,
-            "n_jobs": -1,
+            "n_jobs": max(1, (os.cpu_count() or 2) - 1),
         }
         self._models = {
             "xgb": XGBClassifier(

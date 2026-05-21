@@ -41,7 +41,8 @@ async def main() -> None:
     if not identity.eoa_address:
         raise SystemExit(f"No wallet found for chat_id={args.chat_id}")
 
-    polygon_rpc_url = os.getenv("POLYGON_RPC_URL") or os.getenv("RPC_URL") or ""
+    secrets = VaultHandler().fetch_quantum_secrets()
+    polygon_rpc_url = secrets.get("POLYGON_RPC_URL") or secrets.get("ETH_RPC_URL") or ""
     wallet_manager = PolymarketWalletManager(
         vault_handler=VaultHandler(),
         polygon_rpc_url=polygon_rpc_url,

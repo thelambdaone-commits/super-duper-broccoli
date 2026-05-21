@@ -5,6 +5,7 @@ from utils.crypto_horizon_sentiment import (
     format_horizon_sentiment,
     normalize_horizon,
 )
+from utils.market_scanner import MarketScanner, MarketSignal
 from utils.polymarket_client import Market
 
 
@@ -171,3 +172,49 @@ def test_market_with_up_down_outcomes() -> None:
     assert sentiment.sentiment == "NEUTRAL"  # 0.55 is < 0.62, so NEUTRAL
     assert sentiment.yes_price == 0.55
     assert sentiment.no_price == 0.45
+
+
+def test_market_scanner_prefers_high_quality_non_proxy_signals() -> None:
+    scanner = MarketScanner(client=FakeClient([]))
+    scanner._last_scan = type(
+        "Scan",
+        (),
+        {
+            "winning_bets": [
+                MarketSignal(
+                    ticker="eth-above-4000",
+                    side="BUY",
+                    price=0.61,
+                    confidence=0.92,
+                    reason="Imminent resolution: YES at 78%",
+                    market_question="Will ETH be above 4000?",
+                    market_slug="eth-above-4000",
+                    current_prob=78.0,
+                    volume=250_000,
+                    sentiment="BULLISH",
+                    direction="📈 UP",
+                )
+            ],
+            "trending_markets": [],
+            "competitive_markets": [
+                MarketSignal(
+                    ticker="composite",
+                    side="BUY",
+                    price=0.52,
+                    confidence=0.75,
+                    reason="Competitive market: spread 1.2%",
+                    market_question="Correlation Composite Proxy Sentiment (BTC/ETH/SOL)",
+                    market_slug="composite-proxy-btc-eth-sol",
+                    current_prob=52.0,
+                    volume=500_000,
+                    sentiment="NEUTRAL",
+                    direction="📈 UP",
+                )
+            ],
+            "arbitrage_opportunities": [],
+        },
+    )()
+
+    best = scanner.best_tradeable_signals(limit=1)
+    assert best
+    assert best[0].market_slug == "eth-above-4000"

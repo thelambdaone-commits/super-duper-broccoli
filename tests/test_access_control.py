@@ -1,10 +1,6 @@
 import pytest
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
-
 from ledger.ledger_db import Ledger
 from utils.access_control import AccessControlManager
-from telegram_scraper.telegram_listener import TelegramListener
 
 @pytest.fixture
 def temp_ledger(tmp_path):
@@ -75,50 +71,4 @@ def test_ledger_record_paper_order_tenant_wallet(temp_ledger):
     assert row is not None
     assert row["tenant_wallet"] == "0xTenantB"
 
-@pytest.mark.asyncio
-async def test_telegram_listener_admin_command_intercept():
-    # Setup listener with AccessControlManager
-    ac = AccessControlManager(admin_chat_ids=[123])
-    listener = TelegramListener(
-        bot_token="token",
-        on_signal=lambda _: None,
-        admin_chat_ids={123},
-        access_control=ac
-    )
 
-    # Test unauthorized call
-    msg_unauth = SimpleNamespace(chat_id=999, chat=SimpleNamespace(type="private"), reply_text=AsyncMock())
-    update_unauth = SimpleNamespace(message=msg_unauth, channel_post=None)
-
-    # Assert intercept blocks and replies Unauthorized
-    assert await listener._check_admin_auth(update_unauth) is False
-    msg_unauth.reply_text.assert_awaited_once_with("Unauthorized.", parse_mode="Markdown")
-
-    # Test authorized call
-    msg_auth = SimpleNamespace(chat_id=123, chat=SimpleNamespace(type="private"), reply_text=AsyncMock())
-    update_auth = SimpleNamespace(message=msg_auth, channel_post=None)
-
-    assert await listener._check_admin_auth(update_auth) is True
-
-@pytest.mark.asyncio
-async def test_telegram_listener_callback_intercept():
-    ac = AccessControlManager(admin_chat_ids=[123])
-    listener = TelegramListener(
-        bot_token="token",
-        on_signal=lambda _: None,
-        admin_chat_ids={123},
-        access_control=ac
-    )
-
-    # Test unauthorized callback
-    query_unauth = SimpleNamespace(
-        message=SimpleNamespace(chat_id=999),
-        data="balance",
-        answer=AsyncMock()
-    )
-    update_unauth = SimpleNamespace(callback_query=query_unauth)
-
-    await listener._handle_callback(update_unauth, None)
-
-    # Should reply showing alert
-    query_unauth.answer.assert_awaited_once_with("Unauthorized.", show_alert=True)

@@ -186,6 +186,15 @@ class TestNetBetaExposure:
 
 
 class TestComputePositionSize:
+    def test_real_mode_cap_comes_from_config(self, engine: PortfolioRiskEngine) -> None:
+        engine.ledger.get_execution_mode.return_value = "PROD"
+        result = engine.compute_position_size(
+            ticker="SOL", side="BUY", price=0.50,
+            confidence=1.0, win_prob=0.95, win_loss_ratio=5.0,
+            regime_label="LOW_VOLATILITY",
+        )
+        assert result["capital_at_risk"] <= engine.max_real_notional_usdc + 1e-9
+
     def test_nominal_compute(self, engine: PortfolioRiskEngine) -> None:
         result = engine.compute_position_size(
             ticker="SOL", side="BUY", price=0.50,

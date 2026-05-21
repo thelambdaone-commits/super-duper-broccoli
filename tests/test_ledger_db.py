@@ -133,3 +133,45 @@ def test_record_order_rolls_back_on_mid_transaction_failure(temp_ledger):
     assert temp_ledger.get_capital_summary()["available_capital"] == 10000.0
     tx_count = temp_ledger.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
     assert tx_count == 0
+
+
+def test_prod_mode_reserves_fee_buffer(temp_ledger):
+    cursor = temp_ledger.conn.cursor()
+    cursor.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) "
+        "VALUES (10000.0, 10000.0, 10.0)"
+    )
+    temp_ledger.conn.commit()
+    temp_ledger.set_execution_mode("PROD")
+
+    result = temp_ledger.validate_and_reserve("SOL", "BUY", 0.5, 1000)
+
+    assert result["authorized"] is True
+    assert result["capital"] == pytest.approx(510.0)
+    assert result["fee_rate_bps"] == pytest.approx(200.0)
+    assert result["estimated_fee"] == pytest.approx(10.0)
+
+
+def test_prod_mode_record_order_consumes_fee_buffer(temp_ledger):
+    cursor = temp_ledger.conn.cursor()
+    cursor.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) "
+        "VALUES (10000.0, 10000.0, 10.0)"
+    )
+    temp_ledger.conn.commit()
+    temp_ledger.set_execution_mode("PROD")
+
+    temp_ledger.record_order(
+        "pos-prod",
+        "SOL",
+        "BUY",
+        0.5,
+        1000,
+        requested_qty=1000,
+        filled_qty=1000,
+        execution_price=0.5,
+        notional_usd=500.0,
+    )
+
+    summary = temp_ledger.get_capital_summary()
+    assert summary["available_capital"] == pytest.approx(9490.0)

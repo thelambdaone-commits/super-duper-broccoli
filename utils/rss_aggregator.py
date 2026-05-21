@@ -1,10 +1,70 @@
 import asyncio
 import logging
 import os
-import feedparser
+import xml.etree.ElementTree as ET
 from typing import List, Dict, Optional, Any
+from urllib import request
+from urllib.error import URLError
 
 logger = logging.getLogger("RSSAggregator")
+
+
+def _parse_rss_bytes(data: bytes, source_url: str) -> List[Dict[str, Any]]:
+    """Parse RSS 2.0 or Atom feed bytes into a list of news dicts."""
+    items = []
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as e:
+        logger.warning(f"Failed to parse XML from {source_url}: {e}")
+        return items
+
+    # RSS 2.0: <rss><channel><item>...
+    # Atom: <feed><entry>...
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+    # Try RSS 2.0
+    channel = root.find("channel")
+    if channel is not None:
+        for item in channel.findall("item"):
+            title_el = item.find("title")
+            link_el = item.find("link")
+            desc_el = item.find("description")
+            pub_el = item.find("pubDate")
+            guid_el = item.find("guid")
+            uid = guid_el.text if guid_el is not None and guid_el.text else None
+            if not uid:
+                uid = link_el.text if link_el is not None and link_el.text else ""
+            title = title_el.text.strip() if title_el is not None and title_el.text else ""
+            items.append({
+                "title": title,
+                "link": link_el.text.strip() if link_el is not None and link_el.text else "",
+                "summary": desc_el.text.strip() if desc_el is not None and desc_el.text else "",
+                "published": pub_el.text.strip() if pub_el is not None and pub_el.text else "",
+                "source_url": source_url,
+            })
+    else:
+        # Try Atom
+        for entry in root.findall("atom:entry", ns):
+            title_el = entry.find("atom:title", ns)
+            link_el = entry.find("atom:link", ns)
+            summary_el = entry.find("atom:summary", ns)
+            published_el = entry.find("atom:published", ns)
+            id_el = entry.find("atom:id", ns)
+            uid = id_el.text if id_el is not None and id_el.text else ""
+            title = title_el.text.strip() if title_el is not None and title_el.text else ""
+            link = link_el.get("href", "") if link_el is not None else ""
+            summary = summary_el.text.strip() if summary_el is not None and summary_el.text else ""
+            published = published_el.text.strip() if published_el is not None and published_el.text else ""
+            items.append({
+                "title": title,
+                "link": link,
+                "summary": summary,
+                "published": published,
+                "source_url": source_url,
+            })
+
+    return items
+
 
 class RSSAggregator:
     """
@@ -43,28 +103,32 @@ class RSSAggregator:
         new_items = []
         for url in self.feeds:
             try:
-                # Use to_thread for blocking feedparser call
-                d = await asyncio.to_thread(feedparser.parse, url)
-                for e in d.entries:
-                    uid = e.get("id") or e.get("link") or (e.get("title", "") + "|" + e.get("published", ""))
-                    if uid in self._seen:
+                data = await asyncio.to_thread(self._fetch_url, url)
+                if not data:
+                    continue
+                entries = _parse_rss_bytes(data, url)
+                for item in entries:
+                    uid = item.get("link") or item.get("title", "")
+                    if not uid or uid in self._seen:
                         continue
                     self._seen.add(uid)
-                    item = {
-                        "title": e.get("title"),
-                        "link": e.get("link"),
-                        "summary": e.get("summary"),
-                        "published": e.get("published"),
-                        "source_url": url
-                    }
                     new_items.append(item)
                     logger.debug(f"New article: {item['title']}")
             except Exception as e:
                 logger.warning(f"Failed to fetch RSS from {url}: {e}")
 
         if new_items:
-            self._latest_news = (new_items + self._latest_news)[:100] # Keep last 100
+            self._latest_news = (new_items + self._latest_news)[:100]
         return new_items
+
+    @staticmethod
+    def _fetch_url(url: str) -> Optional[bytes]:
+        try:
+            with request.urlopen(url, timeout=15) as resp:
+                return resp.read()
+        except URLError as e:
+            logger.warning(f"URL error fetching {url}: {e}")
+            return None
 
     def get_latest_news(self, limit: int = 10) -> List[Dict[str, Any]]:
         return self._latest_news[:limit]
@@ -76,6 +140,7 @@ class RSSAggregator:
             if query in (n.get("title") or "").lower() or query in (n.get("summary") or "").lower()
         ]
         return results[:limit]
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

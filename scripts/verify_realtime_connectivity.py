@@ -6,6 +6,8 @@ import asyncio
 import requests
 from dotenv import load_dotenv
 
+from utils.vault_handler import VaultHandler
+
 # Colors for premium CLI styling
 RED = "\033[0;31m"
 GREEN = "\033[0;32m"
@@ -40,7 +42,8 @@ async def test_rpc_solana():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_rpc_polygon():
-    url = os.getenv("POLYGON_RPC_URL")
+    secrets = VaultHandler().fetch_quantum_secrets()
+    url = secrets.get("POLYGON_RPC_URL") or secrets.get("ETH_RPC_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "POLYGON_RPC_URL not configured."}
 
@@ -80,7 +83,7 @@ async def test_websocket_polygon():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_openrouter():
-    key = os.getenv("OPENROUTER_API_KEY")
+    key = VaultHandler().fetch_quantum_secrets().get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "OPENROUTER_API_KEY not configured."}
 
@@ -114,7 +117,7 @@ async def test_openrouter():
         return {"status": "FAILED", "msg": str(e)}
 
 async def test_groq():
-    key = os.getenv("GROQ_API_KEY")
+    key = VaultHandler().fetch_quantum_secrets().get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
     if not key:
         return {"status": "SKIPPED", "msg": "GROQ_API_KEY not configured."}
 

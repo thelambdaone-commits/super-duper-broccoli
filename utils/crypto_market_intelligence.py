@@ -242,13 +242,11 @@ def format_intelligence_report(report: IntelligenceReport) -> str:
     liq_str = f"${liq/1_000_000:.2f}M" if liq >= 1_000_000 else f"${liq/1_000:.1f}K" if liq >= 1_000 else f"${liq:.0f}"
 
     lines = [
-        "🤖 Lobstar Crypto Intelligence",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"  Biais marché: {bias_emoji} | Confiance {avg_confidence:.0%}",
-        f"  Couverture: {data['crypto_market_count']} crypto / {data['market_count']} marchés",
-        f"  Flux: {vol_str} Volume | {liq_str} Liquidité",
+        "━━ Lobstar Crypto Intelligence ━━",
+        f"{bias_emoji} ({avg_confidence:.0%} conf.)",
+        f"{data['crypto_market_count']} crypto / {data['market_count']} marchés · {vol_str} vol. · {liq_str} liq.",
         "",
-        "🔍 OPPORTUNITÉS À SURVEILLER"
+        "🔍 OPPORTUNITÉS"
     ]
 
     if report.opportunities:
@@ -273,9 +271,8 @@ def format_intelligence_report(report: IntelligenceReport) -> str:
             )
 
     lines.extend([
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "  Commandes rapides: /btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5",
-        "  Avis consultatif. Pas d'exécution sans parser, risque, ledger et mode valide."
+        "━━ 📱 Commandes ━━",
+        "/btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5"
     ])
     return "\n".join(lines)
 

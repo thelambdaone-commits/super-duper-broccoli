@@ -6,8 +6,9 @@ from typing import Any, Dict, List, Optional
 
 from utils.presentation_formatters import (
     format_cognitive_decision_notification,
-    format_execution_notification,
 )
+from core.services.signal_decision_service import SignalDecisionService
+from core.services.post_trade_service import PostTradeService
 from utils.telegram_channel_broadcaster import TelegramChannelBroadcaster
 from core.services.circuit_breaker import CircuitBreakerService, CircuitState
 from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
@@ -20,7 +21,6 @@ logger = logging.getLogger("Orchestrator")
 class LobstarOrchestrator:
     def __init__(
         self,
-        container: Any,
         secrets: Dict[str, str],
         execution_mode: str,
         listener: Any,
@@ -29,6 +29,16 @@ class LobstarOrchestrator:
         cognitive_brain: Any,
         copy_trading_agent: Any,
         market_scanner: Any,
+        ledger: Any,
+        risk: Any,
+        store: Any,
+        notifier: Any,
+        executor: Any,
+        hmm: Any,
+        freqai: Any,
+        history: Any,
+        trade_notifications: Any,
+        metrics_exporter: Any,
         lobstar_agent: Any = None,
         access_control: Any = None,
         broadcaster: Optional[TelegramChannelBroadcaster] = None,
@@ -36,7 +46,6 @@ class LobstarOrchestrator:
         predictive_gate_service: Optional[PredictiveGateService] = None,
         signal_router: Optional[SignalRouter] = None,
     ) -> None:
-        self.container = container
         self.secrets = secrets
         self.execution_mode = execution_mode
         self.listener = listener
@@ -47,9 +56,32 @@ class LobstarOrchestrator:
         self.market_scanner = market_scanner
         self.lobstar_agent = lobstar_agent
         self.access_control = access_control
+        self.ledger = ledger
+        self.risk = risk
+        self.store = store
+        self.notifier = notifier
+        self.executor = executor
+        self.hmm = hmm
+        self.freqai = freqai
+        self.history = history
+        self.trade_notifications = trade_notifications
+        self.metrics_exporter = metrics_exporter
         self.circuit_breaker_service = self._normalize_circuit_breaker(circuit_breaker)
         self.predictive_gate_service = predictive_gate_service or self._normalize_predictive_gate()
         self.signal_router = signal_router or self._normalize_signal_router()
+        self.signal_decision_service = SignalDecisionService(
+            predictive_gate=self.predictive_gate_service,
+            risk_engine=self.risk,
+            ledger=self.ledger,
+            snapshot_mgr=self.snapshot_mgr,
+        )
+        self.post_trade_service = PostTradeService(
+            trade_notifications=self.trade_notifications,
+            metrics_exporter=self.metrics_exporter,
+            notifier=self.notifier,
+            listener=self.listener,
+            circuit_breaker=self.circuit_breaker,
+        )
 
         # Distributed Memory Access
         self._swarm = None
@@ -126,7 +158,7 @@ class LobstarOrchestrator:
                         logger.critical(
                             f"🚨 SYSTEM INGESTION WARNING: Ingest queue is 80% saturated ({current_size}/1000)!"
                         )
-                        self.container.notifier.send(
+                        self.notifier.send(
                             f"⚠️ *INGESTION ALERT*\nIngest queue is 80% saturated: `{current_size}/1000`!"
                         )
 
@@ -149,54 +181,20 @@ class LobstarOrchestrator:
             result = await task
             if not result or not isinstance(result, dict):
                 return
-
-            if result.get("status") == "SUCCESS":
-                logger.info(f"Signal executed successfully: {result.get('trade_id', 'N/A')}")
-                if self._swarm:
-                    asyncio.create_task(self._swarm.publish_event("SIGNAL_EXECUTED", {
-                        "trade_id": result.get("trade_id"),
-                        "ticker": signal.get("ticker"),
-                        "side": result.get("side"),
-                        "status": "SUCCESS"
-                    }))
-                ledger = getattr(self.container, "ledger", None)
-
-                live_mode = self.execution_mode
-                if ledger and hasattr(ledger, "get_execution_mode"):
-                    try:
-                        live_mode = ledger.get_execution_mode()
-                    except Exception:
-                        pass
-                self.container.notifier.send(format_execution_notification(signal, result, live_mode, success=True))
-                exporter = getattr(self.container, "metrics_exporter", None)
-                if exporter:
-                    try:
-                        await exporter.log_execution(signal, result)
-                    except Exception as exc:
-                        logger.warning("Failed to export execution metrics: %s", exc)
-                self.circuit_breaker.record_success()
-            elif result.get("status") == "SKIPPED":
-                logger.info(
-                    "Signal skipped: %s",
-                    result.get("reason", "No reason provided"),
-                )
-                return
-            else:
-                reason = result.get("reason_1") or result.get("reason") or "Unknown error"
-                logger.warning(f"Signal execution failed: {reason}")
-                self.container.notifier.send(f"⚠️ *Execution Failed*\nTicker: `{result.get('ticker', 'Unknown')}`\nReason: `{reason}`")
-                self.circuit_breaker.record_failure(reason)
-
-            from utils.message_formatter import InstitutionalMessageFormatter
-            confirmation = InstitutionalMessageFormatter.format_trade_execution_html(result)
-
-            chat_id = signal.get("chat_id")
-            update = signal.get("update")
-
-            if update is not None and update.message:
-                await self.listener.reply_to(confirmation, update, parse_mode="HTML")
-            elif chat_id:
-                await self.listener.send_message(confirmation, chat_id=chat_id, parse_mode="HTML")
+            if result.get("status") == "SUCCESS" and self._swarm:
+                asyncio.create_task(self._swarm.publish_event("SIGNAL_EXECUTED", {
+                    "trade_id": result.get("trade_id"),
+                    "ticker": signal.get("ticker"),
+                    "side": result.get("side"),
+                    "status": "SUCCESS"
+                }))
+            live_mode = self.execution_mode
+            if self.ledger and hasattr(self.ledger, "get_execution_mode"):
+                try:
+                    live_mode = self.ledger.get_execution_mode()
+                except Exception:
+                    pass
+            await self.post_trade_service.finalize(signal, result, live_mode)
         except Exception as e:
             logger.error(f"Signal execution failed: {e}")
             self.circuit_breaker.record_failure(str(e))
@@ -213,7 +211,7 @@ class LobstarOrchestrator:
         if not message:
             return
         try:
-            self.container.notifier.send(message)
+            self.notifier.send(message)
         except Exception as exc:
             logger.warning("Failed to notify cognitive decision: %s", exc)
 
@@ -221,7 +219,7 @@ class LobstarOrchestrator:
         if self.circuit_breaker_service.check_signal(signal):
             return False
         logger.error("CIRCUIT BREAKER OPEN. Skipping signal.")
-        self.container.notifier.send("🛑 *CIRCUIT BREAKER OPEN*\nTrading paused due to consecutive failures.")
+        self.notifier.send("🛑 *CIRCUIT BREAKER OPEN*\nTrading paused due to consecutive failures.")
         await self.broadcaster.diffuser_alerte_risque_au_canal({
             "title": "Circuit Breaker Activated",
             "message": "Trading paused due to consecutive failures. Manual intervention required.",
@@ -263,7 +261,7 @@ class LobstarOrchestrator:
         return PredictiveGateService(
             config=config,
             model_registry=model_registry,
-            feature_store=getattr(self.container, "store", None),
+            feature_store=self.store,
         )
 
     async def _enqueue_signal(self, signal: dict) -> None:
@@ -277,7 +275,7 @@ class LobstarOrchestrator:
                 self._pending_queue.put_nowait(signal)
             except asyncio.QueueFull:
                 logger.critical("🚨 INGESTION QUEUE FULL: Signal dropped!")
-                self.container.notifier.send("🚨 *INGESTION ALERT*\nIngest queue is completely full! Signal dropped.")
+                self.notifier.send("🚨 *INGESTION ALERT*\nIngest queue is completely full! Signal dropped.")
                 await self.broadcaster.diffuser_alerte_risque_au_canal({
                     "title": "Ingestion Queue Full",
                     "message": "Signal queue is completely full. Possible signal loss.",
@@ -334,7 +332,7 @@ class LobstarOrchestrator:
             }
 
         try:
-            signal = self._attach_microstructure_context(signal)
+            signal = self.signal_decision_service.attach_microstructure_context(signal)
             cognitive_decision = await self.cognitive_brain.synthesize_cognitive_decision(signal)
             signal = self.cognitive_brain.enrich_signal(signal, cognitive_decision)
             logger.info("LOBSTAR cognitive decision: %s", cognitive_decision.reason)
@@ -350,7 +348,7 @@ class LobstarOrchestrator:
             logger.warning("Using simulated zero returns because ALLOW_SIMULATED_REGIME_INPUTS is enabled.")
             returns = np.zeros(100, dtype=np.float32)
         try:
-            state, label = self.container.hmm.predict_with_label(returns) if returns is not None else (None, "UNKNOWN")
+            state, label = self.hmm.predict_with_label(returns) if returns is not None and self.hmm else (None, "UNKNOWN")
         except Exception as exc:
             logger.warning("Regime prediction failed, using UNKNOWN: %s", exc)
             label = "UNKNOWN"
@@ -365,7 +363,7 @@ class LobstarOrchestrator:
                 "side": signal.get("side", "Unknown"),
             }
 
-        current_executor = self.container.executor
+        current_executor = self.executor
         if label == "LOW_VOLATILITY":
             if not passive_allowed:
                 logger.warning("Regime is LOW_VOLATILITY but PassiveExecutor is frozen. Skipping signal execution.")
@@ -376,15 +374,15 @@ class LobstarOrchestrator:
                     "side": signal.get("side", "Unknown"),
                 }
             logger.info("Regime is LOW_VOLATILITY: Forcing PassiveExecutor (Maker Mode)")
-            current_executor = self.container.executor
+            current_executor = self.executor
         else:
             logger.info(f"Regime is {label}: Routing directly to CLOB (Taker Mode)")
             current_executor = None
 
-        risk_allowed, risk_reason = await self._apply_portfolio_risk_gate(signal)
+        risk_allowed, risk_reason = await self.signal_decision_service.apply_portfolio_risk_gate(signal)
         if not risk_allowed:
             logger.warning("Portfolio risk gate rejected signal: %s", risk_reason)
-            self.container.notifier.send(
+            self.notifier.send(
                 f"🛑 *PORTFOLIO RISK GATE*\nTicker: `{signal.get('ticker', 'Unknown')}`\nReason: `{risk_reason}`"
             )
             return {
@@ -412,11 +410,11 @@ class LobstarOrchestrator:
         return await self.signal_router.route(
             signal,
             SignalRouterContext(
-                ledger=self.container.ledger,
-                freqai=self.container.freqai,
-                risk=self.container.risk,
-                hmm=self.container.hmm,
-                store=self.container.store,
+                ledger=self.ledger,
+                freqai=self.freqai,
+                risk=self.risk,
+                hmm=self.hmm,
+                store=self.store,
                 executor=current_executor,
                 scanner=self.market_scanner,
                 tenant_wallet=tenant_wallet,
@@ -424,150 +422,8 @@ class LobstarOrchestrator:
             ),
         )
 
-    def _attach_microstructure_context(self, signal: dict) -> dict:
-        snapshot = None
-        try:
-            snapshot = self.snapshot_mgr.get_latest(category="SYSTEM", component="CLOB_ORDERBOOK")
-        except Exception as exc:
-            logger.debug("Unable to fetch latest CLOB snapshot: %s", exc)
-
-        microstructure = self._build_microstructure_context(signal, snapshot)
-        if not microstructure:
-            return signal
-
-        enriched = dict(signal)
-        enriched["microstructure_context"] = microstructure
-        return enriched
-
-    def _build_microstructure_context(self, signal: dict, snapshot: Any) -> dict[str, Any]:
-        context: dict[str, Any] = {}
-        if isinstance(snapshot, dict):
-            context.update(
-                {
-                    "source": snapshot.get("source", "snapshot_manager"),
-                    "token_id": snapshot.get("token_id") or snapshot.get("asset_id") or snapshot.get("ticker") or "",
-                    "spread_bps": self._coerce_first_numeric(snapshot.get("spread_bps", 0.0)),
-                    "order_imbalance": self._coerce_first_numeric(snapshot.get("order_imbalance", 0.0)),
-                    "bid_depth_3": self._coerce_first_numeric(snapshot.get("bid_depth_3", snapshot.get("bid_depth", 0.0))),
-                    "ask_depth_3": self._coerce_first_numeric(snapshot.get("ask_depth_3", snapshot.get("ask_depth", 0.0))),
-                    "mid_price": self._coerce_first_numeric(snapshot.get("mid_price", snapshot.get("mid", signal.get("price", 0.0)))),
-                    "timestamp": snapshot.get("timestamp"),
-                }
-            )
-
-        if not context and isinstance(signal.get("microstructure_liquidity"), dict):
-            liquidity = signal["microstructure_liquidity"]
-            context.update(
-                {
-                    "source": "signal_payload",
-                    "spread_bps": self._coerce_first_numeric(liquidity.get("spread_bps", 0.0)),
-                    "order_imbalance": self._coerce_first_numeric(liquidity.get("order_imbalance", 0.0)),
-                    "bid_depth_3": self._coerce_first_numeric(liquidity.get("bid_depth_3", liquidity.get("bid_depth", 0.0))),
-                    "ask_depth_3": self._coerce_first_numeric(liquidity.get("ask_depth_3", liquidity.get("ask_depth", 0.0))),
-                    "mid_price": self._coerce_first_numeric(liquidity.get("mid_price", signal.get("price", 0.0))),
-                }
-            )
-
-        if not context and isinstance(signal.get("market_features"), dict):
-            features = signal["market_features"]
-            context.update(
-                {
-                    "source": "market_features",
-                    "spread_bps": self._coerce_first_numeric(features.get("spread_bps", 0.0)),
-                    "order_imbalance": self._coerce_first_numeric(features.get("order_imbalance", 0.0)),
-                    "bid_depth_3": self._coerce_first_numeric(features.get("bid_depth_3", features.get("bid_depth", 0.0))),
-                    "ask_depth_3": self._coerce_first_numeric(features.get("ask_depth_3", features.get("ask_depth", 0.0))),
-                    "mid_price": self._coerce_first_numeric(features.get("mid_price", signal.get("price", 0.0))),
-                }
-            )
-
-        if context:
-            ticker = str(signal.get("ticker") or signal.get("asset") or signal.get("token_id") or "").upper()
-            context["ticker"] = ticker
-            context["liquidity_regime"] = self._classify_microstructure_regime(context)
-        return context
-
-    @staticmethod
-    def _coerce_first_numeric(value: Any) -> float:
-        if isinstance(value, (list, tuple)):
-            for item in value:
-                try:
-                    return float(item)
-                except (TypeError, ValueError):
-                    continue
-            return 0.0
-        try:
-            return float(value or 0.0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    @staticmethod
-    def _classify_microstructure_regime(microstructure: dict[str, Any]) -> str:
-        spread_bps = float(microstructure.get("spread_bps", 0.0) or 0.0)
-        obi = float(microstructure.get("order_imbalance", 0.0) or 0.0)
-        bid_depth = float(microstructure.get("bid_depth_3", 0.0) or 0.0)
-        ask_depth = float(microstructure.get("ask_depth_3", 0.0) or 0.0)
-        depth_total = bid_depth + ask_depth
-
-        if spread_bps >= 500.0 or depth_total <= 0:
-            return "THIN"
-        if spread_bps <= 150.0 and abs(obi) >= 0.25:
-            return "IMBALANCED"
-        if spread_bps <= 200.0 and depth_total >= 200.0:
-            return "LIQUID"
-        return "NORMAL"
-
-    async def _apply_portfolio_risk_gate(self, signal: dict) -> tuple[bool, str]:
-        risk_engine = getattr(self.container, "risk", None)
-        ledger = getattr(self.container, "ledger", None)
-        if risk_engine is None:
-            return True, "Risk engine unavailable"
-
-        try:
-            capital_summary = ledger.get_capital_summary() if ledger else {}
-            current_portfolio_value = float(
-                capital_summary.get("total_capital")
-                or capital_summary.get("available_capital")
-                or 0.0
-            )
-        except Exception as exc:
-            logger.warning("Failed to fetch portfolio capital for risk gate: %s", exc)
-            current_portfolio_value = 0.0
-
-        active_positions: dict[str, float] = {}
-        if ledger is not None:
-            try:
-                for pos in ledger.get_open_positions():
-                    ticker = str(pos.get("ticker", "")).upper()
-                    active_positions[ticker] = active_positions.get(ticker, 0.0) + float(
-                        pos.get("capital_engaged")
-                        or pos.get("size", 0.0) * pos.get("entry_price", 0.0)
-                    )
-            except Exception as exc:
-                logger.warning("Failed to fetch active positions for risk gate: %s", exc)
-
-        try:
-            allowed, reason = await risk_engine.validate_signal_risk(
-                signal=signal,
-                current_portfolio_value=current_portfolio_value,
-                active_positions=active_positions,
-            )
-            return bool(allowed), str(reason)
-        except Exception as exc:
-            logger.warning("Portfolio risk gate failed open: %s", exc)
-            return True, f"Risk gate unavailable: {exc}"
-
     async def _apply_predictive_gate(self, signal: dict) -> tuple[dict, bool]:
-        allowed, reason = self.predictive_gate_service.validate_signal(signal)
-        if not allowed:
-            logger.info("💤 [PREDICTIVE GATE] Signal rejected: %s", reason)
-            return signal, False
-        logger.info(
-            "🔮 [PREDICTIVE GATE] Signal validated: P(win)=%s, Edge=%s",
-            f"{signal.get('predictive_probability', 0.0):.1%}",
-            f"{signal.get('predictive_edge', 0.0):+.1%}",
-        )
-        return signal, True
+        return await self.signal_decision_service.apply_predictive_gate(signal)
 
     async def _handle_onchain_signal(
         self,
@@ -605,8 +461,8 @@ class LobstarOrchestrator:
                 "max_participation_rate": float(os.getenv("VWAP_PARTICIPATION_RATE", "0.10")),
                 "min_size_for_fragmentation_usd": float(os.getenv("TWAP_MIN_SIZE_USD", "0.0")),
             },
-            immediate_executor=getattr(self.container, "executor", None),
-            feature_store=getattr(self.container, "store", None),
+            immediate_executor=self.executor,
+            feature_store=self.store,
         )
 
         class _RegexExecutorAdapter:
@@ -705,9 +561,9 @@ class LobstarOrchestrator:
             logger.info("🔄 [COCKPIT] Soldes mis à jour et réaffichage propre validé.")
 
         elif action == "wallet_history":
-            ledger = getattr(self.container, 'ledger', None)
-            if ledger:
-                history = ledger.get_historical_performance(limit=10)
+            history_service = self.history
+            if history_service:
+                history = history_service.get_historical_performance(limit=10)
                 if history:
                     lines = [f"• {t['ticker']} {t['side']}: ${t['net_pnl']:+.2f} ({'W' if t['is_win'] else 'L'})" for t in history]
                     text = "📜 *Historique*\n" + "\n".join(lines)
@@ -722,9 +578,9 @@ class LobstarOrchestrator:
             await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="Markdown")
 
         elif action == "wallet_positions":
-            ledger = getattr(self.container, 'ledger', None)
-            if ledger:
-                positions = ledger.get_open_positions()
+            history_service = self.history
+            if history_service:
+                positions = history_service.get_open_positions()
                 if positions:
                     lines = [f"• {p['ticker']} {p['side']} — {p['size']} @ ${p['entry_price']:.4f}" for p in positions[:10]]
                     text = "📊 *Positions ouvertes*\n" + "\n".join(lines)
@@ -735,9 +591,10 @@ class LobstarOrchestrator:
             await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="Markdown")
 
         elif action == "wallet_pnl":
-            ledger = getattr(self.container, 'ledger', None)
-            if ledger:
-                perf = ledger.get_performance_summary(mode=ledger.get_execution_mode())
+            history_service = self.history
+            ledger = self.ledger
+            if history_service and ledger:
+                perf = history_service.get_performance_summary(mode=ledger.get_execution_mode())
                 if perf and perf.get("total_trades", 0) > 0:
                     wr = perf["win_rate"] * 100
                     text = (

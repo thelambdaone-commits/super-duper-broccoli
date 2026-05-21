@@ -105,29 +105,5 @@ module.exports = {
             VAULT_TOKEN: env("VAULT_TOKEN"),
             API_FEATURE_STORE_PATH: "data/api_feature_store.duckdb",
         },
-    }, {
-        // Streamlit operations dashboard. It is isolated from the execution loop
-        // so dashboard restarts cannot interrupt trading or Telegram polling.
-        // Quick start: pm2 start ecosystem.config.js --only quant-agentic-dashboard
-        name: "quant-agentic-dashboard",
-        script: ".venv/bin/streamlit",
-        args: "run api/dashboard.py --server.port 8501 --server.headless true",
-        cwd: __dirname,
-        interpreter: ".venv/bin/python",
-        instances: 1,
-        exec_mode: "fork",
-        max_restarts: 25,
-        min_uptime: "10s",
-        restart_delay: 5000,
-        exp_backoff_restart_delay: 1000,
-        error_file: "logs/pm2-dashboard-error.log",
-        out_file: "logs/pm2-dashboard-out.log",
-        log_date_format: "YYYY-MM-DD HH:mm:ss Z",
-        merge_logs: true,
-        autorestart: true,
-        env: {
-            NODE_ENV: "production",
-            PYTHONUNBUFFERED: "1",
-        },
     }]
 };

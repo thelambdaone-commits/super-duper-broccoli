@@ -306,7 +306,6 @@ def format_horizon_sentiment(sentiment: HorizonSentiment | None, asset: str, hor
         lines.append(f"    Time Left: {sentiment.time_remaining}")
     lines.extend([
         f"    Base: {sentiment.rationale}",
-        f"    Slug: {sentiment.market_slug}\n",
-        "  ⚠️ Avis consultatif. Pas d'exécution sans parser, risque, ledger et mode valide."
+        f"    Slug: {sentiment.market_slug}\n"
     ])
     return "\n".join(lines)

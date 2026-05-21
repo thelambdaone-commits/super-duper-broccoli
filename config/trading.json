@@ -1,0 +1,11 @@
+{
+  "estimated_trade_fee_bps": 200,
+  "allow_simulated_predictive_gate": false,
+  "ood_di_threshold": 3.0,
+  "prediction_calibration_mode": "ensemble",
+  "strict_maker_only": false,
+  "max_real_notional_usdc": 6.0,
+  "psi_threshold": 0.2,
+  "kl_threshold": 0.1,
+  "brier_threshold": 0.2
+}

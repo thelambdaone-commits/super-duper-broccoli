@@ -99,7 +99,7 @@ class FreqAIEngine:
         self, ticker: str, side: str, price: float, size: float
     ) -> Dict[str, Any]:
         try:
-            order_side = Side.BUY if side in ("YES", "BUY") else Side.SELL
+            order_side = "BUY" if side in ("YES", "BUY") else "SELL"
             validated_size = self._normalize_and_validate(ticker, price, size)
             order_args = OrderArgs(
                 price=price,
@@ -132,7 +132,7 @@ class FreqAIEngine:
         self, ticker: str, side: str, price: float, size: float
     ) -> Dict[str, Any]:
         try:
-            order_side = Side.BUY if side in ("YES", "BUY") else Side.SELL
+            order_side = "BUY" if side in ("YES", "BUY") else "SELL"
             validated_size = self._normalize_and_validate(ticker, price, size)
             order_args = OrderArgs(
                 price=price,

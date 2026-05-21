@@ -4,6 +4,7 @@ from typing import Optional
 from user_data.strategies.hmm_filter import HMMRegimeFilter
 from config.constants import REGIME_SIZING_MULTIPLIER as _REGIME_SIZING_MULTIPLIER
 from ledger.ledger_db import Ledger
+from utils.config_loader import TRADING_PARAMS
 
 # Re-export for backward compatibility with tests
 REGIME_SIZING_MULTIPLIER = _REGIME_SIZING_MULTIPLIER
@@ -38,6 +39,7 @@ class PortfolioRiskEngine:
             max(0.0, min(float(max_drawdown_pct), 1.0))
             if max_drawdown_pct is not None else max_trailing_drawdown_pct
         )
+        self.max_real_notional_usdc: float = float(TRADING_PARAMS.get("MAX_REAL_NOTIONAL_USDC", 6.0))
         self._exposures: dict[str, float] = {}
         self._peak_equity: float = 0.0
         self._beta_to_btc: dict[str, float] = {
@@ -170,7 +172,7 @@ class PortfolioRiskEngine:
         if hasattr(self.ledger, "get_execution_mode"):
             mode = self.ledger.get_execution_mode()
             if mode in ("PROD", "SHADOW"):
-                sized_notional = min(sized_notional, 6.0)
+                sized_notional = min(sized_notional, self.max_real_notional_usdc)
 
         ticker_base = ticker.split("-")[0] if "-" in ticker else ticker
         beta = self._beta_to_btc.get(ticker_base, 0.5)
@@ -337,7 +339,7 @@ class PortfolioRiskEngine:
         if hasattr(self.ledger, "get_execution_mode"):
             mode = self.ledger.get_execution_mode()
             if mode in ("PROD", "SHADOW"):
-                sized_notional = min(sized_notional, 6.0)
+                sized_notional = min(sized_notional, self.max_real_notional_usdc)
 
         ticker_base = ticker.split("-")[0] if "-" in ticker else ticker
         beta = self._beta_to_btc.get(ticker_base, 0.5)

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from utils.exceptions import QuantFatal
+from utils.config_loader import get_health_config
 
 logger = logging.getLogger("PredictiveEngine")
 
@@ -76,7 +77,7 @@ class PolymarketPredictiveEngine:
     def _max_binance_staleness_seconds() -> float:
         raw_value = os.getenv(
             "MAX_BINANCE_STALENESS_SECONDS",
-            str(PolymarketPredictiveEngine.DEFAULT_MAX_BINANCE_STALENESS_SECONDS),
+            str(get_health_config("binance_staleness_seconds", PolymarketPredictiveEngine.DEFAULT_MAX_BINANCE_STALENESS_SECONDS)),
         )
         try:
             return max(0.0, float(raw_value))

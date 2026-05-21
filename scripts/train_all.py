@@ -43,6 +43,7 @@ CONTINUOUS_TICKERS = ["BTCUSDT", "ETHUSDT", "SPY", "QQQ"]
 FEATURES = ["oi_5min", "tam_state", "spread_bps", "mid_price"]
 TARGET = "mid_price"
 N_SAMPLES = 1000
+CONTINUOUS_SEQUENCE_SECONDS = 300
 
 HYPERPARAM_GRID = [
     {"n_estimators": 50, "max_depth": 3, "learning_rate": 0.05},
@@ -101,7 +102,7 @@ def _batch_features(store: FeatureStore, rows: list[tuple]) -> None:
 
 def generate_synthetic_data(store: FeatureStore) -> None:
     rng = np.random.RandomState(42)
-    base_ts = time.time() - N_SAMPLES * 60
+    base_ts = time.time() - N_SAMPLES * CONTINUOUS_SEQUENCE_SECONDS
     for ticker in DEFAULT_TICKERS:
         mid = 0.5 + 0.3 * np.sin(np.linspace(0, 4 * np.pi, N_SAMPLES))
         mid += rng.normal(0, 0.02, N_SAMPLES)
@@ -120,7 +121,7 @@ def generate_synthetic_data(store: FeatureStore) -> None:
 
         rows = []
         for i in range(N_SAMPLES):
-            ts = base_ts + i * 60
+            ts = base_ts + i * CONTINUOUS_SEQUENCE_SECONDS
             rows.append((ts, ticker, "oi_5min", float(oi[i])))
             rows.append((ts, ticker, "tam_state", float(tam[i])))
             rows.append((ts, ticker, "spread_bps", float(spread[i])))
@@ -192,6 +193,74 @@ def train_configs(
                 f"({duration:.1f}s)"
             )
 
+        except Exception as e:
+            logger.error(f"[{run_id}] FAILED: {e}")
+            if progress:
+                progress.update(ticker, params, "failed")
+
+    return results
+
+
+def train_continuous_configs(
+    pipeline: TrainingPipeline,
+    ticker: str,
+    hyperparams_list: list[dict],
+    horizon: int = 3,
+    n_splits_wf: int = 5,
+    progress: Optional[Progress] = None,
+) -> list[dict]:
+    results: list[dict] = []
+    for params in hyperparams_list:
+        run_id = f"{ticker}_{int(time.time())}_{params['n_estimators']}_{params['max_depth']}_continuous"
+        start = time.time()
+
+        try:
+            result = pipeline.train_continuous(ticker, hyperparams=params, horizon=horizon)
+            duration = time.time() - start
+
+            if result is None:
+                logger.warning(f"[{run_id}] continuous training returned None")
+                if progress:
+                    progress.update(ticker, params, "skipped")
+                continue
+
+            wf_result = pipeline.backtest_walk_forward_continuous(
+                ticker, n_splits=n_splits_wf, hyperparams=params, horizon=horizon
+            )
+
+            run = {
+                "run_id": run_id,
+                "ticker": ticker,
+                "market_type": "continuous",
+                "timestamp": datetime.utcnow().isoformat(),
+                "duration_sec": round(duration, 2),
+                "hyperparams": params,
+                "horizon": horizon,
+                "train_accuracy": result.get("train_accuracy", 0),
+                "val_accuracy": result.get("val_accuracy", 0),
+                "train_samples": result.get("train_samples", 0),
+                "val_samples": result.get("val_samples", 0),
+                "meta_weights": result.get("meta_weights", {}),
+                "top_features": result.get("top_features", {}),
+                "model_path": result.get("model_path", ""),
+                "calibrator_path": result.get("calibrator_path", ""),
+                "calibrated_model_path": result.get("calibrated_model_path", ""),
+            }
+            if wf_result:
+                run["wf_mean_accuracy"] = wf_result.get("mean_val_accuracy", 0)
+                run["wf_std_accuracy"] = wf_result.get("std_val_accuracy", 0)
+                run["wf_n_folds"] = wf_result.get("n_splits", 0)
+                run["wf_fold_metrics"] = wf_result.get("fold_metrics", [])
+
+            results.append(run)
+            if progress:
+                progress.update(ticker, params, "ok")
+            logger.info(
+                f"[{run_id}] train_acc={run['train_accuracy']:.4f} "
+                f"val_acc={run['val_accuracy']:.4f} "
+                f"wf_acc={run.get('wf_mean_accuracy', 0):.4f} "
+                f"({duration:.1f}s)"
+            )
         except Exception as e:
             logger.error(f"[{run_id}] FAILED: {e}")
             if progress:
@@ -324,9 +393,12 @@ def main(
                 target_feature=CONTINUOUS_TARGET_FEATURE,
                 horizon=3,
             )
-            runs = train_configs(
-                pipeline, cticker, HYPERPARAM_GRID,
-                validation_split=0.2,
+            runs = train_continuous_configs(
+                pipeline,
+                cticker,
+                HYPERPARAM_GRID,
+                horizon=3,
+                n_splits_wf=5,
                 progress=Progress(total=len(HYPERPARAM_GRID)),
             )
             all_runs.extend(runs)

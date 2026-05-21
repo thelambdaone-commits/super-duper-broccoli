@@ -6,6 +6,7 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
+from core.services.history_access_service import HistoryWindow
 from utils.feature_store import FeatureStore
 from utils.market_scanner import MarketScanner
 
@@ -234,12 +235,24 @@ class LobstarCognitiveBrain:
             if values:
                 return self._clip(sum(values) / len(values))
 
-            feature_rows = self.store.get_feature_history(
-                ticker,
-                "oi_5min",
-                since_ts=now - self.oi_lookback_seconds,
-                limit=1000,
-            )
+            history = getattr(self.store, "history_access", None)
+            if history:
+                feature_rows = history.get_feature_history(
+                    ticker,
+                    "oi_5min",
+                    window=HistoryWindow(
+                        since_ts=now - self.oi_lookback_seconds,
+                        until_ts=now,
+                        limit=1000,
+                    ),
+                )
+            else:
+                feature_rows = self.store.get_feature_history(
+                    ticker,
+                    "oi_5min",
+                    since_ts=now - self.oi_lookback_seconds,
+                    limit=1000,
+                )
             feature_values = [float(row.get("value") or 0.0) for row in feature_rows]
             if feature_values:
                 return self._clip(sum(feature_values) / len(feature_values))

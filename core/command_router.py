@@ -15,6 +15,7 @@ class LobstarCommandRouter:
 
         # Mappage strict des commandes d'administration et de télémétrie
         self.command_mapping: Dict[str, Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]] = {
+            "start": self.display_main_dashboard,
             "status": self.system_pm2_diagnostic,
             "balance": self.fetch_on_chain_balances,
             "positions": self.fetch_active_clob_positions,

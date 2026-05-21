@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from core.autonomic_healer import LobstarAutonomicHealer
+from utils.config_loader import get_health_config
 
 logger = logging.getLogger("HealthMonitorAgent")
 
@@ -134,9 +135,9 @@ class HealthMonitorAgent:
         self._running = True
 
         # Récupération des seuils pour affichage au boot
-        max_binance_stale = os.getenv("MAX_BINANCE_STALENESS_SECONDS", "3.0")
-        max_mem = os.getenv("MAX_MEMORY_MB_THRESHOLD", str(int(self.config.max_memory_rss_mb)))
-        wallet_drift = os.getenv("MAX_WALLET_DRIFT_USDC", "0.01")
+        max_binance_stale = str(get_health_config("binance_staleness_seconds", 3.0))
+        max_mem = str(get_health_config("memory_warning_mb", int(self.config.max_memory_rss_mb)))
+        wallet_drift = str(get_health_config("wallet_drift_tolerance_usdc", 0.01))
 
         logger.info("==========================================================")
         logger.info("🛡️  [HEALTH SIDECAR] INITIALIZATION & BOOT SEQUENCE STARTED")
@@ -167,4 +168,3 @@ class HealthMonitorAgent:
 
     def stop(self) -> None:
         self._running = False
-

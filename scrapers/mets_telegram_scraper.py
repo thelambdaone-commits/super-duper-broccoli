@@ -14,13 +14,10 @@ import httpx
 
 logger = logging.getLogger("MetsTelegramScraper")
 
-TELEGRAM_API_BASE = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-METS_CHANNEL_IDS = os.getenv("METS_CHANNEL_IDS", "")
-METS_KEYWORDS = os.getenv(
-    "METS_KEYWORDS",
-    "Mets,New York Mets,MLB,baseball,game,score,odds,pick,predict,parlay,moneyline,spread,over,under",
-)
+TELEGRAM_API_BASE = "https://api.telegram.org"
+TELEGRAM_BOT_TOKEN = ""
+METS_CHANNEL_IDS = ""
+METS_KEYWORDS = "Mets,New York Mets,MLB,baseball,game,score,odds,pick,predict,parlay,moneyline,spread,over,under"
 
 
 @dataclass(frozen=True)

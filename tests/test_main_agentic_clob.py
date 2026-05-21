@@ -1,4 +1,5 @@
 import logging
+import inspect
 
 import pytest
 
@@ -7,8 +8,10 @@ from main_agentic_clob import (
     parse_private_chat_ids,
     telegram_single_instance_lock,
 )
+from bootstrap.factories import build_broadcaster
 from utils.logging_setup import TelegramTokenRedactionFilter
 from utils.exceptions import QuantFatal
+from core.orchestrator import LobstarOrchestrator
 
 
 def test_telegram_token_redaction_filter_masks_formatted_args() -> None:
@@ -58,3 +61,16 @@ def test_build_access_control_requires_admins_in_prod(monkeypatch) -> None:
 
     with pytest.raises(QuantFatal):
         build_access_control({}, "PROD")
+
+
+def test_orchestrator_constructor_uses_explicit_deps() -> None:
+    params = inspect.signature(LobstarOrchestrator).parameters
+    assert "container" not in params
+    assert "risk" in params
+    assert "executor" in params
+
+
+def test_build_broadcaster_uses_notifier_not_container() -> None:
+    params = inspect.signature(build_broadcaster).parameters
+    assert "container" not in params
+    assert "notifier" in params

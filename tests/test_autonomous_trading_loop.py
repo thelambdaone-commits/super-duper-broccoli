@@ -152,3 +152,32 @@ async def test_autonomous_loop_uses_selector_top_k(ledger, tmp_path):
     opened = [a for a in actions if a.status == "OPENED"]
     assert len(opened) == 1
     assert "selection_score" in opened[0].metadata
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_paper_history_generates_closed_trades(ledger, lifecycle):
+    loop = AutonomousTradingLoop(
+        ledger=ledger,
+        lifecycle=lifecycle,
+        config=AutonomousTradingConfig(default_paper_capital_usdc=20.0),
+    )
+
+    actions = await loop.bootstrap_paper_history(
+        [
+            {
+                "market_id": "m1",
+                "ticker": "MKT1",
+                "price": 0.40,
+                "ml_probability": 0.62,
+                "spread": 0.01,
+                "bid_volume": 100,
+                "ask_volume": 100,
+                "order_imbalance": 0.05,
+            }
+        ],
+        target_trades=3,
+    )
+
+    closed = [a for a in actions if a.action == "close" and a.status == "CLOSED"]
+    assert closed
+    assert len(ledger.get_paper_positions("CLOSED")) >= 1

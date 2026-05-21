@@ -29,8 +29,9 @@ class GSDProblemSolverAgent:
     Autonomous AI Problem Solver Agent built on local 'Get Shit Done' (GSD) spec-driven architecture.
     """
 
-    def __init__(self, workspace_path: str | Path = "/home/ogj9f33gvvzc/quant-agentic-trading-core-v2"):
-        self.workspace_path = Path(workspace_path)
+    def __init__(self, workspace_path: str | Path | None = None):
+        default_workspace = Path(__file__).resolve().parents[2]
+        self.workspace_path = Path(workspace_path) if workspace_path is not None else default_workspace
         self.workflow = GSDWorkflow()
         self.api_key = resolve_openrouter_api_key()
         self._chat_client = None

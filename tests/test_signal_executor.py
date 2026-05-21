@@ -134,12 +134,21 @@ class MockLedger:
         self._mode = mode
 
 
+def _attach_benign_order_book(freqai) -> None:
+    freqai.client = MagicMock()
+    freqai.client.get_order_book.return_value = {
+        "bids": [{"price": 0.49}],
+        "asks": [{"price": 0.51}],
+    }
+
+
 class TestExecuteRegexSignal:
     @pytest.mark.asyncio
     async def test_replay_mode_skips_clob(self) -> None:
         ledger = MockLedger(mode="REPLAY")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
 
         await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
 
@@ -150,6 +159,7 @@ class TestExecuteRegexSignal:
         ledger = MockLedger(mode="PAPER")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
 
         await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
 
@@ -160,6 +170,7 @@ class TestExecuteRegexSignal:
         ledger = MockLedger(mode="PROD")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
         freqai.clob_execute = AsyncMock(return_value={
             "status": "FILLED", "orderID": "ord-1", "filled_size": 7.0, "price": 0.50,
         })
@@ -175,6 +186,7 @@ class TestExecuteRegexSignal:
         ledger = MockLedger(mode="PROD")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
         expected_reason = "account_limit_exceeded"
 
         with patch.object(ledger, "validate_and_reserve", return_value={
@@ -189,6 +201,7 @@ class TestExecuteRegexSignal:
         ledger = MockLedger(mode="PAPER")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
         risk = MagicMock()
         risk.compute_position_size.return_value = {
             "size": 100.0, "capital_at_risk": 50.0,
@@ -205,6 +218,7 @@ class TestExecuteRegexSignal:
         ledger = MockLedger(mode="PROD")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value={
             "status": "FILLED", "execution_path": "maker", "order_id": "ord-1", "filled_size": 4.0, "price": 0.50,
@@ -222,6 +236,7 @@ class TestExecuteRegexSignal:
         ledger = MockLedger(mode="PROD")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
         freqai.clob_execute = AsyncMock(return_value={
             "status": "FILLED", "orderID": "ord-1", "filled_size": 0.0, "price": 0.50,
         })
@@ -240,6 +255,7 @@ class TestExecuteLobstarSignal:
         lobstar.analyser_signal_contextuel = AsyncMock(return_value=None)
         ledger = MockLedger()
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
 
         await execute_lobstar_signal(
             signal=signal, ledger=ledger, freqai=freqai, lobstar=lobstar,
@@ -256,6 +272,7 @@ class TestExecuteLobstarSignal:
         })
         ledger = MockLedger()
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
 
         await execute_lobstar_signal(
             signal=signal, ledger=ledger, freqai=freqai, lobstar=lobstar,
@@ -272,6 +289,7 @@ class TestExecuteLobstarSignal:
         })
         ledger = MockLedger()
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
 
         await execute_lobstar_signal(
             signal=signal, ledger=ledger, freqai=freqai, lobstar=lobstar,
@@ -288,6 +306,7 @@ class TestExecuteLobstarSignal:
         })
         ledger = MockLedger()
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
 
         await execute_lobstar_signal(
             signal=signal, ledger=ledger, freqai=freqai, lobstar=lobstar,
@@ -304,6 +323,7 @@ class TestExecuteLobstarSignal:
         })
         ledger = MockLedger(mode="PROD")
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
         freqai.clob_execute = AsyncMock(return_value={"status": "FILLED", "orderID": "ord-1"})
 
         await execute_lobstar_signal(
@@ -321,6 +341,7 @@ class TestExecuteLobstarSignal:
         })
         ledger = MockLedger(mode="PAPER")
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
 
         await execute_lobstar_signal(
             signal=signal, ledger=ledger, freqai=freqai, lobstar=lobstar,
@@ -337,6 +358,7 @@ class TestExecuteLobstarSignal:
         })
         ledger = MockLedger(mode="PROD")
         freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
         freqai.clob_execute = AsyncMock(return_value={"status": "FILLED", "orderID": "ord-1"})
 
         await execute_lobstar_signal(

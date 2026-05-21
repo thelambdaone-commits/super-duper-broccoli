@@ -172,11 +172,9 @@ class VaultHandler:
                 except Exception as e:
                     logger.warning(f"Could not load user credentials: {e}")
 
-            enc_secrets = {}
-            if not user_creds:
-                enc_secrets = _load_first_valid_encrypted_wallet(mgr)
-                if enc_secrets:
-                    logger.info("Loaded wallet profile secrets from encrypted storage")
+            enc_secrets = _load_first_valid_encrypted_wallet(mgr)
+            if enc_secrets:
+                logger.info("Loaded wallet profile secrets from encrypted storage")
 
             for key in REQUIRED_SECRET_KEYS:
                 val = None
@@ -186,14 +184,13 @@ class VaultHandler:
                     private_key_sources = [
                         ("user credentials", user_creds.get("CLOB_PRIVATE_KEY") if user_creds else None),
                         ("encrypted wallet", enc_secrets.get("CLOB_PRIVATE_KEY") or enc_secrets.get("private_key")),
-                        (".env", os.getenv("CLOB_PRIVATE_KEY")),
                     ]
                     for source_name, candidate in private_key_sources:
                         val = _resolve_private_key(candidate, source_name)
                         if val:
                             break
                     if not val:
-                        raise QuantFatal("CLOB_PRIVATE_KEY is missing from environment, user credentials, and encrypted vault.")
+                        raise QuantFatal("CLOB_PRIVATE_KEY is missing from user credentials and encrypted vault.")
                 else:
                     if key in user_creds:
                         val = user_creds.get(key)
@@ -213,9 +210,6 @@ class VaultHandler:
                             enc_secrets.get("CLOB_PRIVATE_KEY") or enc_secrets.get("private_key"),
                             "encrypted wallet",
                         ) or ""
-                    if not pk:
-                        pk = _resolve_private_key(os.getenv("CLOB_PRIVATE_KEY"), ".env") or ""
-
                     if not pk:
                         raise QuantFatal("CLOB_PRIVATE_KEY is missing. Cannot derive API credentials.")
 

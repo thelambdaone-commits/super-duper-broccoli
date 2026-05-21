@@ -1,54 +1,81 @@
-import os
+from __future__ import annotations
+
 import json
-import logging
+import os
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
-logger = logging.getLogger("LOBSTAR_ConfigLoader")
+from utils.exceptions import QuantFatal
 
-def load_trading_params() -> dict:
-    default_params = {
-        "MIN_EDGE_THRESHOLD": 0.07,
-        "MAX_KELLY_PCT": 0.25,
-        "FRICTION_PER_CONTRACT": 0.005,
-        "MAX_POSITION_PCT": 0.05,
-        "HMM_REGIME_FILTER": True,
-        "MAX_DRAWDOWN_PCT": 0.15,
-        "STOP_LOSS_PCT": 0.10,
-        "TAKE_PROFIT_PCT": 0.20,
-        "BRIER_THRESHOLD": 0.05,
-        "PSI_THRESHOLD": 0.20,
-        "KL_THRESHOLD": 0.50,
-        "DRIFT_CHECK_INTERVAL": 60,
-        "ARBITRAGE_TRIGGER_THRESHOLD": 0.015,
-        "LEGGING_LIQUIDITY_MIN": 50
-    }
+BASE_CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+CONFIG_PATHS = {
+    "health": BASE_CONFIG_DIR / "health.json",
+    "trading": BASE_CONFIG_DIR / "trading.json",
+}
 
-    # Path relative to project root
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_path = os.path.join(base_dir, "config", "trading_params.json")
 
-    if not os.path.exists(config_path):
-        logger.warning(f"Config file not found at {config_path}. Using hardcoded default parameters.")
-        return default_params
+@lru_cache(maxsize=1)
+def _load_all() -> dict[str, dict[str, Any]]:
+    payload: dict[str, dict[str, Any]] = {}
+    for section, path in CONFIG_PATHS.items():
+        if not path.exists():
+            raise QuantFatal(f"Config file missing: {path}")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise QuantFatal(f"Invalid config file {path}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise QuantFatal(f"Config file must contain an object: {path}")
+        payload[section] = data
+    return payload
 
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
 
-        flat_params = {}
-        for section, params in data.items():
-            if isinstance(params, dict):
-                for k, v in params.items():
-                    flat_params[k] = v
+def validate_required() -> None:
+    _load_all()
 
-        # Merge defaults for any missing keys
-        for k, v in default_params.items():
-            if k not in flat_params:
-                flat_params[k] = v
 
-        return flat_params
-    except Exception as e:
-        logger.error(f"Error loading {config_path}: {e}. Falling back to default parameters.")
-        return default_params
+def get_config(section: str, key: str, default: Any = None, env_key: str | None = None) -> Any:
+    env_name = env_key or key.upper()
+    raw_env = os.getenv(env_name)
+    if raw_env is not None and raw_env != "":
+        return _coerce_like(default, raw_env)
 
-# Expose globally
-TRADING_PARAMS = load_trading_params()
+    data = _load_all().get(section, {})
+    if key in data:
+        return data[key]
+    return default
+
+
+def get_health_config(key: str, default: Any = None, env_key: str | None = None) -> Any:
+    return get_config("health", key, default=default, env_key=env_key)
+
+
+def get_trading_config(key: str, default: Any = None, env_key: str | None = None) -> Any:
+    return get_config("trading", key, default=default, env_key=env_key)
+
+
+TRADING_PARAMS = {
+    "FRICTION_PER_CONTRACT": get_trading_config("friction_per_contract", 0.0),
+    "MIN_EDGE_THRESHOLD": get_trading_config("min_edge_threshold", 0.07),
+    "MAX_REAL_NOTIONAL_USDC": get_trading_config("max_real_notional_usdc", 6.0),
+    "PSI_THRESHOLD": get_trading_config("psi_threshold", 0.2),
+    "KL_THRESHOLD": get_trading_config("kl_threshold", 0.1),
+    "BRIER_THRESHOLD": get_trading_config("brier_threshold", 0.2),
+}
+
+
+def _coerce_like(default: Any, raw: str) -> Any:
+    if isinstance(default, bool):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(default, int) and not isinstance(default, bool):
+        try:
+            return int(float(raw))
+        except ValueError:
+            return default
+    if isinstance(default, float):
+        try:
+            return float(raw)
+        except ValueError:
+            return default
+    return raw

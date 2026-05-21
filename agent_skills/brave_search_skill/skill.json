@@ -1,12 +1,12 @@
 {
   "id": "brave_search_skill",
-  "name": "Brave Web Search Skill",
-  "description": "Performs high-fidelity web search queries via the Brave Search API to extract real-time news, narrative trend signals, and sentiment for active prediction events.",
-  "version": "1.0.0",
+  "name": "News Aggregator Search Skill",
+  "description": "Performs web search via free RSS news feeds (Cointelegraph, CoinDesk, etc.) to extract real-time news, narrative trend signals, and sentiment for active prediction events. No API key required.",
+  "version": "1.1.0",
   "tools": [
     {
       "name": "search_brave_web",
-      "description": "Queries the web for live articles, news reports, and events relevant to prediction markets.",
+      "description": "Queries RSS news aggregator for live articles, news reports, and events relevant to prediction markets.",
       "parameters": {
         "type": "object",
         "properties": {

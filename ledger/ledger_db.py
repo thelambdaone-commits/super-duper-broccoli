@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
 from config.constants import EXECUTION_MODES
+from utils.config_loader import get_trading_config
 from utils.exceptions import QuantFatal
 
 logger = logging.getLogger("Ledger")
@@ -125,11 +126,20 @@ class Ledger:
                 raise
 
     def validate_and_reserve(
-        self, ticker: str, side: str, limit_price: float, requested_size: float
+        self,
+        ticker: str,
+        side: str,
+        limit_price: float,
+        requested_size: float,
+        fee_rate_bps: Optional[float] = None,
     ) -> Dict[str, Any]:
         if limit_price <= 0 or requested_size <= 0:
             return {"authorized": False, "reason": "Invalid non-positive price or size."}
-        capital_required = limit_price * requested_size
+        mode = self.get_execution_mode()
+        fee_rate_bps = self._effective_fee_rate_bps(mode, fee_rate_bps)
+        notional = limit_price * requested_size
+        fee_buffer = notional * (fee_rate_bps / 10_000.0)
+        capital_required = notional + fee_buffer
 
         with self._lock:
             cursor = self.conn.cursor()
@@ -166,6 +176,8 @@ class Ledger:
                 "size": adjusted_size,
                 "capital": adjusted_capital,
                 "reason": "Size adjusted by hardware circuit breaker.",
+                "fee_rate_bps": fee_rate_bps,
+                "estimated_fee": adjusted_capital * (fee_rate_bps / 10_000.0),
             }
 
         return {
@@ -173,6 +185,8 @@ class Ledger:
             "size": requested_size,
             "capital": capital_required,
             "reason": "Nominal validation passed.",
+            "fee_rate_bps": fee_rate_bps,
+            "estimated_fee": fee_buffer,
         }
 
     def record_order(
@@ -188,6 +202,7 @@ class Ledger:
         execution_price: Optional[float] = None,
         notional_usd: Optional[float] = None,
         exchange_order_id: Optional[str] = None,
+        fee_rate_bps: Optional[float] = None,
     ) -> None:
         if price <= 0 or size <= 0:
             raise QuantFatal("Order persistence failed: price and size must be positive")
@@ -195,7 +210,10 @@ class Ledger:
         execution_price_val = float(execution_price if execution_price is not None else price)
         requested_qty_val = float(requested_qty if requested_qty is not None else size)
         notional_usd_val = float(notional_usd if notional_usd is not None else execution_price_val * filled_qty_val)
-        capital_engaged = notional_usd_val
+        mode = self.get_execution_mode()
+        fee_rate_bps = self._effective_fee_rate_bps(mode, fee_rate_bps)
+        fee_amount = notional_usd_val * (fee_rate_bps / 10_000.0)
+        capital_engaged = notional_usd_val + fee_amount
 
         try:
             with self._transaction() as cursor:
@@ -282,7 +300,7 @@ class Ledger:
                     raise QuantFatal("Capital reservation update failed.")
             logger.info(
                 f"Position {position_id} updated. "
-                f"{capital_engaged} deducted from available capital."
+                f"{capital_engaged} deducted from available capital (including fees)."
             )
 
         except (sqlite3.Error, QuantFatal) as e:
@@ -477,6 +495,21 @@ class Ledger:
                 WHERE execution_mode = 'PAPER'
             """, (total_trades, winning_trades, losing_trades, total_net_pnl,
                   win_rate, profit_factor, avg_win, avg_loss))
+
+    @staticmethod
+    def _effective_fee_rate_bps(mode: str, fee_rate_bps: Optional[float]) -> float:
+        if fee_rate_bps is not None:
+            try:
+                return max(0.0, float(fee_rate_bps))
+            except (TypeError, ValueError):
+                return 0.0
+        if mode.upper() in {"PROD", "SHADOW"}:
+            raw = os.getenv("ESTIMATED_TRADE_FEE_BPS", str(get_trading_config("estimated_trade_fee_bps", 200)))
+            try:
+                return max(0.0, float(raw))
+            except (TypeError, ValueError):
+                return 200.0
+        return 0.0
 
     def update_position_fill(
         self,

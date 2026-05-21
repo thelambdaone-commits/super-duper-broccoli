@@ -84,7 +84,8 @@ def _make_broadcaster(prob_up: float, market_yes: float, edge_threshold: float =
     )
 
 
-def test_calibrator_roundtrip(tmp_path) -> None:
+def test_calibrator_roundtrip(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(ProbabilityCalibrator, "ALLOWED_DIR", str(tmp_path))
     rng = np.random.RandomState(7)
     raw = rng.beta(2, 5, size=100)
     y_true = (rng.uniform(size=100) < raw).astype(np.int32)

@@ -332,19 +332,6 @@ class TrainingPipeline:
             f"meta_weights={meta_weights}"
         )
 
-        # Alert
-        try:
-            from core.container import ServiceContainer
-            container = ServiceContainer.get_instance()
-            if container.notifier:
-                container.notifier.send(
-                    f"🎓 *Model Trained: {ticker}*\n"
-                    f"Train Accuracy: `{train_acc:.4f}`\n"
-                    f"Val Accuracy: `{val_acc:.4f}`"
-                )
-        except Exception as e:
-            logger.debug(f"Training notifier skipped for {ticker}: {e}")
-
         return result
 
     def rolling_train(

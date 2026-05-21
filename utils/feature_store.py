@@ -49,6 +49,8 @@ class FeatureStore:
                     self._conn = duckdb.connect(":memory:")
                 else:
                     raise
+            self._conn.execute("SET memory_limit = '2GB'")
+            self._conn.execute("SET temp_directory = '/tmp/duckdb_tmp'")
             logger.info(f"FeatureStore connected: {self.db_path}")
         except ImportError:
             raise QuantFatal("duckdb not installed. Install with: pip install duckdb")

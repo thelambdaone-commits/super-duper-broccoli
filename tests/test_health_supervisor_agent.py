@@ -22,6 +22,10 @@ class FakeLedger:
             "available_capital": self.available_capital,
         }
 
+    def sync_capital(self, amount: float) -> None:
+        self.total_capital = amount
+        self.available_capital = amount
+
 
 @dataclass
 class FakeWalletManager:

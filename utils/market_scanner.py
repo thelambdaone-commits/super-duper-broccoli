@@ -320,6 +320,39 @@ class MarketScanner:
             return []
         return sorted(self._last_scan.arbitrage_opportunities, key=lambda s: -s.confidence)[:3]
 
+    def best_tradeable_signals(self, limit: int = 5) -> list[MarketSignal]:
+        """
+        Return the strongest candidate slugs for trading.
+
+        The ranking is conservative: exact horizon matches, high liquidity,
+        tight spreads, and strong conviction are preferred. This is designed to
+        surface the most tradable markets rather than every noisy signal.
+        """
+        if not self._last_scan:
+            return []
+
+        candidates = (
+            self._last_scan.winning_bets
+            + self._last_scan.trending_markets
+            + self._last_scan.competitive_markets
+            + self._last_scan.arbitrage_opportunities
+        )
+        if not candidates:
+            return []
+
+        def _score(sig: MarketSignal) -> float:
+            score = float(sig.confidence) * 100.0
+            score += min(float(sig.volume) / 1000.0, 100.0)
+            if sig.sentiment in {"BULLISH", "BEARISH"}:
+                score += 5.0
+            if sig.reason.lower().startswith("imminent resolution"):
+                score += 8.0
+            if sig.market_slug.startswith("composite-proxy-"):
+                score -= 10.0
+            return score
+
+        return sorted(candidates, key=_score, reverse=True)[:limit]
+
     def resolve_ticker_to_token_id(self, ticker: str, side: str = "YES") -> Optional[str]:
         """Resolves a slug or ticker (like BTC) to a Polymarket token ID."""
         # 1. Try direct slug match

@@ -1,4 +1,5 @@
 import logging
+import inspect
 import time
 import uuid
 from typing import Optional, Dict, Any
@@ -112,11 +113,15 @@ async def _execute_guarded(
     try:
         if mode in ("PAPER", "SHADOW", "PROD") and freqai and hasattr(freqai, "client") and hasattr(freqai.client, "get_order_book"):
             book = freqai.client.get_order_book(ticker)
+            if inspect.isawaitable(book):
+                book = await book
             bids = book.bids if hasattr(book, "bids") else book.get("bids", [])
             asks = book.asks if hasattr(book, "asks") else book.get("asks", [])
-            if bids and asks:
-                best_bid = float(bids[0].price if hasattr(bids[0], "price") else bids[0].get("price", 0))
-                best_ask = float(asks[0].price if hasattr(asks[0], "price") else asks[0].get("price", 0))
+            if isinstance(bids, (list, tuple)) and isinstance(asks, (list, tuple)) and bids and asks:
+                best_bid_raw = bids[0].price if hasattr(bids[0], "price") else bids[0].get("price", 0)
+                best_ask_raw = asks[0].price if hasattr(asks[0], "price") else asks[0].get("price", 0)
+                best_bid = float(best_bid_raw)
+                best_ask = float(best_ask_raw)
                 if best_bid > 0 and best_ask > 0:
                     mid_price = (best_bid + best_ask) / 2.0
                     price_diff = abs(mid_price - price) / price

@@ -23,6 +23,8 @@ class SnapshotManager:
                 self.conn = duckdb.connect(":memory:")
             else:
                 raise
+        self.conn.execute("SET memory_limit = '1GB'")
+        self.conn.execute("SET temp_directory = '/tmp/duckdb_tmp'")
         self._init_db()
 
     def _init_db(self):

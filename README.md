@@ -66,11 +66,11 @@ TelegramListener ──► SignalParser.parse_deterministic() ──► execute_
 |---|---|
 | `passive_executor.py` | Maker-first order placement with queue tracking, configurable timeout, automatic taker fallback |
 
-### Telegram (`telegram_scraper/`)
+### Scrappers (`scrappers/`)
 
 | File | Purpose |
 |---|---|
-| `telegram_listener.py` | Listens to Telegram channels + private chats; dual pipeline: deterministic (regex) + semantic (LLM queue); commands (/help, /status, /mode); authorized private chat filtering |
+| `mets_telegram_scraper.py` | Telegram scraper for New York Mets-related content; filters by keywords, extracts scores/odds/game mentions |
 
 ### MCP (`mcp_agents/`)
 
@@ -200,6 +200,19 @@ The setup script provisions:
 - systemd service
 
 ## Configuration
+
+### `config/` vs `.env`
+
+- `config/health.json` and `config/trading.json` hold non-secret operational defaults.
+- `.env` holds secrets, deployment-specific overrides, and live access flags.
+- The runtime loads `config/*.json` first, then lets `.env` override explicit keys when present.
+- Move business thresholds out of `.env` unless they are meant to vary per deployment.
+- Keep secrets out of `config/*.json`; they belong in `.env` or Vault.
+
+Current division:
+
+- `config/health.json`: staleness, memory, wallet drift thresholds.
+- `config/trading.json`: trade fee estimates, calibration and execution policy defaults.
 
 ### Vault Secrets
 
@@ -575,8 +588,8 @@ quant-agentic-trading-core/
 │   └── passive_executor.py
 ├── ledger/                    # State persistence
 │   └── ledger_db.py
-├── telegram_scraper/          # Telegram integration
-│   └── telegram_listener.py
+├── scrappers/                 # Specialized scrapers
+│   └── mets_telegram_scraper.py
 ├── mcp_agents/                # MCP server + agents
 │   ├── mcp_server.py
 │   ├── lobstar_agent.py

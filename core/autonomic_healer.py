@@ -135,7 +135,7 @@ class LobstarAutonomicHealer:
         try:
             backup_rpc = os.getenv("BACKUP_QUICKNODE_RPC_URL", "")
             if backup_rpc:
-                os.environ.setdefault("POLYGON_RPC_URL", backup_rpc)
+                os.environ["POLYGON_RPC_URL"] = backup_rpc
                 if self._swarm:
                     asyncio.create_task(self._swarm.publish_event("INFRA_RPC_SWITCH", {"new_rpc": backup_rpc}))
                 logger.info(f"✅ [REMEDIATION] RPC basculé vers: {backup_rpc[:50]}...")

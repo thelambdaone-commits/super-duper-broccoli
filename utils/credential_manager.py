@@ -329,19 +329,37 @@ class CredentialManager:
         return creds
 
     def _load_active_wallets(self) -> Dict[str, str]:
+        path = Path(DEFAULT_DATA_DIR) / "active_wallets.json"
+        if not path.exists():
+            return {"default": "default"}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return {str(k): str(v) for k, v in payload.items()}
+        except Exception as exc:
+            logger.warning("Failed to load active wallets map: %s", exc)
         return {"default": "default"}
 
     def _save_active_wallets(self, wallets: Dict[str, str]) -> None:
-        pass
+        path = Path(DEFAULT_DATA_DIR)
+        path.mkdir(parents=True, exist_ok=True)
+        target = path / "active_wallets.json"
+        target.write_text(json.dumps(wallets, indent=2, sort_keys=True), encoding="utf-8")
 
     def get_active_wallet_type(self, chat_id: int | str) -> str:
-        return "default"
+        wallets = self._load_active_wallets()
+        return wallets.get(str(chat_id), "default")
 
     def set_active_wallet_type(self, chat_id: int | str, wallet_type: str) -> bool:
+        wallets = self._load_active_wallets()
+        wallets[str(chat_id)] = wallet_type
+        self._save_active_wallets(wallets)
         return True
 
     def _clear_active_wallet(self, chat_id: int | str) -> None:
-        pass
+        wallets = self._load_active_wallets()
+        wallets.pop(str(chat_id), None)
+        self._save_active_wallets(wallets)
 
     def get_user_info(self, chat_id: int | str) -> Dict[str, any]:
         info = {
@@ -356,8 +374,8 @@ class CredentialManager:
                     "proxy_wallet": data.get("proxy_wallet", ""),
                     "profile_name": data.get("profile_name", ""),
                 }
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read user wallet info: %s", exc)
         return info
 
     def list_all_user_wallets(self, chat_id: int | str) -> List[Dict[str, str]]:
