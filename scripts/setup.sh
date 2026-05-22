@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_NAME="quant-agentic-trading-core"
 PYTHON_REQUIRED="3.11"
 VAULT_VERSION="1.18.1"
@@ -226,6 +227,36 @@ EOF
     fi
 }
 
+init_submodules() {
+    log_info "Initializing git submodules..."
+    if [[ ! -f "$PROJECT_DIR/.gitmodules" ]]; then
+        log_ok "No .gitmodules found — nothing to initialize."
+        return
+    fi
+    if ! command -v git &>/dev/null; then
+        log_error "git is required for submodule initialization."
+        exit 1
+    fi
+    git -C "$PROJECT_DIR" submodule update --init --recursive
+    local freqtrade_path="$PROJECT_DIR/freqtrade"
+    if [[ -d "$freqtrade_path" ]]; then
+        local file_count
+        file_count=$(find "$freqtrade_path" -maxdepth 1 -type f 2>/dev/null | wc -l)
+        if [[ "$file_count" -eq 0 ]]; then
+            log_error "freqtrade submodule appears empty after init. Check your network and URL in .gitmodules."
+            exit 1
+        fi
+        log_ok "freqtrade submodule initialized ($file_count files in root)."
+    fi
+    if [[ -d "$PROJECT_DIR/agents/gitagent" ]]; then
+        log_ok "gitagent submodule initialized."
+    fi
+    if [[ -d "$PROJECT_DIR/agents/mirothinker" ]]; then
+        log_ok "mirothinker submodule initialized."
+    fi
+    log_ok "All submodules initialized."
+}
+
 print_summary() {
     echo ""
     echo -e "${GREEN}============================================${NC}"
@@ -249,6 +280,7 @@ main() {
     echo -e "${CYAN}═══ $PROJECT_NAME — Production Setup ═══${NC}"
     echo ""
 
+    init_submodules
     check_python
     setup_venv
     create_logs_dir
