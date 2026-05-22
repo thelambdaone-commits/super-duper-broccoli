@@ -11,7 +11,7 @@ import numpy as np
 from bootstrap.helpers import run_blocking, should_broadcast_message
 from bootstrap.runtime_context import RuntimeContext
 from utils.clob_feed_utils import extract_live_clob_token_ids
-from utils.message_formatter import format_scan_report, format_market_report, format_winning_bets_alert
+from utils.message_formatter import format_scan_report_html, format_market_report, format_winning_bets_alert
 
 
 DEFAULT_TICKERS = ["SOL", "BTC", "ETH"]
@@ -136,7 +136,7 @@ class MarketScanLoop:
                             + result.competitive_markets
                             + result.arbitrage_opportunities
                         )
-                        report = format_scan_report(result) if signals else format_market_report(
+                        report = format_scan_report_html(result) if signals else format_market_report(
                             await run_blocking("market report fallback", market_scanner.client.list_markets, limit=10, timeout=30.0)
                         )
                         if should_broadcast_message("baseline_report", report):
@@ -158,9 +158,9 @@ class MarketScanLoop:
                         markets = await run_blocking("crypto intelligence market fetch", market_scanner.client.list_markets, limit=100, sort_by="volume", timeout=30.0)
                         intelligence_report = await run_blocking("crypto intelligence analysis", self.crypto_intelligence.analyze, markets, timeout=30.0)
                         if intelligence_report.crypto_market_count > 0:
-                            intelligence_text = self.crypto_intelligence.format_intelligence_report(intelligence_report) if hasattr(self.crypto_intelligence, "format_intelligence_report") else format_scan_report(result)
+                            intelligence_text = self.crypto_intelligence.format_intelligence_report(intelligence_report) if hasattr(self.crypto_intelligence, "format_intelligence_report") else format_scan_report_html(result)
                             if should_broadcast_message("crypto_intelligence", intelligence_text):
-                                sent = await self.listener.send_message(intelligence_text)
+                                sent = await self.listener.send_message(intelligence_text, parse_mode="HTML")
                                 if sent:
                                     last_crypto_intelligence_at = now
                     if result.winning_bets:

@@ -228,6 +228,7 @@ class CryptoMarketIntelligence:
 
 
 def format_intelligence_report(report: IntelligenceReport) -> str:
+    from html import escape
     data = report.to_dict()
     summary = data["summary"]
     avg_confidence = float(summary.get("avg_signal_confidence", 0.0))
@@ -242,11 +243,11 @@ def format_intelligence_report(report: IntelligenceReport) -> str:
     liq_str = f"${liq/1_000_000:.2f}M" if liq >= 1_000_000 else f"${liq/1_000:.1f}K" if liq >= 1_000 else f"${liq:.0f}"
 
     lines = [
-        "━━ Lobstar Crypto Intelligence ━━",
+        f"<b>━━ Lobstar Crypto Intelligence ━━</b>",
         f"{bias_emoji} ({avg_confidence:.0%} conf.)",
         f"{data['crypto_market_count']} crypto / {data['market_count']} marchés · {vol_str} vol. · {liq_str} liq.",
         "",
-        "🔍 OPPORTUNITÉS"
+        "<b>🔍 OPPORTUNITÉS</b>"
     ]
 
     if report.opportunities:
@@ -254,25 +255,26 @@ def format_intelligence_report(report: IntelligenceReport) -> str:
             reason = _signal_reason(signal)
             slug = signal.market_slug
             lines.append(
-                f" • [{signal.asset}] {slug}\n"
-                f"   └─ YES {signal.yes_price:.0%} / NO {signal.no_price:.0%} | Score: {signal.score:.0%} ({reason})"
+                f" • [<code>{escape(signal.asset)}</code>] <code>{escape(slug)}</code>\n"
+                f"   └─ YES {signal.yes_price:.0%} / NO {signal.no_price:.0%} | Score: {signal.score:.0%} (<i>{escape(reason)}</i>)"
             )
     else:
         lines.append(" • Aucun signal liquide prioritaire")
 
     if report.risk_flags:
-        lines.extend(["", "⚠️ VECTEURS DE RISQUE"])
+        lines.extend(["", "<b>⚠️ VECTEURS DE RISQUE</b>"])
         for signal in report.risk_flags[:4]:
             reason = _signal_reason(signal)
             slug = signal.market_slug
             lines.append(
-                f" • [{signal.asset}] {slug}\n"
-                f"   └─ Conf: {signal.confidence:.0%} ({reason})"
+                f" • [<code>{escape(signal.asset)}</code>] <code>{escape(slug)}</code>\n"
+                f"   └─ Conf: {signal.confidence:.0%} (<i>{escape(reason)}</i>)"
             )
 
     lines.extend([
-        "━━ 📱 Commandes ━━",
-        "/btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5"
+        "",
+        "<b>━━ 📱 Commandes ━━</b>",
+        "<code>/btc5 /btc15 /btc1h | /eth5 /sol15 /xrp1h | /hype5 /doge5 /bnb5</code>"
     ])
     return "\n".join(lines)
 

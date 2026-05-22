@@ -22,7 +22,7 @@ class TelegramTransportClient:
         self.client = client or httpx.Client(timeout=10.0)
         self._owns_client = client is None
 
-    def send_raw_message(self, text: str, parse_mode: str = "MarkdownV2") -> bool:
+    def send_raw_message(self, text: str, parse_mode: str = "HTML") -> bool:
         if not self.token or not self.chat_id:
             return False
         try:

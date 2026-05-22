@@ -142,10 +142,10 @@ async def test_broadcast_triggers_only_on_edge() -> None:
     assert notifier.send_async.await_count == 1
     payload = notifier.send_async.await_args.args[0]
     assert "CALIBRATED EDGE ALERT" in payload
-    assert "ticker: SOL" in payload
-    assert "p_real:" in payload
-    assert "p_market:" in payload
-    assert "action: BUY" in payload
+    assert "Asset: <code>SOL</code>" in payload
+    assert "AI Prob: <code>75.0%</code>" in payload
+    assert "Market: <code>65.0%</code>" in payload
+    assert "Action: <b>BUY</b>" in payload
 
 
 def test_escape_markdown_v2_escapes_reserved_chars() -> None:
