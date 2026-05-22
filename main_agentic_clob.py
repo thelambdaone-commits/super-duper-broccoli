@@ -1,21 +1,23 @@
 import argparse
 import asyncio
-import getpass
 import logging
 import os
 import sys
 
 from bootstrap.factories import build_access_control
-from bootstrap.helpers import _env_bool
 from bootstrap.initializer import prepare_runtime_context
 from bootstrap.lifecycle import BotLifecycle
 from utils.exceptions import QuantFatal
 from utils.localization_sync import apply_backward_compatible_aliases
 from utils.logging_setup import setup_logging
-from bootstrap.security import telegram_single_instance_lock
+from utils.telegram_helpers import parse_private_chat_ids
+from bootstrap.security import (
+    PROD_CONFIRMATION_TEXT,
+    require_production_confirmation,
+    telegram_single_instance_lock,
+)
 
 logger = logging.getLogger("Main")
-PROD_CONFIRMATION_TEXT = "CONFIRM"
 
 
 def resolve_execution_mode(args_mode: str | None = None) -> str:
@@ -62,35 +64,6 @@ async def resolve_chat():
     secrets = get_secrets()
     build_access_control(secrets, "PAPER")
     print("Chat resolution complete.")
-
-def require_production_confirmation(mode: str):
-    if mode != "PROD":
-        return
-
-    expected_secret = os.getenv("LOBSTAR_PROD_CONFIRM_SECRET", "").strip()
-    if not expected_secret:
-        raise QuantFatal("LOBSTAR_PROD_CONFIRM_SECRET is required before PROD mode can start.")
-
-    force_prod = _env_bool("FORCE_PROD", False)
-
-    if sys.stdin.isatty():
-        print("\n" + "!" * 60)
-        print("!!! WARNING: ENTERING PRODUCTION MODE (REAL CAPITAL) !!!")
-        print("!" * 60 + "\n")
-        confirm = input(f"Type '{PROD_CONFIRMATION_TEXT}' to proceed: ")
-        if confirm != PROD_CONFIRMATION_TEXT:
-            print("Production mode aborted.")
-            sys.exit(0)
-        typed_secret = getpass.getpass("Enter PROD second-factor secret: ").strip()
-        if typed_secret != expected_secret:
-            raise QuantFatal("PROD second-factor secret did not match.")
-    elif not force_prod:
-        raise QuantFatal("PROD mode requires an interactive terminal or FORCE_PROD=true.")
-    else:
-        logger.warning(
-            "PROD mode authorized in non-interactive mode via FORCE_PROD=true. "
-            "This bypasses the terminal prompt but still requires LOBSTAR_PROD_CONFIRM_SECRET."
-        )
 
 def main_sync():
     setup_logging()

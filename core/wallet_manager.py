@@ -2,6 +2,7 @@ import logging
 import asyncio
 import re
 import time
+from html import escape
 from collections import defaultdict
 from typing import Dict, Any, Tuple
 
@@ -304,17 +305,20 @@ class PolymarketWalletManager:
         usdc_direct = float(soldes.get('usdc_direct', 0.0))
         usdc_proxy = float(soldes.get('usdc_proxy', 0.0))
         total_capital = usdc_direct + usdc_proxy
+        safe_wallet_name = escape(str(wallet_name or "default"))
+        safe_wallet_address = escape(str(wallet_address or "unavailable"))
+        safe_proxy_address = escape(str(proxy_address or ""))
 
         lines = [
             "<b>🎯 Polymarket Cockpit</b>",
             "───────────────────",
             f"🟢 <b>Status</b>: <code>Connected</code>",
-            f"🔑 <b>Wallet</b>: <code>{wallet_name}</code>",
-            f"📬 <b>Address</b>: <code>{wallet_address}</code>"
+            f"🔑 <b>Wallet</b>: <code>{safe_wallet_name}</code>",
+            f"📬 <b>Address</b>: <code>{safe_wallet_address}</code>"
         ]
 
         if proxy_address:
-            lines.append(f"🛡️ <b>Proxy</b>: <code>{proxy_address}</code>")
+            lines.append(f"🛡️ <b>Proxy</b>: <code>{safe_proxy_address}</code>")
 
         lines.extend([
             "",

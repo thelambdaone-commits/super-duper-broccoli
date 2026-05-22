@@ -44,7 +44,9 @@ def require_production_confirmation(execution_mode: str) -> None:
         raise QuantFatal(f"{PROD_SECOND_FACTOR_ENV} is required before PROD mode can start.")
 
     if not sys.stdin.isatty():
-        raise QuantFatal("PROD mode requires an interactive terminal.")
+        if os.getenv("FORCE_PROD", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return
+        raise QuantFatal("PROD mode requires an interactive terminal or FORCE_PROD=true.")
 
     typed_confirmation = input(f"Type '{PROD_CONFIRMATION_TEXT}' to start PROD mode: ").strip()
     if typed_confirmation != PROD_CONFIRMATION_TEXT:

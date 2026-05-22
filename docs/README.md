@@ -61,7 +61,7 @@ These pages are intentionally narrow:
 - [`core/orchestrator.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/core/orchestrator.py)
 - [`core/training_pipeline.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/core/training_pipeline.py)
 - [`models/predictive_engine.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/models/predictive_engine.py)
-- [`monitors/polymarket_monitor.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/monitors/polymarket_monitor.py)
+- [`monitoring/polymarket_monitor.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core/monitoring/polymarket_monitor.py)
 - [`continuous_improvement/agent.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/continuous_improvement/agent.py)
 - [`api/dashboard.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/api/dashboard.py)
 - [`execution/paper_engine.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/execution/paper_engine.py)

@@ -69,6 +69,7 @@ class LobstarOrchestrator:
         self.trade_notifications = trade_notifications
         self.metrics_exporter = metrics_exporter
         self.wallet_manager = wallet_manager
+        self.broadcaster = broadcaster or TelegramChannelBroadcaster(bot_instance)
         from core.services.wallet_callback_handler import WalletCallbackHandler
         self.wallet_callback_handler = WalletCallbackHandler(
             wallet_manager=wallet_manager,
@@ -101,9 +102,6 @@ class LobstarOrchestrator:
             self._swarm = get_swarm_supervisor()
         except ImportError:
             logger.warning("SwarmSupervisor not available in Orchestrator, distributed sync disabled.")
-
-        # Initialize channel broadcaster for signal distribution
-        self.broadcaster = broadcaster or TelegramChannelBroadcaster(bot_instance)
 
         # Phase 4: Strategy Brain - Signal Fusion (Inspired by Aulekator)
         from utils.signal_fusion import SignalFusionEngine
@@ -633,4 +631,13 @@ class LobstarOrchestrator:
         return {key: value for key, value in signal.items() if key != "update"}
 
     async def handle_wallet_callback(self, update: Any, context: Any) -> None:
+        if not hasattr(self, "wallet_callback_handler"):
+            from core.services.wallet_callback_handler import WalletCallbackHandler
+            self.wallet_callback_handler = WalletCallbackHandler(
+                wallet_manager=getattr(self, "wallet_manager", None),
+                history=getattr(self, "history", None),
+                ledger=getattr(self, "ledger", None),
+                broadcaster=getattr(self, "broadcaster", None),
+                notifier=getattr(self, "notifier", None),
+            )
         await self.wallet_callback_handler.handle_callback(update, context)

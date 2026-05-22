@@ -17,7 +17,7 @@ from bootstrap.validators import dry_run_report
 from core.health_monitor import LobstarHealthMonitor
 from core.health_supervisor_agent import HealthSupervisorAgent, HealthSupervisorConfig
 from agents.health_monitor_agent import HealthMonitorAgent, HealthMonitorConfig
-from monitors.polymarket_monitor import PolymarketMonitor
+from monitoring.polymarket_monitor import PolymarketMonitor
 from core.orchestrator import LobstarOrchestrator
 from core.mlops_feedback_loop import LobstarMLOpsEngine
 from core.quantum_runner import LobstarQuantumRunner

@@ -600,13 +600,13 @@ class TelegramListener:
                 await update.callback_query.edit_message_text(
                     text,
                     reply_markup=reply_markup,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.HTML,
                 )
                 return
             except Exception as exc:
                 logger.debug("Wallet cockpit edit failed: %s", exc)
 
-        await self.reply_to(text, update, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        await self.reply_to(text, update, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
     async def _handle_wallet_secret_import(self, update: Update, context) -> bool:
         msg = update.message
@@ -651,7 +651,7 @@ class TelegramListener:
                 chat_id=msg.chat_id,
                 text=text,
                 reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
         except Exception:
             logger.exception("Wallet secret import failed")

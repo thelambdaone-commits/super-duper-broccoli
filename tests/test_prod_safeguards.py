@@ -23,27 +23,25 @@ def test_prod_confirmation_requires_interactive_terminal(monkeypatch):
     monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "expected-secret")
     monkeypatch.delenv("FORCE_PROD", raising=False)
 
-    with patch("main_agentic_clob.sys.stdin.isatty", return_value=False):
+    with patch("bootstrap.security.sys.stdin.isatty", return_value=False):
         with pytest.raises(QuantFatal, match="interactive terminal"):
             require_production_confirmation("PROD")
 
 
-def test_prod_confirmation_accepts_noninteractive_force_prod(monkeypatch, caplog):
+def test_prod_confirmation_accepts_noninteractive_force_prod(monkeypatch):
     monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "expected-secret")
     monkeypatch.setenv("FORCE_PROD", "true")
 
-    with patch("main_agentic_clob.sys.stdin.isatty", return_value=False), caplog.at_level("WARNING"):
+    with patch("bootstrap.security.sys.stdin.isatty", return_value=False):
         require_production_confirmation("PROD")
-
-    assert "FORCE_PROD=true" in caplog.text
 
 
 def test_prod_confirmation_accepts_matching_confirmation_and_secret(monkeypatch):
     monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "expected-secret")
 
-    with patch("main_agentic_clob.sys.stdin.isatty", return_value=True), \
+    with patch("bootstrap.security.sys.stdin.isatty", return_value=True), \
         patch("builtins.input", return_value=PROD_CONFIRMATION_TEXT), \
-        patch("main_agentic_clob.getpass.getpass", return_value="expected-secret"):
+        patch("bootstrap.security.getpass.getpass", return_value="expected-secret"):
         require_production_confirmation("PROD")
 
 

@@ -74,7 +74,7 @@ by scanning the `user_data/models/` directory or by explicit paths.
 
 ## Market Monitoring
 
-[`monitors/polymarket_monitor.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core-v2/monitors/polymarket_monitor.py)
+[`monitoring/polymarket_monitor.py`](/home/ogj9f33gvvzc/quant-agentic-trading-core/monitoring/polymarket_monitor.py)
 listens to websocket transaction streams and tries to decode matching orders.
 
 Key behaviors:
