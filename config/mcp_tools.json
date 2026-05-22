@@ -218,7 +218,7 @@
       }
     },
     {
-      "name": "search_brave_web",
+      "name": "search_news_feeds",
       "description": "Executes external web search via Brave API to gather recent market consensus and context.",
       "inputSchema": {
         "type": "object",

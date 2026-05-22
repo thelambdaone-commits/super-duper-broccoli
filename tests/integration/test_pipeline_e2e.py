@@ -121,6 +121,14 @@ class FakeRiskEngine:
         )
         return self.allowed, self.reason
 
+    def compute_position_size(self, ticker, side, price, confidence, regime_label):
+        return {
+            "size": 10.0,
+            "capital_at_risk": 10.0,
+            "kelly_pct": 0.10,
+            "reason": "Safe size",
+        }
+
 
 class FakeRegexExecutor:
     def __init__(self) -> None:
@@ -151,7 +159,11 @@ def _build_orchestrator(
         get_execution_mode=lambda: "PAPER",
     )
     container = SimpleNamespace(
-        ledger=SimpleNamespace(),
+        ledger=SimpleNamespace(
+            get_capital_summary=lambda: {"total_capital": 1000.0, "available_capital": 500.0},
+            get_open_positions=lambda: [],
+            get_execution_mode=lambda: "PAPER",
+        ),
         freqai=SimpleNamespace(),
         risk=FakeRiskEngine(allowed=risk_allowed, reason=risk_reason),
         hmm=FakeHMM(),

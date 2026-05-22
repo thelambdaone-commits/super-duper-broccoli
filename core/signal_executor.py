@@ -12,12 +12,27 @@ from mcp_agents.lobstar_agent import LobstarAgent
 from utils.feature_store import FeatureStore
 from utils.regime_utils import get_regime_label
 
+from utils.config_loader import TRADING_PARAMS
+
 logger = logging.getLogger("SignalExecutor")
 
 SUCCESS_STATUSES = {"FILLED", "TAKER_FILLED", "MATCHED", "LIVE", "DELAYED"}
-BLOCKED_REGIMES = {"ERRATIC_VOLATILITY"}
+BLOCKED_REGIMES = set(TRADING_PARAMS["BLOCKED_REGIMES"])
 
 FILL_STATUS_KEYS = {"FILLED", "PARTIAL", "PARTIALLY_FILLED", "PARTIAL_FILL", "OK", "MATCHED"}
+
+
+def _dynamic_slippage_threshold(price: float, bid: float, ask: float) -> float:
+    base = TRADING_PARAMS["SLIPPAGE_GATE_BASE"]
+    max_threshold = TRADING_PARAMS["SLIPPAGE_GATE_MAX"]
+    if price <= 0:
+        return base
+    if bid <= 0 or ask <= 0 or ask <= bid:
+        return base * 1.5
+    spread = ask - bid
+    spread_pct = spread / max(price, 1e-6)
+    threshold = base + spread_pct * 1.5
+    return max(base, min(max_threshold, threshold))
 
 def _execution_succeeded(result: Optional[dict]) -> bool:
     if not result:
@@ -32,7 +47,10 @@ def _regex_confidence(price: float, decimals: int = 4) -> float:
     price_str = f"{price:.{decimals}f}"
     decimal_part = price_str.split(".")[1] if "." in price_str else ""
     significant_decimals = len(decimal_part.rstrip("0"))
-    return min(0.5 + significant_decimals * 0.1, 0.85)
+    base = float(TRADING_PARAMS.get("CONFIDENCE_BASE", 0.5))
+    step = float(TRADING_PARAMS.get("CONFIDENCE_STEP", 0.1))
+    cap = float(TRADING_PARAMS.get("CONFIDENCE_CAP", 0.85))
+    return min(base + significant_decimals * step, cap)
 
 
 def _apply_cognitive_confidence(signal: dict, base_confidence: float) -> float:
@@ -109,9 +127,9 @@ async def _execute_guarded(
     if price <= 0:
         return {"status": "SKIPPED", "reason": "Invalid price"}
 
-    # Slippage Gate: Reject if current orderbook odds deviate by > 1.5% from signal price
+    # Slippage Gate: reject when the live book is meaningfully worse than the signal.
     try:
-        if mode in ("PAPER", "SHADOW", "PROD") and freqai and hasattr(freqai, "client") and hasattr(freqai.client, "get_order_book"):
+        if str(mode).upper() != "REPLAY" and freqai and hasattr(freqai, "client") and hasattr(freqai.client, "get_order_book"):
             book = freqai.client.get_order_book(ticker)
             if inspect.isawaitable(book):
                 book = await book
@@ -125,14 +143,15 @@ async def _execute_guarded(
                 if best_bid > 0 and best_ask > 0:
                     mid_price = (best_bid + best_ask) / 2.0
                     price_diff = abs(mid_price - price) / price
-                    if price_diff > 0.015:  # 1.5% slippage bound
+                    threshold = _dynamic_slippage_threshold(price, best_bid, best_ask)
+                    if price_diff > threshold:
                         logger.warning(
                             f"⚡ [SLIPPAGE GATE] Price deviation too high: mid_price={mid_price:.4f}, "
-                            f"signal_price={price:.4f} (diff={price_diff:.2%}). Rejecting trade."
+                            f"signal_price={price:.4f} (diff={price_diff:.2%}, threshold={threshold:.2%}). Rejecting trade."
                         )
                         return {
                             "status": "SKIPPED",
-                            "reason": f"Slippage threshold exceeded (deviation={price_diff:.2%})",
+                            "reason": f"Slippage threshold exceeded (deviation={price_diff:.2%}, threshold={threshold:.2%})",
                             "ticker": ticker,
                             "side": side,
                         }
@@ -228,7 +247,8 @@ async def _execute_guarded(
 
     final_size = validation["size"]
     if mode == "SHADOW":
-        final_size = max(1.0, final_size * 0.01)
+        multiplier = float(TRADING_PARAMS.get("SHADOW_SIZE_MULTIPLIER", 0.01))
+        final_size = max(1.0, final_size * multiplier)
 
     exec_ok = False
     executed_size = 0.0
@@ -236,7 +256,7 @@ async def _execute_guarded(
 
     if executor:
         exec_result = await executor.execute(ticker, side, price, final_size)
-        exec_ok = exec_result.get("status") in SUCCESS_STATUSES
+        exec_ok = exec_result.get("status") in SUCCESS_STATUSES or _execution_succeeded(exec_result)
     else:
         try:
             exec_result = await freqai.clob_execute(ticker=ticker, side=side, price=price, size=final_size)

@@ -1,4 +1,5 @@
 from user_data.strategies.base_strategy import MarketFeatures, StrategyParameters, StrategySignal
+from user_data.strategies.btc_15m_fusion import Btc15MinuteFusionStrategy
 from user_data.strategies.polymarket_strategy_factory import (
     InterMarketArbitrageStrategy,
     BayesianUpdateStrategy,
@@ -29,6 +30,7 @@ __all__ = [
     "MarketFeatures",
     "StrategyParameters",
     "StrategySignal",
+    "Btc15MinuteFusionStrategy",
     "InterMarketArbitrageStrategy",
     "BayesianUpdateStrategy",
     "BundleSpreadArbitrageStrategy",

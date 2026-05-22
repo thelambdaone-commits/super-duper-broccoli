@@ -21,6 +21,25 @@
       "repo": "https://github.com/thedotmack/claude-mem",
       "purpose": "Persistent session memory with progressive retrieval: compact search, timeline context, then selected full observations.",
       "status": "external_reference"
+    },
+    {
+      "name": "OpenViking",
+      "repo": "https://github.com/volcengine/OpenViking",
+      "package": "openviking",
+      "purpose": "Open-source context database for agent memory, resource indexing, and compact search-backed retrieval. Integrate as an optional context backend, not as a trading dependency.",
+      "status": "optional_dependency",
+      "local_entrypoints": [
+        "utils/openviking_adapter.py",
+        "utils/prompt_memory.py",
+        "config/openviking.json",
+        ".agents/openviking_integration_skill.md"
+      ],
+      "required_guardrails": [
+        "Optional context backend only",
+        "Do not send secrets, raw logs, Telegram messages, or ledger data to the external server",
+        "Keep trading execution, risk, and ledger logic independent from OpenViking availability",
+        "Use local fallback memory when OpenViking is disabled or unreachable"
+      ]
     }
   ],
   "market_intelligence": [

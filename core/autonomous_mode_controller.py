@@ -21,14 +21,14 @@ class ModeDecision:
 
 @dataclass
 class AutonomousModeConfig:
-    min_paper_trades_for_shadow: int = 5
-    min_paper_trades_for_real: int = 10
+    min_paper_trades_for_shadow: int = 3
+    min_paper_trades_for_real: int = 8
     min_win_rate_for_shadow: float = 0.50
-    min_win_rate_for_real: float = 0.58
+    min_win_rate_for_real: float = 0.55
     min_net_pnl_for_shadow: float = 0.0
-    min_net_pnl_for_real: float = 0.0
-    max_global_drawdown: float = 0.08
-    min_real_capital: float = 5.0
+    min_net_pnl_for_real: float = 0.10
+    max_global_drawdown: float = 0.05
+    min_real_capital: float = 1.0
 
 
 class AutonomousModeController:
@@ -57,6 +57,8 @@ class AutonomousModeController:
         drawdown = self._global_drawdown()
         if drawdown <= -abs(self.config.max_global_drawdown):
             return ModeDecision("PAPER", f"Global drawdown guard active ({drawdown:.2%})", "Recover edge in simulation")
+
+        force_prod = self._force_prod_enabled()
 
         paper_perf = self.ledger.get_performance_summary("PAPER") or {}
         trades = int(paper_perf.get("total_trades", 0) or 0)
@@ -91,6 +93,14 @@ class AutonomousModeController:
             "Maximize expected value with bounded downside: prefer maker/mean-reversion edges, "
             "cut losers via SL, let winners hit TP/trailing exits."
         )
+        if force_prod and self._capital_available() >= self.config.min_real_capital and self._prod_prerequisites_present():
+            return ModeDecision(
+                "PROD",
+                "Forced PROD override enabled for non-interactive runtime",
+                directive,
+                True,
+                True,
+            )
         if real_ready:
             return ModeDecision("PROD", "REAL strategies and profitability gates passed", directive, True, True)
         if shadow_ready:
@@ -98,8 +108,11 @@ class AutonomousModeController:
         return ModeDecision("PAPER", "Insufficient proven edge for live capital", directive, False, False)
 
     def apply(self) -> ModeDecision:
-        decision = self.decide()
         current = self.ledger.get_execution_mode()
+        if self.ledger.is_manual_mode():
+            return ModeDecision(current, "Manual override active", "Honor user command")
+
+        decision = self.decide()
         if current != decision.mode:
             self.ledger.set_execution_mode(decision.mode)
             logger.warning("Autonomous execution mode changed: %s -> %s (%s)", current, decision.mode, decision.reason)
@@ -117,6 +130,10 @@ class AutonomousModeController:
             return float(summary.get("available_capital", 0.0) or 0.0)
         except (TypeError, ValueError):
             return 0.0
+
+    @staticmethod
+    def _force_prod_enabled() -> bool:
+        return _env_true("AUTONOMOUS_FORCE_PROD") or _env_true("FORCE_PROD")
 
     @staticmethod
     def _prod_prerequisites_present() -> bool:

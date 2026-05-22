@@ -24,6 +24,16 @@ ALLOWED_TABLES = frozenset({
 })
 
 
+def _safe_encrypt(value: str) -> str:
+    from utils.security_utils import encrypt_data
+
+    try:
+        return encrypt_data(value)
+    except Exception as exc:
+        logger.warning("FeatureStore encryption failed; storing plaintext fallback: %s", exc)
+        return value
+
+
 class FeatureStore:
     def __init__(self, db_path: str = FEATURE_STORE_PATH) -> None:
         self.db_path = db_path
@@ -164,9 +174,8 @@ class FeatureStore:
         liquidity_score: float = 0.0,
         raw_json: Optional[dict] = None,
     ) -> int:
-        from utils.security_utils import encrypt_data
         ts = time.time()
-        encrypted_raw = encrypt_data(json.dumps(raw_json)) if raw_json else None
+        encrypted_raw = _safe_encrypt(json.dumps(raw_json)) if raw_json else None
         self._conn.execute("""
             INSERT INTO market_microstructure
                 (timestamp, ticker, bid_volume, ask_volume, spread, mid_price,
@@ -281,10 +290,9 @@ class FeatureStore:
         regime_label: str = "",
         decision_json: Optional[dict] = None,
     ) -> int:
-        from utils.security_utils import encrypt_data
         ts = time.time()
-        encrypted_text = encrypt_data(raw_text) if raw_text else ""
-        encrypted_decision = encrypt_data(json.dumps(decision_json)) if decision_json else None
+        encrypted_text = _safe_encrypt(raw_text) if raw_text else ""
+        encrypted_decision = _safe_encrypt(json.dumps(decision_json)) if decision_json else None
         self._conn.execute("""
             INSERT INTO signals_ingested
                 (timestamp, source, ticker, side, price, size, confidence, raw_text, regime_label, decision_json)
@@ -308,9 +316,8 @@ class FeatureStore:
         authorized: bool = False,
         reason: str = "",
     ) -> None:
-        from utils.security_utils import encrypt_data
         ts = time.time()
-        encrypted_reason = encrypt_data(reason) if reason else ""
+        encrypted_reason = _safe_encrypt(reason) if reason else ""
         self._conn.execute("""
             INSERT INTO decisions_log
                 (timestamp, mode, ticker, side, price, sized, executed_size,
@@ -550,9 +557,7 @@ class FeatureStore:
         spreads = []
         imbalances = []
         for payload in window:
-            mid = float(payload.get("mid_price", 0.0) or 0.0)
-            spread_bps = float(payload.get("spread_bps", 0.0) or 0.0)
-            obi = float(payload.get("order_imbalance", 0.5) or 0.5)
+            mid, spread_bps, obi = FeatureStore._extract_binance_microstructure(payload)
             if mid > 0:
                 mids.append(mid)
             spreads.append(spread_bps)
@@ -579,6 +584,35 @@ class FeatureStore:
             "binance_spread_bps": float(avg_spread_bps),
             "polymarket_spread_premium": float(premium),
         }
+
+    @staticmethod
+    def _extract_binance_microstructure(payload: dict) -> tuple[float, float, float]:
+        def _float_value(*keys: str, default: float = 0.0) -> float:
+            for key in keys:
+                try:
+                    value = payload.get(key)
+                    if value is not None:
+                        return float(value)
+                except (TypeError, ValueError):
+                    continue
+            return default
+
+        mid = _float_value("mid_price")
+        spread_bps = _float_value("spread_bps")
+        obi = _float_value("order_imbalance", default=0.5)
+        bid = _float_value("best_bid", "b", "bidPrice")
+        ask = _float_value("best_ask", "a", "askPrice")
+        bid_qty = _float_value("bid_volume", "B", "bidQty")
+        ask_qty = _float_value("ask_volume", "A", "askQty")
+
+        if mid <= 0.0 and bid > 0.0 and ask > 0.0:
+            mid = (bid + ask) / 2.0
+        if spread_bps <= 0.0 and mid > 0.0 and bid > 0.0 and ask > 0.0:
+            spread_bps = (max(ask - bid, 0.0) / mid) * 10_000.0
+        if "order_imbalance" not in payload:
+            total_qty = bid_qty + ask_qty
+            obi = bid_qty / total_qty if total_qty > 0.0 else 0.5
+        return mid, spread_bps, obi
 
     def purge_before(self, cutoff_ts: float) -> int:
         total = 0

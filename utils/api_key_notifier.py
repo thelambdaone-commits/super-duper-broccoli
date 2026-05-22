@@ -286,7 +286,7 @@ async def notify_missing_keys(listener, chat_id: Optional[int] = None) -> Dict[s
 
         if listener and chat_id:
             alert = notifier.format_telegram_alert(result)
-            await listener.send_message(alert, chat_id=chat_id, parse_mode="Markdown")
+            await listener.send_message(alert, chat_id=chat_id, parse_mode="HTML")
 
     return result
 

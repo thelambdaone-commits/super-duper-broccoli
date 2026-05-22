@@ -1,137 +1,117 @@
 import argparse
 import asyncio
 import getpass
+import logging
 import os
 import sys
-from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+# Fix environment variable conflict if present
+if os.getenv("REAL", "false").lower() == "true" and os.getenv("PAPER", "false").lower() == "true":
+    if not sys.stdin.isatty():
+         os.environ["REAL"] = "false"
 
-# Establish secure logging filters BEFORE any other imports to protect all modules
-from utils.security_utils import setup_secure_logging
-setup_secure_logging()
-
-# Apply quantitative hook backward-compatible aliases early
-from utils.localization_sync import apply_backward_compatible_aliases
-apply_backward_compatible_aliases()
-
-from utils.exceptions import QuantFatal
-from utils.logging_setup import setup_logging
 from bootstrap.factories import build_access_control
+from bootstrap.helpers import _env_bool
 from bootstrap.initializer import prepare_runtime_context
 from bootstrap.lifecycle import BotLifecycle
-from bootstrap.security import (
-    PROD_CONFIRMATION_TEXT,
-    require_production_confirmation,
-    telegram_single_instance_lock,
-)
+from utils.exceptions import QuantFatal
+from utils.localization_sync import apply_backward_compatible_aliases
+from utils.logging_setup import setup_logging
+from bootstrap.security import telegram_single_instance_lock
 from utils.telegram_helpers import parse_private_chat_ids
 
-logger = setup_logging()
-
-async def main(
-    dry_run: bool = False,
-    execution_mode: str = "PAPER",
-) -> None:
-    context = prepare_runtime_context(execution_mode)
-    lifecycle = BotLifecycle(context, execution_mode)
-    if dry_run:
-        await lifecycle.dry_run_report()
-    else:
-        await lifecycle.start()
-    return
+logger = logging.getLogger("Main")
+PROD_CONFIRMATION_TEXT = "CONFIRM"
 
 
-async def resolve_chat() -> None:
-    from telegram import Update
-    from telegram.ext import Application, MessageHandler, filters
-    from utils.vault_handler import VaultHandler
-
-    vault = VaultHandler()
-    secrets = vault.fetch_quantum_secrets()
-    app = Application.builder().token(secrets["TELEGRAM_BOT_TOKEN"]).build()
-
-    found: list[dict] = []
-
-    async def handler(update: Update, _ctx) -> None:
-        msg = update.channel_post or update.message
-        if msg and msg.chat:
-            chat = msg.chat
-            found.append({"id": chat.id, "type": chat.type, "title": chat.title, "username": chat.username})
-            logger.info(f"Chat detected — id={chat.id} type={chat.type} title={chat.title}")
-
-    app.add_handler(MessageHandler(filters.TEXT, handler))
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    logger.info("Send a message in the target channel now...")
-    for i in range(15, 0, -1):
-        logger.info("Waiting for chat discovery: %ss remaining", i)
-        await asyncio.sleep(1)
-
-    await app.updater.stop()
-    await app.stop()
-    await app.shutdown()
-
-    if not found:
-        logger.warning("No messages received. Is the bot admin in the channel?")
-        return
-
-    logger.info(f"Detected {len(found)} chat(s). Set CHAT_ID={found[0]['id']} to use it.")
-
-
-async def archive_maintenance() -> None:
-    from utils.data_archiver import DataArchiver
-    archiver = DataArchiver()
-    result = archiver.run_maintenance_cycle()
-    logger.info(f"Maintenance cycle complete: {result}")
-    return result
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Quant Agentic Trading Core")
-    parser.add_argument("--dry-run", action="store_true", help="Validate pipeline components")
-    parser.add_argument("--resolve-chat", action="store_true", help="Detect chat ID from incoming messages")
-    parser.add_argument(
-        "--mode", type=str, default=None,
-        choices=["REPLAY", "PAPER", "SHADOW", "PROD"],
-        help="Execution mode: REPLAY (backtest), PAPER (simulated), SHADOW (mini-size), PROD (real capital)",
-    )
-    parser.add_argument("--maintenance", action="store_true", help="Run archive maintenance cycle and exit")
-    args = parser.parse_args()
-
-    # 1. Deterministic Execution Mode Conflict Checking
+def resolve_execution_mode(args_mode: str | None = None) -> str:
     real_env = os.getenv("REAL", "false").lower() == "true"
     paper_env = os.getenv("PAPER", "false").lower() == "true"
 
     if real_env and paper_env:
-        logger.critical("🚨 CONFLICT: Both REAL=true and PAPER=true are defined in the environment!")
-        raise QuantFatal("Conflicting environment variables: Both REAL=true and PAPER=true are defined!")
+        logger.warning(
+            "Both REAL=true and PAPER=true are set; resolving automatically to PROD "
+            "(REAL takes precedence)."
+        )
+        paper_env = False
 
-    # Exclusive Priority: CLI Argument > Environment Variable > Database (Ledger) > Fallback ("PAPER")
-    resolved_mode = None
-    if args.mode is not None:
-        resolved_mode = args.mode
-    elif real_env:
-        resolved_mode = "PROD"
-    elif paper_env:
-        resolved_mode = "PAPER"
+    # 1. If CLI specified, always use it
+    if args_mode:
+        logger.info("Execution mode selected from CLI: %s", args_mode)
+        return args_mode
+
+    # 2. Check environment variables
+    if real_env:
+        logger.info("Execution mode resolved from env: PROD")
+        return "PROD"
+    if paper_env:
+        logger.info("Execution mode resolved from env: PAPER")
+        return "PAPER"
+
+    # 3. Default fallback
+    logger.info("Execution mode fallback: PAPER")
+    return "PAPER"
+
+async def archive_maintenance():
+    from utils.feature_store import FeatureStore
+    store = FeatureStore()
+    try:
+        from bootstrap.helpers import run_blocking
+        from continuous_improvement.microstructure_archiver import archive_old_microstructure
+        await run_blocking("archive microstructure", archive_old_microstructure, store)
+    finally:
+        store.close()
+
+async def resolve_chat():
+    from bootstrap.factories import build_access_control
+    from utils.config_loader import get_secrets
+    secrets = get_secrets()
+    build_access_control(secrets, "PAPER")
+    print("Chat resolution complete.")
+
+def require_production_confirmation(mode: str):
+    if mode != "PROD":
+        return
+
+    expected_secret = os.getenv("LOBSTAR_PROD_CONFIRM_SECRET", "").strip()
+    if not expected_secret:
+        raise QuantFatal("LOBSTAR_PROD_CONFIRM_SECRET is required before PROD mode can start.")
+
+    force_prod = _env_bool("FORCE_PROD", False)
+
+    if sys.stdin.isatty():
+        print("\n" + "!" * 60)
+        print("!!! WARNING: ENTERING PRODUCTION MODE (REAL CAPITAL) !!!")
+        print("!" * 60 + "\n")
+        confirm = input(f"Type '{PROD_CONFIRMATION_TEXT}' to proceed: ")
+        if confirm != "CONFIRM":
+            print("Production mode aborted.")
+            sys.exit(0)
+        typed_secret = getpass.getpass("Enter PROD second-factor secret: ").strip()
+        if typed_secret != expected_secret:
+            raise QuantFatal("PROD second-factor secret did not match.")
+    elif not force_prod:
+        raise QuantFatal("PROD mode requires an interactive terminal or FORCE_PROD=true.")
     else:
-        try:
-            from ledger.ledger_db import Ledger
-            from core.autonomous_mode_controller import select_autonomous_execution_mode
-            startup_ledger = Ledger()
-            decision = select_autonomous_execution_mode(startup_ledger)
-            resolved_mode = decision.mode
-            logger.info(
-                "Autonomous execution mode selected: `%s` (%s)",
-                resolved_mode,
-                decision.reason,
-            )
-        except Exception as e:
-            logger.debug(f"Failed to resolve autonomous execution mode: {e}")
-            resolved_mode = "PAPER"
+        logger.warning(
+            "PROD mode authorized in non-interactive mode via FORCE_PROD=true. "
+            "This bypasses the terminal prompt but still requires LOBSTAR_PROD_CONFIRM_SECRET."
+        )
+
+def main_sync():
+    setup_logging()
+    apply_backward_compatible_aliases()
+
+    parser = argparse.ArgumentParser(description="Lobstar Quant Agentic Trading Bot")
+    parser.add_argument("--mode", type=str, default=None, choices=["REPLAY", "PAPER", "SHADOW", "PROD"])
+    parser.add_argument("--dry-run", action="store_true", help="Initialize and validate but do not start loops")
+    parser.add_argument("--resolve-chat", action="store_true", help="Resolve CHAT_ID for current bot token and exit")
+    parser.add_argument("--maintenance", action="store_true", help="Run archive microstructure cycle and exit")
+    parser.add_argument("--tui", action="store_true", help="Start the professional Terminal User Interface (Bloomberg-style)")
+    args = parser.parse_args()
+
+    resolved_mode = resolve_execution_mode(args.mode)
 
     try:
         require_production_confirmation(resolved_mode)
@@ -140,12 +120,38 @@ if __name__ == "__main__":
                 asyncio.run(resolve_chat())
         elif args.maintenance:
             asyncio.run(archive_maintenance())
+        elif args.tui:
+            from tui.app import LobstarTerminal
+            app = LobstarTerminal()
+            os.environ["TELEGRAM_DISABLED"] = "true"
+            async def run_with_tui():
+                context = prepare_runtime_context(resolved_mode)
+                lifecycle = BotLifecycle(context, resolved_mode)
+                bg_task = asyncio.create_task(lifecycle.start())
+                await app.run_async()
+                await lifecycle.stop()
+                bg_task.cancel()
+            asyncio.run(run_with_tui())
         else:
             if args.dry_run:
-                asyncio.run(main(dry_run=args.dry_run, execution_mode=resolved_mode))
+                context = prepare_runtime_context(resolved_mode)
+                lifecycle = BotLifecycle(context, resolved_mode)
+                asyncio.run(lifecycle.dry_run_report())
             else:
+                async def run_bot():
+                    context = prepare_runtime_context(resolved_mode)
+                    lifecycle = BotLifecycle(context, resolved_mode)
+                    await lifecycle.start()
                 with telegram_single_instance_lock():
-                    asyncio.run(main(dry_run=args.dry_run, execution_mode=resolved_mode))
+                    asyncio.run(run_bot())
     except QuantFatal as e:
         logger.critical(f"FATAL: {e}")
-        raise SystemExit(1)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logger.info("Shutdown requested by user.")
+    except Exception as e:
+        logger.exception(f"Unhandled system error: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main_sync()

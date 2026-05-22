@@ -9,21 +9,23 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from user_data.strategies.base_strategy import MarketFeatures, StrategySignal
+from utils.config_loader import TRADING_PARAMS
 
 
 @dataclass
 class StrategySelectionConfig:
-    risk_lambda: float = 1.0
-    cost_mu: float = 1.0
-    time_gamma: float = 0.15
+    _s = TRADING_PARAMS.get("SELECTION", {})
+    risk_lambda: float = float(_s.get("risk_lambda", 1.0))
+    cost_mu: float = float(_s.get("cost_mu", 1.0))
+    time_gamma: float = float(_s.get("time_gamma", 0.15))
     min_score: float = 0.0
     top_k: int = 3
     exploration_rate: float = 0.10
     max_market_exposure_penalty: float = 0.20
-    ev_min: float = 0.005
+    ev_min: float = float(_s.get("ev_min", 0.005))
     sigma_relative_max: float = 0.20
     min_liquidity_usdc: float = 25.0
-    max_cost: float = 0.04
+    max_cost: float = float(_s.get("max_cost", 0.04))
     min_time_to_settlement_hours: float = 0.25
     max_time_to_settlement_hours: float = 24.0 * 365.0
     max_concurrent_markets: int = 3
@@ -31,7 +33,7 @@ class StrategySelectionConfig:
     max_capital_per_market_pct: float = 0.05
     small_explore_pct: float = 0.10
     kelly_shrinkage: float = 0.30
-    absolute_trade_capital_usdc: float = 25.0
+    absolute_trade_capital_usdc: float = float(_s.get("absolute_trade_capital_usdc", 25.0))
     correlation_threshold: float = 0.85
     prefer_post_only: bool = True
     bandit_state_path: str = "user_data/data/strategy_bandit_state.json"
@@ -78,15 +80,18 @@ class StrategyBandit:
             sample = random.betavariate(state.alpha, state.beta)
         else:
             sample = state.mean
-        return 0.75 + sample * 0.50
+        base = TRADING_PARAMS["BANDIT_MULTIPLIER_BASE"]
+        rng = TRADING_PARAMS["BANDIT_MULTIPLIER_RANGE"]
+        return base + sample * rng
 
     def update(self, arm_id: str, pnl: float, slippage: float = 0.0, filled: bool = True) -> None:
         state = self._arm(arm_id)
         reward = float(pnl) - abs(float(slippage))
+        agg = TRADING_PARAMS["BANDIT_AGGRESSIVENESS"]
         if filled and reward > 0:
-            state.alpha += min(3.0, 1.0 + reward)
+            state.alpha += min(agg, 1.0 + reward)
         else:
-            state.beta += min(3.0, 1.0 + abs(reward))
+            state.beta += min(agg, 1.0 + abs(reward))
         state.reward_sum += reward
         state.pulls += 1
         state.last_update = time.time()

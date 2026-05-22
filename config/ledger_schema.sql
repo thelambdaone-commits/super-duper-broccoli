@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS positions (
     take_profit_pct REAL DEFAULT 0.0,
     exit_price REAL,
     pnl REAL,
+    is_win INTEGER,
+    signal_source TEXT DEFAULT '',
     closed_at TIMESTAMP,
     exchange_order_id TEXT
 );

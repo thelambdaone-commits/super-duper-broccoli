@@ -181,7 +181,8 @@ class TestNetBetaExposure:
     def test_beta_exposure_zero_capital(self, engine: PortfolioRiskEngine) -> None:
         engine.ledger.get_capital_summary.return_value = {}
         engine.book_exposure("SOL", 1000.0, "BUY")
-        expected = (1000.0 * 0.8) / 10_000.0 * 100
+        # Fallback is 100.0 USDC
+        expected = (1000.0 * 0.8) / 100.0 * 100
         assert engine.net_beta_exposure_pct == pytest.approx(expected)
 
 
@@ -257,6 +258,42 @@ class TestComputePositionSize:
         max_by_avail = 100.0 / 0.50
         assert result["size"] <= max_by_avail
 
+    def test_trailing_drawdown_latches_until_manual_reset(self, engine: PortfolioRiskEngine) -> None:
+        engine._peak_equity = 20_000.0
+        engine.ledger.get_capital_summary.return_value = {
+            "total_capital": 15_000.0,
+            "available_capital": 15_000.0,
+        }
+        tripped = engine.compute_position_size(
+            ticker="SOL", side="BUY", price=0.50,
+            confidence=1.0, regime_label="LOW_VOLATILITY",
+        )
+        assert tripped["size"] == 0.0
+        assert tripped["reason"].startswith("DRAWDOWN_TRIPPED")
+
+        engine.ledger.get_capital_summary.return_value = {
+            "total_capital": 19_900.0,
+            "available_capital": 19_900.0,
+        }
+        still_blocked = engine.compute_position_size(
+            ticker="SOL", side="BUY", price=0.50,
+            confidence=1.0, regime_label="LOW_VOLATILITY",
+        )
+
+        assert still_blocked["size"] == 0.0
+        assert still_blocked["reason"].startswith("DRAWDOWN_TRIPPED")
+
+    def test_positive_global_drawdown_limit_trips_by_absolute_value(self, engine: PortfolioRiskEngine) -> None:
+        engine.ledger.get_global_drawdown.return_value = 0.25
+
+        result = engine.compute_position_size(
+            ticker="SOL", side="BUY", price=0.50,
+            confidence=1.0, regime_label="LOW_VOLATILITY",
+        )
+
+        assert result["size"] == 0.0
+        assert result["reason"].startswith("GLOBAL_DRAWDOWN_TRIPPED")
+
     def test_hmm_regime_integration(self, engine: PortfolioRiskEngine) -> None:
         result_high = engine.compute_position_size(
             ticker="SOL", side="BUY", price=0.50,
@@ -326,8 +363,9 @@ class TestEdgeCases:
             ticker="SOL", side="BUY", price=0.50,
             confidence=0.5, regime_label="LOW_VOLATILITY",
         )
-        assert result["size"] == 0.0
-        assert result["kelly_pct"] == 0.0
+        # Fallback 100 * max_single_position_pct 0.05 = 5.0
+        assert result["size"] == 5.0
+        assert result["kelly_pct"] == 25.0
 
     def test_ticker_with_dash_prefix(self, engine: PortfolioRiskEngine) -> None:
         engine.book_exposure("BTC-PERP", 500.0, "BUY")

@@ -98,6 +98,7 @@ class StrategyParameters:
     min_edge: float = 0.03
     min_confidence: float = 0.55
     max_spread: float = 0.08
+    extra: dict[str, Any] = field(default_factory=dict)
     passive_spread_threshold: float = 0.015
     batch_size: int = 32
 

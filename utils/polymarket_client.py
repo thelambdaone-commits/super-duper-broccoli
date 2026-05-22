@@ -147,6 +147,27 @@ class PolymarketClient:
         self._http = httpx.Client(timeout=_TIMEOUT)
         self._cache: dict[str, tuple[float, Any]] = {}
 
+    def _safe_request(self, method: str, url: str, **kwargs) -> Any:
+        """
+        Synchronous request wrapper with bounded exponential backoff.
+        (Inspired by Aulekator's API Patches)
+        """
+        max_attempts = 3
+        base_delay_sec = 1.0
+        max_delay_sec = 8.0
+        for attempt in range(max_attempts):
+            try:
+                resp = self._http.request(method, url, **kwargs)
+                resp.raise_for_status()
+                return resp.json()
+            except (httpx.HTTPStatusError, httpx.NetworkError) as e:
+                if attempt == max_attempts - 1:
+                    logger.debug(f"API Request failed: {e}")
+                    return None
+                delay = min(base_delay_sec * (2 ** attempt), max_delay_sec)
+                time.sleep(delay)
+        return None
+
     def close(self) -> None:
         self._http.close()
 
@@ -165,29 +186,17 @@ class PolymarketClient:
 
     def _gamma_get(self, path: str, params: dict | None = None) -> list | dict:
         url = f"{GAMMA_BASE}{path}"
-        try:
-            resp = self._http.get(url, params=params)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Gamma API error: {e.response.status_code} {e.response.text[:200]}")
+        data = self._safe_request("GET", url, params=params)
+        if data is None:
             return []
-        except httpx.RequestError as e:
-            logger.error(f"Gamma API request failed: {e}")
-            return []
+        return data
 
     def _clob_get(self, path: str, params: dict | None = None) -> dict | list:
         url = f"{CLOB_BASE}{path}"
-        try:
-            resp = self._http.get(url, params=params)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"CLOB API error: {e.response.status_code} {e.response.text[:200]}")
+        data = self._safe_request("GET", url, params=params)
+        if data is None:
             return {}
-        except httpx.RequestError as e:
-            logger.error(f"CLOB API request failed: {e}")
-            return {}
+        return data
 
     def list_markets(self, limit: int = 20, sort_by: str = "volume") -> list[Market]:
         params = {"limit": limit, "active": "true", "closed": "false"}

@@ -315,11 +315,11 @@ def _register_specialist_tools(mcp):
             "mid_price": mid_price, "volatility": volatility, "inventory": inventory, "target_inventory": target_inventory
         })
 
-    @mcp.tool(name="search_brave_web")
-    def search_brave_web_tool(query: str, count: int = 5) -> dict:
-        """Executes external web search via Brave API to gather recent market consensus and context."""
+    @mcp.tool(name="search_news_feeds")
+    def search_news_feeds_tool(query: str, count: int = 5) -> dict:
+        """Queries free RSS news feeds to gather recent market consensus and context."""
         from agent_skills.registry import SkillsRegistry
-        return SkillsRegistry().dispatch_tool("brave_search_skill", "search_brave_web", {"query": query, "count": count})
+        return SkillsRegistry().dispatch_tool("news_aggregator_skill", "search_news_feeds", {"query": query, "count": count})
 
     # ── Continuous Improvement Integration ──
     @mcp.tool(name="get_continuous_improvement_report")

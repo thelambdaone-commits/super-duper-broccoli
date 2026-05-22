@@ -236,6 +236,36 @@
       ]
     },
     {
+      "id": "openviking",
+      "name": "OpenViking",
+      "repo": "https://github.com/volcengine/OpenViking",
+      "category": "persistent_memory",
+      "status": "optional_dependency",
+      "token_strategy": "Use OpenViking as an optional context backend for compact search-backed retrieval. Keep local memory and context cards as the fallback when the server is unavailable.",
+      "use_for": [
+        "Context database for agent memory and resource indexing",
+        "Search-backed retrieval of compact project notes",
+        "Optional enrichment of prompt context with externally stored project knowledge"
+      ],
+      "avoid_for": [
+        "Trading execution",
+        "Sending secrets, raw logs, private Telegram data, or ledger data to an external server",
+        "Replacing local deterministic validators or project memory without fallback"
+      ],
+      "local_entrypoints": [
+        "utils/openviking_adapter.py",
+        "utils/prompt_memory.py",
+        "config/openviking.json",
+        ".agents/openviking_integration_skill.md"
+      ],
+      "required_guardrails": [
+        "Optional integration only",
+        "Respect local-first fallback when the service is unavailable",
+        "Keep prompt context compact and redacted",
+        "Do not couple trading logic to OpenViking runtime availability"
+      ]
+    },
+    {
       "id": "everything_claude_code",
       "name": "Everything Claude Code",
       "repo": "https://github.com/affaan-m/everything-claude-code",
@@ -550,6 +580,15 @@
         "mcp_agents/mcp_server.py",
         "mcp_agents/lobstar_agent.py",
         "config/mcp_tools.json"
+      ]
+    },
+    {
+      "id": "openviking",
+      "entrypoint": "continuous_improvement.skills.openviking.OpenVikingSkill",
+      "priority_files": [
+        "utils/openviking_adapter.py",
+        "utils/prompt_memory.py",
+        "config/openviking.json"
       ]
     },
     {

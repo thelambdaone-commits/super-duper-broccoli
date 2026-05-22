@@ -235,6 +235,31 @@ class MarketScanner:
         result.aggregate_sentiment = self.get_aggregate_sentiment()
         return result
 
+    def get_prices(self) -> dict[str, float]:
+        """
+        Returns a mapping of market slugs to current YES prices.
+        Used by the AutonomousTradingLoop to track current valuations.
+        """
+        if not self._last_scan or not self._last_scan.total_markets_scanned:
+            return {}
+
+        prices = {}
+        all_signals = (
+            self._last_scan.winning_bets +
+            self._last_scan.trending_markets +
+            self._last_scan.competitive_markets +
+            self._last_scan.arbitrage_opportunities
+        )
+        for sig in all_signals:
+            prices[sig.ticker] = sig.price
+
+        # Also include directly from known markets if possible
+        for slug, prob in self._known_markets.items():
+            if slug not in prices:
+                prices[slug] = prob / 100.0
+
+        return prices
+
     def record_features(self, store: FeatureStore):
         """Records current market state into the FeatureStore for training."""
         if not self._last_scan or not self._last_scan.total_markets_scanned:

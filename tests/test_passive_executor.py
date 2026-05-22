@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from execution.passive_executor import PassiveExecutor
 
@@ -23,6 +23,13 @@ def executor(mock_freqai: AsyncMock) -> PassiveExecutor:
         poll_interval=0.05,
         post_only=True,
     )
+
+
+@pytest.fixture
+def wallet_manager_mock() -> AsyncMock:
+    wallet_manager = AsyncMock()
+    wallet_manager.ensure_usdc_allowance = AsyncMock(return_value={"approved": True, "action": "noop", "allowance": 1000.0})
+    return wallet_manager
 
 
 class TestMakerFirst:
@@ -166,6 +173,34 @@ class TestTakerOnly:
         assert result["price"] > 100.0
         assert result["target_price"] == 100.0
 
+    @pytest.mark.asyncio
+    async def test_taker_prod_uses_requested_price_without_simulation(
+        self, mock_freqai: AsyncMock,
+    ) -> None:
+        ledger = Mock()
+        ledger.get_execution_mode.return_value = "PROD"
+        exec_taker = PassiveExecutor(
+            freqai=mock_freqai,
+            ledger=ledger,
+            post_only=False,
+            spread_bps=50.0,
+            slippage_factor=1.0,
+        )
+        mock_freqai.create_order.return_value = {"status": "FILLED", "orderID": "ord-prod"}
+
+        result = await exec_taker.execute("SOL", "BUY", 100.0, 100.0)
+
+        assert result["status"] == "TAKER_FILLED"
+        assert result["price"] == pytest.approx(100.0)
+        assert exec_taker.get_metrics()["simulated_spread_usd"] == 0.0
+        assert exec_taker.get_metrics()["simulated_slippage_usd"] == 0.0
+        mock_freqai.create_order.assert_awaited_once_with(
+            ticker="SOL",
+            side="BUY",
+            size=100.0,
+            price=100.0,
+        )
+
 
 class TestMetricsAndQueue:
     def test_initial_metrics(self, executor: PassiveExecutor) -> None:
@@ -252,6 +287,32 @@ class TestEdgeCases:
         await executor.execute("SOL", "BUY", 0.50, 100.0)
 
         assert executor.queue_depth == 0
+
+    @pytest.mark.asyncio
+    async def test_lazy_usdc_allowance_check_runs_before_buy(
+        self, mock_freqai: AsyncMock, wallet_manager_mock: AsyncMock,
+    ) -> None:
+        executor = PassiveExecutor(
+            freqai=mock_freqai,
+            ledger=Mock(),
+            wallet_manager=wallet_manager_mock,
+            wallet_private_key="0x0000000000000000000000000000000000000000000000000000000000000001",
+            usdc_spender_address="0x000000000000000000000000000000000000dEaD",
+            maker_timeout_seconds=0.2,
+            poll_interval=0.05,
+            post_only=True,
+        )
+        mock_freqai.post_order.return_value = {"status": "OK", "orderID": "ord-allow"}
+        mock_freqai.get_order_status.return_value = {
+            "status": "OK",
+            "order": {"remaining_size": 0, "size": 10},
+        }
+
+        await executor.execute("SOL", "BUY", 0.50, 10.0)
+
+        wallet_manager_mock.ensure_usdc_allowance.assert_awaited_once()
+        kwargs = wallet_manager_mock.ensure_usdc_allowance.await_args.kwargs
+        assert kwargs["required_amount"] == pytest.approx(5.0)
 
     @pytest.mark.asyncio
     async def test_concurrent_orders(

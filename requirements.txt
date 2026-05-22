@@ -37,7 +37,7 @@ transformers
 redis>=5.0.0
 hiredis>=2.3.0
 feedparser>=6.0.10
-# duckdb
+duckdb
 cryptography==42.0.5
 yfinance
 ccxt
@@ -75,3 +75,9 @@ git+https://github.com/D4Vinci/Scrapling.git@735af8f2210ed970c99737d4c8126fe4f2a
 # gymnasium>=0.28.0
 
 # Macro Intelligence (Phase 2.4): pure Python; FRED API via requests (already present)
+prometheus-client>=0.20.0
+textual>=0.50.0
+plotext>=5.2.8
+textual-plotext>=0.2.0
+rich>=13.7.0
+snscrape

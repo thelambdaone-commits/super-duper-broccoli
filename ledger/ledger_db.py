@@ -13,7 +13,7 @@ from utils.exceptions import QuantFatal
 
 logger = logging.getLogger("Ledger")
 
-DEFAULT_DATA_DIR = os.getenv("DATA_PATH", ".")
+DEFAULT_DATA_DIR = os.getenv("DATA_PATH", "data")
 LEDGER_DB_PATH = os.path.join(DEFAULT_DATA_DIR, "ledger.db")
 SCHEMA_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "config", "ledger_schema.sql"
@@ -65,10 +65,15 @@ class Ledger:
             except sqlite3.OperationalError:
                 pass
 
-        try:
-            self._conn.execute("ALTER TABLE positions ADD COLUMN tenant_wallet TEXT")
-        except sqlite3.OperationalError:
-            pass
+        for col, col_type in [
+            ("tenant_wallet", "TEXT"),
+            ("is_win", "INTEGER"),
+            ("signal_source", "TEXT DEFAULT ''"),
+        ]:
+            try:
+                self._conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
 
         self._migrate_performance_metrics()
         self._seed_performance_metrics_modes()
@@ -350,6 +355,15 @@ class Ledger:
             cursor.execute("SELECT * FROM positions WHERE status = 'OPEN'")
             return [dict(row) for row in cursor.fetchall()]
 
+    def _ensure_execution_columns(self) -> None:
+        for col, col_type in [
+            ("is_manual_override", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                self._conn.execute(f"ALTER TABLE execution_config ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
+
     def get_execution_mode(self) -> str:
         with self._lock:
             cursor = self.conn.cursor()
@@ -357,17 +371,27 @@ class Ledger:
             row = cursor.fetchone()
             return row["mode"] if row else "PAPER"
 
-    def set_execution_mode(self, mode: str) -> None:
+    def is_manual_mode(self) -> bool:
+        with self._lock:
+            cursor = self.conn.cursor()
+            try:
+                cursor.execute("SELECT is_manual_override FROM execution_config WHERE id = 1")
+                row = cursor.fetchone()
+                return bool(row["is_manual_override"]) if row else False
+            except (sqlite3.OperationalError, KeyError):
+                return False
+
+    def set_execution_mode(self, mode: str, manual: bool = False) -> None:
         mode_upper = mode.upper().strip()
         if mode_upper not in EXECUTION_MODES:
             raise ValueError(f"Invalid execution mode: {mode}. Choose from {EXECUTION_MODES}")
         with self._transaction() as cursor:
             cursor.execute(
-                "INSERT OR REPLACE INTO execution_config (id, mode, updated_at) "
-                "VALUES (1, ?, CURRENT_TIMESTAMP)",
-                (mode_upper,),
+                "INSERT OR REPLACE INTO execution_config (id, mode, is_manual_override, updated_at) "
+                "VALUES (1, ?, ?, CURRENT_TIMESTAMP)",
+                (mode_upper, 1 if manual else 0),
             )
-        logger.info(f"Execution mode set to: {mode_upper}")
+        logger.info(f"Execution mode set to: {mode_upper} (Manual: {manual})")
 
     def record_paper_order(
         self,
@@ -495,6 +519,53 @@ class Ledger:
                 WHERE execution_mode = 'PAPER'
             """, (total_trades, winning_trades, losing_trades, total_net_pnl,
                   win_rate, profit_factor, avg_win, avg_loss))
+
+    def get_performance_summary_by_source(self, mode: str | None = None) -> Dict[str, Dict[str, float]]:
+        """
+        Computes performance metrics (total PnL, win rate) grouped by signal source.
+        Used by the SignalFusionEngine to adapt weights.
+
+        Args:
+            mode: Optional filter ('PAPER' or 'PROD'). If None, returns aggregate.
+        """
+        with self._lock:
+            cursor = self.conn.cursor()
+
+            where_clause = ""
+            params = []
+            if mode:
+                where_clause = "WHERE execution_mode = ?"
+                params = [mode]
+
+            query = f"""
+                SELECT signal_source, SUM(pnl) as total_pnl,
+                       COUNT(*) as total_trades,
+                       SUM(CASE WHEN is_win = 1 THEN 1 ELSE 0 END) as wins
+                FROM (
+                    SELECT signal_source, pnl, is_win, 'PROD' as execution_mode FROM positions WHERE status = 'CLOSED'
+                    UNION ALL
+                    SELECT signal_source, pnl, is_win, 'PAPER' as execution_mode FROM paper_positions WHERE status = 'CLOSED'
+                )
+                {where_clause}
+                GROUP BY signal_source
+            """
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            results = {}
+            for row in rows:
+                source = row["signal_source"]
+                if not source: continue
+
+                # Cleanup source ID (strip prefixes like 'autonomous:')
+                source_id = source.split(":")[-1] if ":" in source else source
+
+                results[source_id] = {
+                    "total_pnl": float(row["total_pnl"] or 0.0),
+                    "total_trades": int(row["total_trades"] or 0),
+                    "win_rate": (float(row["wins"] or 0) / float(row["total_trades"])) if row["total_trades"] > 0 else 0.0
+                }
+            return results
 
     @staticmethod
     def _effective_fee_rate_bps(mode: str, fee_rate_bps: Optional[float]) -> float:

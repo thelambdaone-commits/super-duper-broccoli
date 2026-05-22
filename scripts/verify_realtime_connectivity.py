@@ -4,6 +4,8 @@ import sys
 import time
 import asyncio
 import requests
+
+from utils.rss_aggregator import RSSAggregator
 from dotenv import load_dotenv
 
 from utils.vault_handler import VaultHandler
@@ -153,30 +155,18 @@ async def test_groq():
     except Exception as e:
         return {"status": "FAILED", "msg": str(e)}
 
-async def test_brave_search():
-    key = _secrets().get("BRAVE_SEARCH_API_KEY")
-    if not key:
-        return {"status": "SKIPPED", "msg": "BRAVE_SEARCH_API_KEY not configured."}
-
-    headers = {
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": key
-    }
+async def test_news_feeds_rss():
     t0 = time.perf_counter()
     try:
-        r = requests.get(
-            "https://api.search.brave.com/res/v1/web/search?q=solana",
-            headers=headers,
-            timeout=8.0
-        )
+        aggregator = RSSAggregator()
+        await aggregator.fetch_once()
         dt = (time.perf_counter() - t0) * 1000
-        if r.status_code == 200:
-            res = r.json()
-            results_count = len(res.get("web", {}).get("results", []))
-            return {"status": "SUCCESS", "latency": f"{dt:.1f}ms", "msg": f"Found {results_count} web results."}
-        else:
-            return {"status": "FAILED", "msg": f"HTTP {r.status_code}: {r.text[:100]}"}
+        latest = aggregator.get_latest_news(limit=5)
+        return {
+            "status": "SUCCESS" if latest else "SKIPPED",
+            "latency": f"{dt:.1f}ms",
+            "msg": f"Loaded {len(latest)} RSS news item(s) from {len(aggregator.feeds)} feed(s).",
+        }
     except Exception as e:
         return {"status": "FAILED", "msg": str(e)}
 
@@ -246,10 +236,10 @@ async def run_diagnostics():
     results["Groq"] = await test_groq()
     _print_status(results["Groq"])
 
-    # 5. Brave Search API
-    print(f" • [WEB] Testing Brave Search API... ", end="", flush=True)
-    results["Brave Search"] = await test_brave_search()
-    _print_status(results["Brave Search"])
+    # 5. RSS News Feeds
+    print(f" • [WEB] Testing RSS News Feeds... ", end="", flush=True)
+    results["RSS News Feeds"] = await test_news_feeds_rss()
+    _print_status(results["RSS News Feeds"])
 
     # 6. CoinGecko API
     print(f" • [TCA] Testing CoinGecko DEMO API... ", end="", flush=True)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ExecutionMode = Literal["REPLAY", "PAPER", "SHADOW", "PROD"]
@@ -25,7 +25,7 @@ class AppSettings(BaseSettings):
     )
 
     execution_mode: ExecutionMode = "PAPER"
-    paper: bool = True
+    paper: bool = False
     real: bool = False
     secret_source: SecretSource = "auto"
 
@@ -54,7 +54,7 @@ class AppSettings(BaseSettings):
     deepseek_api_key: str | None = None
     huggingface_api_key: str | None = None
 
-    # Brave Search is deprecated in favor of RSS news feeds
+    # External web search is deprecated in favor of RSS news feeds
     brave_search_api_key: str | None = None
     news_feeds: str = ""
     coingecko_api_key: str | None = None
@@ -76,12 +76,11 @@ class AppSettings(BaseSettings):
     def normalize_secret_source(cls, value: str) -> str:
         return str(value or "auto").lower().strip()
 
-    @field_validator("real")
-    @classmethod
-    def reject_real_and_paper_conflict(cls, real: bool, info) -> bool:
-        if real and info.data.get("paper"):
-            raise ValueError("REAL=true and PAPER=true cannot both be enabled")
-        return real
+    @model_validator(mode="after")
+    def reject_real_and_paper_conflict(self) -> "AppSettings":
+        if self.real and self.paper:
+            raise ValueError("REAL=true and PAPER=true are mutually exclusive")
+        return self
 
     def effective_execution_mode(self) -> ExecutionMode:
         if self.real:
@@ -94,4 +93,3 @@ class AppSettings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
     return AppSettings()
-

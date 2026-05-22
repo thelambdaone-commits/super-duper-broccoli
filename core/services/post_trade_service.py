@@ -47,11 +47,26 @@ class PostTradeService:
         else:
             self.notifier.send("Trade Executed")
 
+        # 1. JSONL Export (Legacy/Audit)
         if self.metrics_exporter:
             try:
                 await self.metrics_exporter.log_execution(signal, result)
             except Exception as exc:
                 logger.warning("Failed to export execution metrics: %s", exc)
+
+        # 2. Prometheus Export (Real-time)
+        try:
+            from monitoring.prometheus_exporter import exporter
+            exporter.record_trade()
+            if "pnl" in result:
+                exporter.update_pnl(float(result["pnl"]))
+            if "latency" in result:
+                exporter.record_latency(float(result["latency"]))
+            # Note: wallet/positions are updated via health sidecars,
+            # but we could force a refresh here if needed.
+        except (ImportError, Exception):
+            pass
+
         self.circuit_breaker.record_success()
 
     async def _handle_failure(self, signal: dict, result: dict) -> None:

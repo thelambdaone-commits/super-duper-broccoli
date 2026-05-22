@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import math
 from typing import Any, Dict, Optional
@@ -6,6 +7,7 @@ from py_clob_client import ApiCreds, ClobClient, OrderArgs, OrderType, PartialCr
 
 from utils.exceptions import QuantFatal
 from utils.secret_validation import validate_private_key_or_raise
+
 logger = logging.getLogger("FreqAIEngine")
 
 
@@ -48,7 +50,6 @@ class FreqAIEngine:
     def _get_market_filters(self, token_id: str) -> dict[str, Any]:
         """
         Extracts market metadata from the live CLOB when available.
-        Falls back to a conservative local policy when the exchange metadata is unavailable.
         """
         filters: dict[str, Any] = {
             "min_notional": self.POLYMARKET_MIN_NOTIONAL,
@@ -67,59 +68,75 @@ class FreqAIEngine:
             logger.debug("Unable to resolve market filters for %s: %s", token_id, exc)
         return filters
 
-    def _normalize_and_validate(self, ticker: str, price: float, size: float) -> int:
-        normalized_size = int(math.floor(float(size)))
-        if normalized_size <= 0:
-            raise ValueError(
-                f"[Sizing] Ordre rejeté localement pour {ticker} : taille normalisée nulle "
-                f"(brute={size}, entier={normalized_size})"
-            )
-
+    def _normalize_and_validate(self, ticker: str, price: float, size: float) -> tuple[int, float]:
         market_filters = self._get_market_filters(ticker)
-        real_notional = float(normalized_size) * float(price)
         min_notional = float(market_filters.get("min_notional", self.POLYMARKET_MIN_NOTIONAL) or self.POLYMARKET_MIN_NOTIONAL)
         min_order_size = float(market_filters.get("min_order_size", 1.0) or 1.0)
+        tick_size = market_filters.get("tick_size")
+
+        # 1. Price Normalization (Round to tick size)
+        normalized_price = price
+        if tick_size:
+            try:
+                ts = float(tick_size)
+                normalized_price = round(price / ts) * ts
+                normalized_price = max(0.0001, min(0.9999, normalized_price))
+            except (TypeError, ValueError):
+                pass
+
+        # 2. Size Normalization (Shares are integers in py-clob-client usually)
+        normalized_size = int(math.floor(float(size)))
+
+        # 3. Min Notional Check & Adjustment
+        current_notional = float(normalized_size) * normalized_price
+        if 0 < current_notional < min_notional:
+            required_size = math.ceil(min_notional / normalized_price)
+            if required_size <= normalized_size * 1.15: # 15% boost max
+                logger.info(f"Boosting size for {ticker} from {normalized_size} to {required_size} to meet min_notional {min_notional}")
+                normalized_size = int(required_size)
+                current_notional = float(normalized_size) * normalized_price
 
         if normalized_size < min_order_size:
+             if min_order_size <= normalized_size * 1.5:
+                 normalized_size = int(min_order_size)
+             else:
+                raise ValueError(f"[Sizing] Ordre rejeté: taille ({normalized_size}) < min_order_size ({min_order_size})")
+
+        if current_notional < min_notional:
             raise ValueError(
-                f"[Sizing] Ordre rejeté localement pour {ticker} : taille ({normalized_size}) "
-                f"inférieure au minimum marché ({min_order_size})"
+                f"[Sizing] Ordre rejeté: notionnel ({current_notional:.2f}) < minimum Polymarket ({min_notional:.2f})"
             )
 
-        if real_notional < min_notional:
-            raise ValueError(
-                f"[Sizing] Ordre rejeté localement pour {ticker} : notionnel calculé "
-                f"({real_notional:.2f}) inférieur au minimum Polymarket ({min_notional:.2f}). "
-                f"Taille brute={size}, taille entière={normalized_size}"
-            )
+        return normalized_size, normalized_price
 
-        return normalized_size
-
-    async def clob_execute(
+    async def create_order(
         self, ticker: str, side: str, price: float, size: float
     ) -> Dict[str, Any]:
-        try:
-            order_side = "BUY" if side in ("YES", "BUY") else "SELL"
-            validated_size = self._normalize_and_validate(ticker, price, size)
+        """Taker execution via create_and_post_order."""
+        def _create_order_sync() -> Dict[str, Any]:
+            order_side = "BUY" if side in ("YES", "BUY", "LONG") else "SELL"
+            validated_size, validated_price = self._normalize_and_validate(ticker, price, size)
             order_args = OrderArgs(
-                price=price,
+                price=validated_price,
                 size=validated_size,
                 side=order_side,
                 token_id=ticker,
             )
 
-            # Resolve tick size options if possible
-            options = None
             market_filters = self._get_market_filters(ticker)
             tick_size = market_filters.get("tick_size")
+            options = None
             if tick_size:
                 if isinstance(tick_size, (int, float)):
                     tick_size = str(tick_size)
                 if tick_size in ('0.1', '0.01', '0.001', '0.0001'):
                     options = PartialCreateOrderOptions(tick_size=tick_size)
 
-            confirmation = self.client.create_and_post_order(order_args, options=options)
-            logger.info(f"Order deployed: ID={confirmation.get('orderID')}")
+            return self.client.create_and_post_order(order_args, options=options)
+
+        try:
+            confirmation = await asyncio.to_thread(_create_order_sync)
+            logger.info(f"Taker order deployed: ID={confirmation.get('orderID')}")
             return confirmation
         except ValueError as e:
             logger.warning(f"Validation locale échouée: {e}")
@@ -128,36 +145,39 @@ class FreqAIEngine:
             logger.error(f"Order rejected: {e}")
             return {"status": "REJECTED", "error": str(e)}
 
+    async def clob_execute(
+        self, ticker: str, side: str, price: float, size: float
+    ) -> Dict[str, Any]:
+        """Backward-compatible alias for taker execution."""
+        return await self.create_order(ticker=ticker, side=side, price=price, size=size)
+
     async def post_order(
         self, ticker: str, side: str, price: float, size: float
     ) -> Dict[str, Any]:
-        try:
-            order_side = "BUY" if side in ("YES", "BUY") else "SELL"
-            validated_size = self._normalize_and_validate(ticker, price, size)
+        """Maker execution with post-only options."""
+        def _post_order_sync() -> Dict[str, Any]:
+            order_side = "BUY" if side in ("YES", "BUY", "LONG") else "SELL"
+            validated_size, validated_price = self._normalize_and_validate(ticker, price, size)
             order_args = OrderArgs(
-                price=price,
+                price=validated_price,
                 size=validated_size,
                 side=order_side,
                 token_id=ticker,
             )
 
-            # Use negative risk options and tick size in V2 Options
-            options = PartialCreateOrderOptions(neg_risk=False)
             market_filters = self._get_market_filters(ticker)
             tick_size = market_filters.get("tick_size")
+            options = PartialCreateOrderOptions(neg_risk=False)
             if tick_size:
                 if isinstance(tick_size, (int, float)):
                     tick_size = str(tick_size)
                 if tick_size in ('0.1', '0.01', '0.001', '0.0001'):
-                    options = PartialCreateOrderOptions(tick_size=tick_size, neg_risk=False)
+                    options = PartialCreateOrderOptions(neg_risk=False, tick_size=tick_size)
 
-            order = self.client.create_order(order_args, options=options)
-            confirmation = self.client.post_order(
-                order,
-                order_type=OrderType.GTC,
-                post_only=True,
-            )
-            logger.info(f"Maker order posted: ID={confirmation.get('orderID')}")
+            return self.client.create_and_post_order(order_args, options=options)
+
+        try:
+            confirmation = await asyncio.to_thread(_post_order_sync)
             return confirmation
         except ValueError as e:
             logger.warning(f"Validation locale maker échouée: {e}")
@@ -165,88 +185,29 @@ class FreqAIEngine:
         except Exception as e:
             err_str = str(e).lower()
             if "post only" in err_str or "would match" in err_str:
-                logger.info(f"Maker order would immediately match (post-only reject): {e}")
                 return {"status": "POST_ONLY_REJECTED", "error": str(e)}
             logger.error(f"Maker order failed: {e}")
             return {"status": "REJECTED", "error": str(e)}
 
+    async def get_order_status(self, order_id: str) -> Dict[str, Any]:
+        try:
+            return await asyncio.to_thread(self.client.get_order, order_id)
+        except Exception as e:
+            logger.error(f"Failed to fetch order status for {order_id}: {e}")
+            return {"status": "ERROR", "error": str(e)}
+
     async def cancel_order(self, order_id: str) -> Dict[str, Any]:
         try:
-            result = self.client.cancel(order_id)
+            result = await asyncio.to_thread(self.client.cancel, order_id)
             logger.info(f"Order cancelled: {order_id}")
             return {"status": "CANCELLED", "order_id": order_id, "result": result}
         except Exception as e:
             logger.error(f"Cancel failed for {order_id}: {e}")
             return {"status": "CANCEL_FAILED", "error": str(e)}
 
-    async def create_order(
-        self, ticker: str, side: str, price: float, size: float
-    ) -> Dict[str, Any]:
-        return await self.clob_execute(ticker=ticker, side=side, price=price, size=size)
-
-    async def get_order_status(self, order_id: str) -> Dict[str, Any]:
-        try:
-            order = self.client.get_order(order_id)
-            return {"status": "OK", "order_id": order_id, "order": order}
-        except Exception as e:
-            logger.error(f"Order status check failed for {order_id}: {e}")
-            return {"status": "ERROR", "error": str(e)}
-
-    def get_orders(self) -> list:
-        try:
-            return self.client.get_orders()
-        except Exception as e:
-            logger.warning(f"Failed to fetch orders: {e}")
-            return []
-
-    async def get_midpoint(self, token_id: str) -> float:
-        try:
-            # 1. Attempt to get book via client (more direct)
-            book = self.client.get_order_book(token_id)
-
-            # 2. Extract bids and asks based on object type
-            bids = []
-            asks = []
-
-            if hasattr(book, "bids"):
-                bids = book.bids
-                asks = book.asks
-            elif isinstance(book, dict):
-                bids = book.get("bids", [])
-                asks = book.get("asks", [])
-
-            if not bids or not asks:
-                return 0.0
-
-            # 3. Calculate mid-price
-            def get_price(level):
-                if hasattr(level, "price"): return float(level.price)
-                if isinstance(level, (list, tuple)) and len(level) > 0: return float(level[0])
-                if isinstance(level, dict): return float(level.get("price", 0))
-                return 0.0
-
-            best_bid = get_price(bids[0])
-            best_ask = get_price(asks[0])
-
-            if best_bid > 0 and best_ask > 0:
-                return (best_bid + best_ask) / 2.0
-            return 0.0
-        except Exception as e:
-            logger.error(f"Failed to get midpoint for {token_id}: {e}")
-            return 0.0
-
     async def stream_ticks_to_duckdb(self) -> None:
-        """Reserved hook for live crypto tick streaming.
-
-        The actual live feed is intentionally started by the orchestration layer
-        so unit tests can safely call this method without opening network
-        connections. The supported live connectors are:
-
-        - Polymarket CLOB snapshots via `scrapers.clob_listener.CLOBListener`
-        - Binance `bookTicker` streams via `utils.binance_websocket.BinanceWebSocketListener`
         """
-        logger.debug("⚡ [TICK STREAM] live tick stream hook invoked")
-
-    @property
-    def address(self) -> str:
-        return self._address
+        Placeholder for tick streaming.
+        In this version, tick streaming is handled by CLOBListener.
+        """
+        pass

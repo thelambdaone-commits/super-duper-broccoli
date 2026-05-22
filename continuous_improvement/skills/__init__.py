@@ -12,6 +12,7 @@ from continuous_improvement.skills.testing import TestingSkill
 from continuous_improvement.skills.monitoring import MonitoringSkill
 from continuous_improvement.skills.risk import RiskSkill
 from continuous_improvement.skills.agentic_validation import AgenticValidationSkill
+from continuous_improvement.skills.openviking import OpenVikingSkill
 
 ALL_SKILLS = {
     "security": SecuritySkill(),
@@ -27,4 +28,5 @@ ALL_SKILLS = {
     "monitoring": MonitoringSkill(),
     "risk": RiskSkill(),
     "agentic_validation": AgenticValidationSkill(),
+    "openviking": OpenVikingSkill(),
 }

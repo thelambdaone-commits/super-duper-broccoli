@@ -20,7 +20,8 @@ class TestAgentSkillsSystem(unittest.TestCase):
         self.assertIn("backtest_swarm_skill", ids)
         self.assertIn("crypto_arbitrage_skill", ids)
         self.assertIn("polymarket_market_making_skill", ids)
-        self.assertIn("brave_search_skill", ids)
+        self.assertIn("news_aggregator_skill", ids)
+        self.assertIn("security_audit_skill", ids)
 
     def test_tool_definitions_compiles_json_schema(self) -> None:
         """Verifies that OpenAI/Anthropic parameter schemas compile correctly."""
@@ -33,7 +34,8 @@ class TestAgentSkillsSystem(unittest.TestCase):
         self.assertIn("run_swarm_backtest", names)
         self.assertIn("find_arbitrage_opportunities", names)
         self.assertIn("calculate_market_making_spreads", names)
-        self.assertIn("search_brave_web", names)
+        self.assertIn("search_news_feeds", names)
+        self.assertIn("run_security_audit", names)
 
     def test_dispatch_market_scanner_skill(self) -> None:
         """Verifies dynamic execution of the market scanner skill entrypoint."""
@@ -104,17 +106,27 @@ class TestAgentSkillsSystem(unittest.TestCase):
         self.assertLess(res.get("bid_quote"), 0.55)
         self.assertGreater(res.get("ask_quote"), 0.50)
 
-    def test_dispatch_brave_search_skill(self) -> None:
-        """Verifies dynamic execution of the Brave Search web querying capability."""
+    def test_dispatch_news_aggregator_skill(self) -> None:
+        """Verifies dynamic execution of the RSS news querying capability."""
         res = self.registry.dispatch_tool(
-            skill_id="brave_search_skill",
-            tool_name="search_brave_web",
+            skill_id="news_aggregator_skill",
+            tool_name="search_news_feeds",
             arguments={"query": "Solana prediction market pricing", "count": 2}
         )
         self.assertEqual(res.get("status"), "SUCCESS")
         self.assertEqual(res.get("query"), "Solana prediction market pricing")
         self.assertGreaterEqual(len(res.get("results")), 1)
         self.assertIn("title", res["results"][0])
+
+    def test_dispatch_security_audit_skill(self) -> None:
+        res = self.registry.dispatch_tool(
+            skill_id="security_audit_skill",
+            tool_name="run_security_audit",
+            arguments={"root_dir": "agent_skills/security_audit_skill"}
+        )
+        self.assertEqual(res.get("status"), "SUCCESS")
+        self.assertIn("finding_count", res)
+        self.assertIn("findings", res)
 
     def test_skillsmp_leasing_and_rentals(self) -> None:
         """Verifies the Skills Marketplace Provider listing and executing leasing adapter."""

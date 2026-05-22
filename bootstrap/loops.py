@@ -69,8 +69,6 @@ class MarketScanLoop:
                 except Exception:
                     pass
             if live_token_ids:
-                clob_listener = self.clob_listener
-
                 async def _persist_live_snapshot(snapshot: dict[str, Any]) -> None:
                     snapshot_mgr.capture(
                         category="SYSTEM",
@@ -109,18 +107,17 @@ class MarketScanLoop:
                             ledger.close_position(pos_id, exit_price=exit_p)
                             pnl_pct = ((exit_p - entry) / entry * 100) if entry > 0 else 0.0
                             await self.listener.send_message(
-                                f"⏹ *[FAST-PATH] Position Closed: {reason}*\n"
-                                f"Ticker: `{ticker}`\nExit: `${exit_p:.4f}`\nPnL: `{pnl_pct:+.2f}%`",
-                                parse_mode="Markdown",
+                                f"⏹ <b>[FAST-PATH] Position Closed</b>\n"
+                                f"Ticker: <code>{ticker}</code>\nExit: <code>{exit_p:.4f}</code>\nPnL: <b>{pnl_pct:+.2f}%</b>",
+                                parse_mode="HTML",
                             )
                     except Exception as e:
                         logger.error(f"Error in fast-path SL/TP execution: {e}")
 
-                clob_feed_coro = clob_listener.run(callback=_persist_live_snapshot) if clob_listener else None
-            else:
-                clob_feed_coro = None
+                # The lifecycle owns the CLOB listener task. MarketScanLoop only
+                # updates subscriptions to avoid creating unawaited coroutines.
         except Exception:
-            clob_feed_coro = None
+            pass
 
         while True:
             try:
@@ -143,15 +140,15 @@ class MarketScanLoop:
                             await run_blocking("market report fallback", market_scanner.client.list_markets, limit=10, timeout=30.0)
                         )
                         if should_broadcast_message("baseline_report", report):
-                            await self.listener.send_message(report, parse_mode="Markdown")
+                            await self.listener.send_message(report, parse_mode="HTML")
                         snapshot_mgr.capture(category="SYSTEM", component="MARKET_REPORT", data={"report": report}, tags=["periodic", "market_scan", "first_run"])
                         snapshot_mgr.capture(category="TRADING", component="MARKET_SCAN_RESULTS", data={"timestamp": result.timestamp, "total_markets": result.total_markets_scanned}, tags=["market_scan", "first_run", "gems"])
                     sentiment = result.aggregate_sentiment.get("sentiment", "NEUTRAL")
                     if sentiment != last_sentiment:
                         mood = result.aggregate_sentiment.get("bullish_pct", 50)
-                        msg = f"🌍 *Market Feeling Update*\nFeeling: `{sentiment}`\nBullish share: `{mood:.1f}%`"
+                        msg = f"🌍 <b>Market Feeling</b>: <code>{sentiment}</code> ({mood:.1f}% bull)"
                         if should_broadcast_message("market_feeling", msg):
-                            await self.listener.send_message(msg, parse_mode="Markdown")
+                            await self.listener.send_message(msg, parse_mode="HTML")
                         last_sentiment = sentiment
                     await run_blocking("record scanner features", market_scanner.record_features, store, timeout=30.0)
                     await self.broadcaster.scan_and_broadcast()
@@ -169,7 +166,7 @@ class MarketScanLoop:
                     if result.winning_bets:
                         alert = format_winning_bets_alert(result.winning_bets[:3])
                         if alert and should_broadcast_message("winning_bets_alert", alert):
-                            await self.listener.send_message(alert, parse_mode="Markdown")
+                            await self.listener.send_message(alert, parse_mode="HTML")
                         for bet in result.winning_bets:
                             try:
                                 if self.clob_listener:
@@ -253,8 +250,10 @@ class SLTPMonitoringLoop:
                 self.ledger.close_position(pos_id, exit_price=exit_p)
                 try:
                     await self.listener.send_message(
-                        f"⏹ *Position Closed: {reason}*\nTicker: `{ticker}`\nEntry: `${entry:.4f}` → Exit: `${exit_p:.4f}`\nPnL: `{pnl_pct:+.2f}%`",
-                        parse_mode="Markdown",
+                        f"⏹ <b>Position Closed</b>\nTicker: <code>{ticker}</code>\n"
+                        f"Entry: <code>{entry:.4f}</code> → Exit: <code>{exit_p:.4f}</code>\n"
+                        f"PnL: <b>{pnl_pct:+.2f}%</b>",
+                        parse_mode="HTML",
                     )
                 except Exception:
                     pass
@@ -276,25 +275,25 @@ class ModelDriftAndHealthLoop:
                 report = await run_blocking(f"model health check {ticker}", self.model_validator.run_health_check, ticker, "default_v1", timeout=30.0)
                 if report.get("health") == "CRITICAL":
                     await self.listener.send_message(
-                        f"🚨 *DRIFT DETECTED: {ticker}*\n\nModel validation failed. Triggering autonomous retraining...",
-                        parse_mode="Markdown",
+                        f"🚨 <b>DRIFT DETECTED: {ticker}</b>\n\nModel failed. Retraining triggered...",
+                        parse_mode="HTML",
                     )
                     try:
                         await run_blocking(f"training cycle {ticker}", self.training_pipeline.run_cycle, ticker, timeout=float(os.getenv("TRAINING_CYCLE_TIMEOUT_SECONDS", "300")))
                         await self.listener.send_message(
-                            f"✅ *RECALIBRATION COMPLETE: {ticker}*\n\nModel weights updated and redeployed.",
-                            parse_mode="Markdown",
+                            f"✅ <b>RECALIBRATION COMPLETE: {ticker}</b>\n\nWeights redeployed.",
+                            parse_mode="HTML",
                         )
                     except Exception as e:
                         await self.listener.send_message(
-                            f"❌ *RECALIBRATION FAILED: {ticker}*\n\nError: {e}",
-                            parse_mode="Markdown",
+                            f"❌ <b>RECALIBRATION FAILED: {ticker}</b>\n\nError: <code>{e}</code>",
+                            parse_mode="HTML",
                         )
                     self.self_improver.log_incident("MODEL_DRIFT", f"Drift detected for {ticker}", "Distribution shift", "Prediction accuracy degradation")
             except Exception:
                 pass
         try:
             imp_report = await run_blocking("self-improvement report", self.self_improver.generate_improvement_report, timeout=30.0)
-            await self.listener.send_message(imp_report, parse_mode="Markdown")
+            await self.listener.send_message(imp_report, parse_mode="HTML")
         except Exception:
             pass

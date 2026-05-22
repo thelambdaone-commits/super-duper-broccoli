@@ -61,7 +61,8 @@ def build_telegram_listener(
     return TelegramListener(
         bot_token=token,
         on_signal=on_signal,
-        allowed_private_chat_ids=private_chat_ids,
+        chat_id=chat_id,
+        private_chat_ids=private_chat_ids,
         admin_chat_ids=admin_chat_ids,
         access_control=access_control,
         allow_private_messages=True,

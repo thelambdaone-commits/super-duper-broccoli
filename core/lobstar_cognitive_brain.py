@@ -78,28 +78,38 @@ class LobstarCognitiveBrain:
             # 1. Check Kolmogorov anomalies
             outcomes = signal.get("outcomes")
             if outcomes:
-                kolm_report = self.arbitrage_engine.detecter_anomalie_kolmogorov(outcomes)
-                if kolm_report and kolm_report.get("detected"):
-                    kolmogorov_spread = kolm_report.get("spread", 0.0)
-                    arb_edge = max(arb_edge, kolm_report.get("theoretical_edge", 0.0))
+                try:
+                    kolm_report = self.arbitrage_engine.detecter_anomalie_kolmogorov(outcomes)
+                    if kolm_report and kolm_report.get("detected"):
+                        kolmogorov_spread = float(kolm_report.get("spread", 0.0) or 0.0)
+                        arb_edge = max(arb_edge, float(kolm_report.get("theoretical_edge", 0.0) or 0.0))
+                except Exception as exc:
+                    logger.warning("Kolmogorov check failed for %s: %s", ticker, exc)
 
             # 2. Check cross-market arbitrage
             primary_outcome = signal.get("primary_outcome")
             secondary_markets = signal.get("secondary_markets")
             if primary_outcome is not None and secondary_markets is not None:
-                cross_arb = self.arbitrage_engine.detecter_arbitrage_cross_market(
-                    ticker, primary_outcome, secondary_markets
-                )
-                if cross_arb:
-                    arb_edge = max(arb_edge, cross_arb.theoretical_spread)
+                try:
+                    cross_arb = self.arbitrage_engine.detecter_arbitrage_cross_market(
+                        ticker, float(primary_outcome), secondary_markets
+                    )
+                    if cross_arb:
+                        arb_edge = max(arb_edge, float(cross_arb.theoretical_spread))
+                except Exception as exc:
+                    logger.warning("Cross-market arbitrage check failed for %s: %s", ticker, exc)
 
             # 3. Check legging risk
             panier_contrats = signal.get("panier_contrats")
             if panier_contrats:
-                risk_report = self.arbitrage_engine.evaluer_legging_risk(panier_contrats)
-                legging_risk = float(risk_report.get("liquidity_risk_score", 0.0))
-                if not risk_report.get("authorized"):
-                    legging_risk = max(legging_risk, 1.0)
+                try:
+                    risk_report = self.arbitrage_engine.evaluer_legging_risk(panier_contrats)
+                    legging_risk = float(risk_report.get("liquidity_risk_score", 0.0))
+                    if not risk_report.get("authorized"):
+                        legging_risk = max(legging_risk, 1.0)
+                except Exception as exc:
+                    logger.warning("Legging risk check failed for %s: %s", ticker, exc)
+                    legging_risk = 1.0
 
         directional_sign = 1.0 if side in {"BUY", "YES", "LONG"} else -1.0
         past_component = directional_sign * past_oi

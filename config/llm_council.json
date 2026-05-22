@@ -2,18 +2,23 @@
   "version": 1,
   "source": "https://github.com/karpathy/llm-council",
   "provider": {
-    "name": "openrouter",
-    "base_url": "https://openrouter.ai/api/v1",
-    "api_key_env": "OPENROUTER_API_KEY",
-    "api_key_vault_key": "OPENROUTER_API_KEY"
+    "name": "groq",
+    "base_url": "https://api.groq.com/openai/v1",
+    "api_key_env": "GROQ_API_KEY",
+    "api_key_vault_key": "GROQ_API_KEY",
+    "fallback_provider": {
+        "name": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY"
+    }
   },
   "council_models": [
-    "openai/gpt-4o-mini",
-    "google/gemini-2.5-flash",
-    "meta-llama/llama-3.3-70b-instruct",
-    "deepseek/deepseek-chat"
+    "groq/llama-3.3-70b-versatile",
+    "groq/mixtral-8x7b-32768",
+    "deepseek/deepseek-chat",
+    "google/gemini-2.5-flash"
   ],
-  "chairman_model": "google/gemini-2.5-pro",
+  "chairman_model": "groq/llama-3.3-70b-versatile",
   "max_models_per_query": 4,
   "temperature": 0.2,
   "max_tokens": 1600,

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "system_name": "Lobstar Vibe Protocol",
+  "audit_personas": [
+    {
+      "id": "security_hardener",
+      "name": "Zero-Trust Security Auditor",
+      "instructions": "Act as an automated security auditor. Scan the codebase for Zero Trust violations, unmasked secrets, insecure dependency versions, and permissive file permissions. Focus on 'Trust Boundaries' like API entry points and database connections. Return a 'Vulnerability Table' with Severity, CVE-equivalent, and Remediation steps.",
+      "output_format": "Markdown Table"
+    },
+    {
+      "id": "performance_profiler",
+      "name": "Deep-Tissue Performance Diagnostic",
+      "instructions": "Analyze the codebase for invisible debt: memory leaks in async loops, N+1 query patterns, redundant API calls, and high-latency bottlenecks. Prioritize areas affecting 'Tick-to-Trade' speed. Return a 'Bottleneck Table' with Latency Impact, Root Cause, and Optimization instructions.",
+      "output_format": "Markdown Table"
+    },
+    {
+      "id": "healing_qa",
+      "name": "Autonomous Self-Healing QA",
+      "instructions": "Execute the test suite. For every failure, analyze the traceback, locate the bug in source or test code, and generate a surgical fix. Verify the fix by rerunning the test. Return a 'Healing Report' with Failed Test, Root Cause, Applied Fix, and Verification Status.",
+      "output_format": "Markdown Report"
+    },
+    {
+      "id": "architect_refactor",
+      "name": "Principal Architecture Refactor",
+      "instructions": "Analyze the codebase for 'God Objects' (>300 lines), leaky abstractions, and boundary violations. Propose a decoupling strategy using Repository patterns or Service providers. Execute refactoring in small, reviewable patches. Return a 'Refactor Log' with File, Smell Detected, Structural Change, and Impact.",
+      "output_format": "Markdown Log"
+    }
+  ],
+  "autonomous_loops": {
+    "audit_frequency_hours": 24,
+    "healing_max_retries": 3,
+    "refactor_safety_gate": "requires_test_pass"
+  }
+}

@@ -245,8 +245,8 @@ async def test_risk_alert_escapes_message_text() -> None:
     payload = notifier.send_async.await_args.args[0]
     assert "BTC" in payload
     assert "Signal loss" in payload
-    assert "\\>" in payload
-    assert "\\!" in payload
+    assert "&gt;" in payload
+    assert "!" in payload
 
 
 @pytest.mark.asyncio

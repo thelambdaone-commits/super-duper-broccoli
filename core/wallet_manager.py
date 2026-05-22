@@ -1,5 +1,8 @@
 import logging
+import asyncio
 import re
+import time
+from collections import defaultdict
 from typing import Dict, Any, Tuple
 
 import httpx
@@ -24,6 +27,7 @@ class PolymarketWalletManager:
         self.usdc_polygon_contract = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # Bridged USDC.e
         self.usdc_native_contract = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"   # Native USDC
         self.pusd_contract = "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb"          # Polymarket V2 pUSD Collateral
+        self._allowance_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     @staticmethod
     def is_private_key(text: str) -> bool:
@@ -150,6 +154,142 @@ class PolymarketWalletManager:
             "eth_balance": float(eth_balance)
         }
 
+    async def get_erc20_allowance(self, token_contract: str, owner_address: str, spender_address: str) -> float:
+        if not self.rpc_url:
+            return 0.0
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [
+                {
+                    "to": token_contract,
+                    "data": f"0xdd62ed3e{owner_address.lower().replace('0x', '').zfill(64)}{spender_address.lower().replace('0x', '').zfill(64)}",
+                },
+                "latest",
+            ],
+            "id": 5,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(self.rpc_url, json=payload)
+                result = resp.json().get("result", "0x0")
+                return int(result, 16) / 1e6
+        except Exception:
+            return 0.0
+
+    async def approve_usdc(self, private_key: str, spender_address: str, amount: float = 1_000_000.0) -> str:
+        """Approuve une grosse somme d'USDC pour éviter les re-approuves fréquents."""
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(self.rpc_url))
+        account = Account.from_key(private_key)
+
+        # ERC20 Approve ABI subset
+        abi = [{"constant": False, "inputs": [{"name": "spender", "type": "address"}, {"name": "value", "type": "uint256"}], "name": "approve", "outputs": [{"name": "", "type": "bool"}], "payable": False, "stateMutability": "nonpayable", "type": "function"}]
+        contract = w3.eth.contract(address=w3.to_checksum_address(self.usdc_native_contract), abi=abi)
+
+        raw_amount = int(amount * 1e6)
+        tx_params: dict[str, Any] = {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+        }
+        try:
+            latest_block = w3.eth.get_block("latest")
+            base_fee = int(getattr(latest_block, "baseFeePerGas", 0) or 0)
+            priority_fee = int(w3.eth.max_priority_fee)
+            if base_fee > 0 and priority_fee > 0:
+                tx_params["maxFeePerGas"] = int(base_fee * 2 + priority_fee)
+                tx_params["maxPriorityFeePerGas"] = int(priority_fee)
+            else:
+                tx_params["gasPrice"] = int(w3.eth.gas_price * 1.2)
+        except Exception:
+            tx_params["gasPrice"] = int(w3.eth.gas_price * 1.2)
+
+        tx = contract.functions.approve(w3.to_checksum_address(spender_address), raw_amount).build_transaction(tx_params)
+        signed_tx = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        logger.info(f"USDC Approval tx sent: {tx_hash.hex()}")
+        return tx_hash.hex()
+
+    async def ensure_usdc_allowance(
+        self,
+        private_key: str,
+        spender_address: str,
+        required_amount: float,
+        owner_address: str | None = None,
+        approval_buffer_multiplier: float = 10.0,
+        approval_min_buffer_usdc: float = 100.0,
+        wait_timeout_seconds: float = 180.0,
+    ) -> dict[str, Any]:
+        """Lazy allowance check: approve only when the remaining allowance is insufficient."""
+        if required_amount <= 0:
+            return {"approved": False, "reason": "Invalid required amount"}
+        if not self.rpc_url:
+            return {"approved": False, "reason": "RPC URL unavailable"}
+        if not spender_address:
+            return {"approved": False, "reason": "Spender address missing"}
+
+        if not owner_address:
+            from eth_account import Account
+            owner_address = Account.from_key(private_key).address
+
+        lock_key = f"{owner_address.lower()}::{spender_address.lower()}"
+        async with self._allowance_locks[lock_key]:
+            current_allowance = await self.get_erc20_allowance(
+                self.usdc_native_contract,
+                owner_address,
+                spender_address,
+            )
+            if current_allowance >= required_amount:
+                return {
+                    "approved": True,
+                    "action": "noop",
+                    "allowance": current_allowance,
+                    "required_amount": required_amount,
+                }
+
+            approval_amount = max(
+                required_amount * approval_buffer_multiplier,
+                required_amount + approval_min_buffer_usdc,
+            )
+            tx_hash = await self.approve_usdc(private_key, spender_address, amount=approval_amount)
+
+            from web3 import Web3
+
+            w3 = Web3(Web3.HTTPProvider(self.rpc_url))
+            try:
+                receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=wait_timeout_seconds)
+            except Exception as exc:
+                logger.warning("USDC approval wait failed or timed out: %s", exc)
+                return {
+                    "approved": False,
+                    "action": "approve_timeout",
+                    "tx_hash": tx_hash,
+                    "allowance": current_allowance,
+                    "required_amount": required_amount,
+                }
+            if getattr(receipt, "status", 0) != 1:
+                return {
+                    "approved": False,
+                    "action": "approve_failed",
+                    "tx_hash": tx_hash,
+                    "allowance": current_allowance,
+                    "required_amount": required_amount,
+                }
+
+            updated_allowance = await self.get_erc20_allowance(
+                self.usdc_native_contract,
+                owner_address,
+                spender_address,
+            )
+            return {
+                "approved": updated_allowance >= required_amount,
+                "action": "approved",
+                "tx_hash": tx_hash,
+                "allowance": updated_allowance,
+                "required_amount": required_amount,
+                "approval_amount": approval_amount,
+            }
+
     def generer_layout_telegram(
         self,
         wallet_name: str,
@@ -159,61 +299,71 @@ class PolymarketWalletManager:
         proxy_address: str = "",
     ) -> Tuple[str, InlineKeyboardMarkup]:
         """
-        Génère le texte en Markdown V1 sans échappement parasite pour un rendu parfait.
+        Génère le texte en HTML pour un rendu stable sur mobile.
         """
-        # Somme du capital (USDC direct + pUSD sur le Proxy de marché)
         usdc_direct = float(soldes.get('usdc_direct', 0.0))
         usdc_proxy = float(soldes.get('usdc_proxy', 0.0))
         total_capital = usdc_direct + usdc_proxy
 
         lines = [
-            "🎯 *Polymarket Cockpit*",
-            "────────────────────────",
-            "🟢 *Status* : `Connected`",
-            f"🔑 *Active Wallet* : `{wallet_name}`",
-            f"📬 *EOA Address* : `{wallet_address}`"
+            "<b>🎯 Polymarket Cockpit</b>",
+            "───────────────────",
+            f"🟢 <b>Status</b>: <code>Connected</code>",
+            f"🔑 <b>Wallet</b>: <code>{wallet_name}</code>",
+            f"📬 <b>Address</b>: <code>{wallet_address}</code>"
         ]
 
         if proxy_address:
-            lines.append(f"🛡️ *Proxy Address* : `{proxy_address}`")
+            lines.append(f"🛡️ <b>Proxy</b>: <code>{proxy_address}</code>")
 
         lines.extend([
-            f"💵 *USDC Direct* : `{usdc_direct:.2f} USDC`",
-            f"🛡️ *Polymarket pUSD* : `{usdc_proxy:.2f} pUSD`",
-            f"💰 *Total Capital* : `{total_capital:.2f} $`",
-            f"👛 *Gas Assets* : `{float(soldes.get('eth_balance', 0.0)):.4f} POL`",
-            f"💾 *Saved Vaults* : `{total_connections}`",
-            "────────────────────────"
+            "",
+            f"💵 <b>USDC Direct</b>: <code>{usdc_direct:.2f}</code>",
+            f"🛡️ <b>pUSD Proxy</b>: <code>{usdc_proxy:.2f}</code>",
+            f"💰 <b>Total Cap</b>: <b>{total_capital:.2f} $</b>",
+            f"👛 <b>Gas (POL)</b>: <code>{float(soldes.get('eth_balance', 0.0)):.4f}</code>",
+            "───────────────────"
         ])
 
         if not proxy_address:
-            lines.append("⚠️ *No Proxy Wallet set.*")
-            lines.append("Use `/wallet set-proxy <address>` in DM to track your Polymarket pUSD balance!")
-            lines.append("────────────────────────")
+            lines.append("⚠️ <i>No Proxy Wallet set. Balance tracking limited.</i>")
+            lines.append("───────────────────")
 
         text = "\n".join(lines)
 
-        # Clavier ultra-réactif avec gestionnaire de callback centralisé
-        reply_markup = InlineKeyboardMarkup(
+        keyboard = [
             [
-                [
-                    InlineKeyboardButton("📜 History", callback_data="wallet_history"),
-                    InlineKeyboardButton("📋 Active Orders", callback_data="wallet_orders"),
-                ],
-                [
-                    InlineKeyboardButton("📊 Open Positions", callback_data="wallet_positions"),
-                    InlineKeyboardButton("💰 PnL Metrics", callback_data="wallet_pnl"),
-                ],
-                [
-                    InlineKeyboardButton("🔄 Refresh Balances", callback_data="wallet_refresh"),
-                    InlineKeyboardButton("🔑 Export Private Key", callback_data="wallet_show_key"),
-                ],
-                [
-                    InlineKeyboardButton("🔀 Switch Wallet", callback_data="wallet_change"),
-                    InlineKeyboardButton("❌ Disconnect", callback_data="wallet_disconnect"),
-                ],
-                [InlineKeyboardButton("⬅️ Return to Main Menu", callback_data="menu_main")],
-            ]
-        )
+                InlineKeyboardButton("🔄 Refresh", callback_data="wallet_refresh"),
+                InlineKeyboardButton("📊 Positions", callback_data="wallet_positions"),
+            ],
+            [
+                InlineKeyboardButton("📜 History", callback_data="wallet_history"),
+                InlineKeyboardButton("💰 PnL", callback_data="wallet_pnl"),
+            ],
+            [
+                InlineKeyboardButton("📋 Orders", callback_data="wallet_orders"),
+                InlineKeyboardButton("⚙️ Settings", callback_data="wallet_settings"),
+            ],
+            [InlineKeyboardButton("⬅️ Return to Main Menu", callback_data="menu_main")],
+        ]
 
-        return text, reply_markup
+        return text, InlineKeyboardMarkup(keyboard)
+
+    def generer_settings_layout(self) -> Tuple[str, InlineKeyboardMarkup]:
+        """Menu secondaire pour les actions sensibles/avancées."""
+        text = (
+            "<b>⚙️ WALLET SETTINGS</b>\n"
+            "───────────────────\n"
+            "Actions sensibles et configuration avancée."
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("🔑 Show Private Key", callback_data="wallet_show_key"),
+                InlineKeyboardButton("🔀 Switch Wallet", callback_data="wallet_change"),
+            ],
+            [
+                InlineKeyboardButton("❌ Disconnect", callback_data="wallet_disconnect"),
+                InlineKeyboardButton("⬅️ Back", callback_data="wallet_refresh"),
+            ]
+        ]
+        return text, InlineKeyboardMarkup(keyboard)

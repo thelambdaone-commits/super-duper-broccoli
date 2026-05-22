@@ -15,8 +15,9 @@ logger = logging.getLogger("PerformanceAttribution")
 from utils.config_loader import TRADING_PARAMS
 
 FRICTION_COST_PER_CONTRACT = TRADING_PARAMS["FRICTION_PER_CONTRACT"]
-EXECUTION_LOSS_THRESHOLD = 0.30
+EXECUTION_LOSS_THRESHOLD = TRADING_PARAMS["EXECUTION_LOSS_THRESHOLD"]
 MIN_EDGE_THRESHOLD = TRADING_PARAMS["MIN_EDGE_THRESHOLD"]
+MAX_RESOLUTION_WAIT_SECONDS = TRADING_PARAMS["MAX_RESOLUTION_WAIT_HOURS"] * 3600
 
 
 class PerformanceAttribution:
@@ -24,7 +25,7 @@ class PerformanceAttribution:
         self.ledger = ledger
         self.broadcaster = telegram_broadcaster
         self._running = False
-        self._check_interval = 30
+        self._check_interval = TRADING_PARAMS["RESOLUTION_CHECK_INTERVAL"]
 
     async def start(self):
         self._running = True
@@ -75,7 +76,39 @@ class PerformanceAttribution:
         outcome = await self._fetch_polymarket_resolution(condition_id)
 
         if outcome is None:
-            logger.warning(f"Could not resolve trade {trade_id}, retrying later")
+            resolution_timestamp = trade.get("resolution_timestamp")
+            try:
+                resolution_epoch = float(resolution_timestamp)
+            except (TypeError, ValueError):
+                resolution_epoch = 0.0
+            age_seconds = time.time() - resolution_epoch if resolution_epoch > 0 else MAX_RESOLUTION_WAIT_SECONDS + 1
+            if age_seconds < MAX_RESOLUTION_WAIT_SECONDS:
+                logger.warning(f"Could not resolve trade {trade_id}, retrying later")
+                return
+
+            logger.warning(
+                "Resolution unavailable for trade %s after %.1f hours; applying conservative fallback close.",
+                trade_id,
+                age_seconds / 3600.0,
+            )
+            outcome = 0.0 if side == "YES" else 1.0
+            exit_price = fill_price
+            gross_pnl = -abs(friction_cost)
+            net_pnl = gross_pnl
+            slippage = abs(fill_price - mid_price_signal)
+            execution_loss_pct = 1.0 if abs(gross_pnl) > 0 else 0.0
+            await self._cloturer_et_sceller_position(
+                trade,
+                outcome,
+                exit_price,
+                gross_pnl,
+                net_pnl,
+                slippage,
+                execution_loss_pct,
+                False,
+            )
+            await self._trigger_safety_flag(trade_id, execution_loss_pct)
+            await self._analyser_execution_alpha(trade, False, gross_pnl, net_pnl, slippage, execution_loss_pct)
             return
 
         is_win = (outcome == 1.0 and side == "YES") or (outcome == 0.0 and side == "NO")

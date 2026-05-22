@@ -246,6 +246,23 @@ class TestExecuteRegexSignal:
         assert result["status"] == "FAILED"
         assert ledger.recorded_orders == []
 
+    @pytest.mark.asyncio
+    async def test_unknown_live_mode_still_uses_slippage_gate(self) -> None:
+        ledger = MockLedger(mode="LIVE_CANARY")
+        signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
+        freqai = AsyncMock()
+        freqai.client = MagicMock()
+        freqai.client.get_order_book.return_value = {
+            "bids": [{"price": 0.90}],
+            "asks": [{"price": 0.92}],
+        }
+
+        result = await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
+
+        assert result["status"] == "SKIPPED"
+        assert "Slippage threshold exceeded" in result["reason"]
+        freqai.clob_execute.assert_not_called()
+
 
 class TestExecuteLobstarSignal:
     @pytest.mark.asyncio

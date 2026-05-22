@@ -216,6 +216,16 @@ def _load_graphify_summary(max_chars: int = 2500) -> dict[str, Any]:
     }
 
 
+def _load_openviking_summary(query: str, component: str = "", limit: int = 5) -> dict[str, Any]:
+    if not os.getenv("OPENVIKING_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return {"enabled": False, "available": False, "results": []}
+    try:
+        from utils.openviking_adapter import build_openviking_context
+    except Exception:
+        return {"enabled": False, "available": False, "results": [], "error": "adapter_unavailable"}
+    return build_openviking_context(query=query, component=component, limit=limit)
+
+
 def _approx_tokens(value: Any) -> int:
     text = json.dumps(value, ensure_ascii=True, default=str)
     return max(1, len(text) // 4)
@@ -247,6 +257,7 @@ def build_project_prompt_context(
         "recent_decisions": _load_recent_decisions(limit=6),
         "project_context_cards": _load_project_context_summary(limit=14),
         "graphify": _load_graphify_summary(max_chars=2200),
+        "openviking": _load_openviking_summary(task or component or "project context", component=component, limit=5),
     }
 
     if _approx_tokens(context) > budget:
@@ -306,6 +317,15 @@ def format_project_prompt_context(context: dict[str, Any]) -> str:
             "",
             "Graphify:",
             "- graphify-out/graph.json is available; use graphify query/path/explain before broad file reads.",
+        ])
+
+    openviking = context.get("openviking", {})
+    if openviking.get("enabled"):
+        lines.extend([
+            "",
+            "OpenViking:",
+            f"- endpoint: {openviking.get('endpoint')}",
+            f"- result_count: {openviking.get('result_count', 0)}",
         ])
 
     return "\n".join(lines)

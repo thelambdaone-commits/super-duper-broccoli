@@ -96,6 +96,7 @@ class OpenRouterChatClient:
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int,
+        **kwargs,
     ) -> str:
         response = await self._client.chat.completions.create(
             model=model,
@@ -103,6 +104,22 @@ class OpenRouterChatClient:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+
+        # Record cost and usage
+        try:
+            from monitoring.llm_cost_tracker import cost_tracker
+            usage = getattr(response, 'usage', None)
+            if usage:
+                cost_tracker.record_usage(
+                    task_id=kwargs.get("signal_id", "council_query"),
+                    model=model,
+                    input_tokens=getattr(usage, 'prompt_tokens', 0),
+                    output_tokens=getattr(usage, 'completion_tokens', 0),
+                    provider="openrouter"
+                )
+        except Exception as e:
+            logger.debug(f"Cost tracking failed: {e}")
+
         content = response.choices[0].message.content
         return content or ""
 

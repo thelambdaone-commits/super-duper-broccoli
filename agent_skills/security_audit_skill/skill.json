@@ -1,0 +1,22 @@
+{
+  "id": "security_audit_skill",
+  "name": "Zero-Trust Security Audit",
+  "description": "Scans the local codebase for obvious secret exposure, weak trust boundaries, and unsafe database access patterns.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "run_security_audit",
+      "description": "Runs a static security scan on the repository and returns structured findings.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "root_dir": {
+            "type": "string",
+            "description": "Repository root to scan.",
+            "default": "."
+          }
+        }
+      }
+    }
+  ]
+}

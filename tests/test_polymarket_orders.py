@@ -112,28 +112,15 @@ async def test_place_order_no_client(wallet_manager):
 @pytest.mark.asyncio
 async def test_claim_winnings_dry_run(order_manager):
     """Test claiming winnings in dry run mode."""
-    from unittest.mock import patch, MagicMock
+    receipt = await order_manager.claim_winnings(
+        market_id="0xabcd1234",
+        outcome="YES",
+        dry_run=True,
+    )
 
-    mock_w3 = MagicMock()
-    mock_w3.is_connected.return_value = True
-    mock_w3.eth.account.from_key.return_value.address = "0x742d35Cc6634C0532925a3b844Bc9e7595f42dE"
-    mock_w3.eth.gas_price = 1000000000
-    mock_w3.eth.get_transaction_count.return_value = 0
-    mock_w3.to_checksum_address = lambda x: x
-    mock_w3.to_bytes = lambda hexstr: b'\x00' * 32
-
-    with patch("web3.Web3", return_value=mock_w3) as mock_web3_class:
-        mock_web3_class.HTTPProvider = MagicMock()
-
-        receipt = await order_manager.claim_winnings(
-            market_id="0xabcd1234",
-            outcome="YES",
-            dry_run=True,
-        )
-
-        assert receipt.market_id == "0xabcd1234"
-        assert receipt.outcome == "YES"
-        assert receipt.status == "pending"
+    assert receipt.market_id == "0xabcd1234"
+    assert receipt.outcome == "YES"
+    assert receipt.status == "pending"
 
 
 @pytest.mark.asyncio

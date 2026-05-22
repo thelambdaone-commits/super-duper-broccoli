@@ -13,6 +13,7 @@ Gère:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -140,6 +141,7 @@ class RufloSwarmSupervisor:
 
         # Loop de surveillance
         self._monitoring_task: Optional[asyncio.Task] = None
+        self._running = False
 
     @property
     def mode(self) -> str:
@@ -409,6 +411,7 @@ class RufloSwarmSupervisor:
     async def start_monitoring(self) -> None:
         """Démarre le loop de surveillance continue."""
         self._state = SwarmState.HEALTHY
+        self._running = True
         self._monitoring_task = asyncio.create_task(self._monitoring_loop())
 
         if self._redis:
@@ -420,15 +423,19 @@ class RufloSwarmSupervisor:
         """Listen to Redis Pub/Sub and inject into local event bus/shared memory."""
         if not self._redis:
             return
-
-        pubsub = self._redis.pubsub()
         events_channel = f"{self._redis_namespace}:events"
         mem_channel = f"{self._redis_namespace}:mem_updates"
-        await pubsub.subscribe(events_channel, mem_channel)
+        consecutive_errors = 0
 
-        try:
-            async for message in pubsub.listen():
-                if message["type"] == "message":
+        while self._running:
+            pubsub = None
+            try:
+                pubsub = self._redis.pubsub()
+                await pubsub.subscribe(events_channel, mem_channel)
+                consecutive_errors = 0
+                async for message in pubsub.listen():
+                    if message["type"] != "message":
+                        continue
                     try:
                         data = json.loads(message["data"])
                         if message["channel"] == events_channel:
@@ -440,21 +447,30 @@ class RufloSwarmSupervisor:
                                 self._shared_memory[key] = value
                     except Exception as e:
                         logger.error(f"Failed to parse Redis message: {e}")
-        except asyncio.CancelledError:
-            await pubsub.unsubscribe(events_channel, mem_channel)
-        except Exception as e:
-            logger.error(f"Redis Pub/Sub error: {e}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                consecutive_errors += 1
+                sleep_for = min(10.0 * (2 ** (consecutive_errors - 1)), 300.0)
+                logger.error(f"Redis Pub/Sub error: {e}")
+                logger.warning(f"⚠️ [SWARM REDIS] Backoff: sleeping {sleep_for:.1f}s before reconnect")
+                await asyncio.sleep(sleep_for)
+            finally:
+                if pubsub is not None:
+                    with contextlib.suppress(Exception):
+                        await pubsub.unsubscribe(events_channel, mem_channel)
+                    with contextlib.suppress(Exception):
+                        await pubsub.close()
 
     async def _monitoring_loop(self) -> None:
         """Loop de surveillance continue."""
-        while True:
+        consecutive_errors = 0
+        while self._running:
             try:
                 await asyncio.sleep(60)
-
-                self.check_data_gaps()
-
-                if self._should_retrain():
-                    await self._trigger_retrain()
+                consecutive_errors = 0
+                self._safe_check_data_gaps()
+                await self._safe_trigger_retrain()
 
                 recent_brier = self._brier_scores[-10:] if self._brier_scores else []
                 if recent_brier and np.mean(recent_brier) > self.BRIER_THRESHOLD:
@@ -462,14 +478,18 @@ class RufloSwarmSupervisor:
                         TriggerReason.BRIER_EXCEEDED,
                         {"avg_brier": float(np.mean(recent_brier))}
                     )
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Monitoring loop error: {e}")
+                consecutive_errors += 1
+                logger.error(f"Swarm monitoring loop error (consecutive={consecutive_errors}): {e}")
+                sleep_for = min(10.0 * (2 ** (consecutive_errors - 1)), 300.0)
+                logger.warning(f"⚠️ [SWARM] Backoff: sleeping {sleep_for:.1f}s")
+                await asyncio.sleep(sleep_for)
 
     async def stop_monitoring(self) -> None:
         """Arrête le loop de surveillance."""
+        self._running = False
         if self._monitoring_task:
             self._monitoring_task.cancel()
             try:
@@ -488,6 +508,20 @@ class RufloSwarmSupervisor:
             await self._redis.close()
 
         logger.info("🛑 Swarm supervisor stopped")
+
+    def _safe_check_data_gaps(self) -> None:
+        try:
+            self.check_data_gaps()
+        except Exception as e:
+            logger.error(f"Data gap check failed: {e}")
+
+    async def _safe_trigger_retrain(self) -> None:
+        if not self._should_retrain():
+            return
+        try:
+            await self._trigger_retrain()
+        except Exception as e:
+            logger.error(f"Retrain cycle failed: {e}")
 
     def get_status(self) -> Dict[str, Any]:
         """Retourne le status complet de l' supervisor."""

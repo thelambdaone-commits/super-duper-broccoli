@@ -84,6 +84,11 @@ class ServiceContainer:
             chat_id=os.getenv("TRADE_ALERT_CHAT_ID") or os.getenv("CHAT_ID"),
         )
         self.trade_notifications = TradeNotificationService(self.notifier)
+        from core.wallet_manager import PolymarketWalletManager
+        self.wallet_manager = PolymarketWalletManager(
+            self.vault,
+            polygon_rpc_url=self.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL", ""),
+        )
         self.metrics_exporter = ExecutionMetricsExporter(
             config={
                 "metrics_log_path": os.getenv(
@@ -96,6 +101,9 @@ class ServiceContainer:
         self.executor = PassiveExecutor(
             freqai=self.freqai,
             ledger=self.ledger,
+            wallet_manager=self.wallet_manager,
+            wallet_private_key=self.secrets.get("CLOB_PRIVATE_KEY"),
+            usdc_spender_address=os.getenv("POLYMARKET_SPENDER_ADDRESS") or os.getenv("CLOB_SPENDER_ADDRESS"),
             maker_timeout_calibrator=self._make_timeout_calibrator(),
         )
 

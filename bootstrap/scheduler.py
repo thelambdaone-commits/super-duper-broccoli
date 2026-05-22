@@ -6,6 +6,9 @@ from typing import Any
 
 from bootstrap.helpers import run_blocking
 from utils.config_loader import get_trading_config
+import logging
+
+logger = logging.getLogger("Scheduler")
 
 
 def _setup_ml_features(training_pipeline: Any, tickers: list[str] | None = None) -> None:
@@ -13,6 +16,46 @@ def _setup_ml_features(training_pipeline: Any, tickers: list[str] | None = None)
     default_features = ["oi_5min", "tam_state", "spread_bps", "mid_price"]
     for ticker in tickers:
         training_pipeline.register_features(ticker, default_features, target_feature="mid_price")
+
+
+def _setup_autonomous_trading(
+    runner: Any,
+    ledger: Any,
+    store: Any,
+    risk: Any,
+    scanner: Any,
+    cognitive_brain: Any,
+    executor: Any = None,
+) -> None:
+    try:
+        from core.autonomous_trading_loop import AutonomousTradingLoop
+        from user_data.strategies.polymarket_strategy_factory import build_default_polymarket_strategies
+        from core.strategy_lifecycle_manager import StrategyLifecycleManager
+
+        lifecycle = StrategyLifecycleManager()
+        strategies = build_default_polymarket_strategies()
+        for s in strategies:
+            lifecycle.register_strategy(s)
+
+        loop = AutonomousTradingLoop(
+            ledger=ledger,
+            lifecycle=lifecycle,
+            risk_engine=risk,
+            feature_store=store,
+            price_provider=scanner,
+            executor=executor,
+        )
+
+        async def run_autonomous_cycle():
+            # In a real scenario, we might want to fetch latest markets from scanner
+            # for now we rely on the loop's internal logic.
+            await loop.run_once([])
+
+        runner.register_job("Autonomous_Trading_Loop", run_autonomous_cycle, interval_sec=15.0)
+        logger.info("✅ [SCHEDULER] Autonomous Trading Loop registered (15s interval)")
+    except Exception as e:
+        import logging
+        logging.getLogger("Scheduler").warning(f"Failed to setup autonomous trading: {e}")
 
 
 def _setup_quantum_runner(
@@ -27,12 +70,45 @@ def _setup_quantum_runner(
     feature_store: Any = None,
     ledger: Any = None,
     training_pipeline: Any = None,
+    risk: Any = None,
+    scanner: Any = None,
+    executor: Any = None,
+    orchestrator: Any = None,
 ) -> None:
     runtime_secrets = runtime_secrets or {}
+
+    # Setup Autonomous Trading Loop
+    _setup_autonomous_trading(
+        runner=runner,
+        ledger=ledger,
+        store=feature_store,
+        risk=risk,
+        scanner=scanner,
+        cognitive_brain=cognitive_brain,
+        executor=executor,
+    )
+
     runner.register_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
     if getattr(cognitive_brain, "arbitrage_engine", None):
         runner.register_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
     runner.register_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
+
+    async def adaptive_weight_optimization():
+        if not orchestrator or not ledger:
+            return
+        try:
+            # Phase 7 Aulekator: Adaptive Learning
+            # We prefer REAL performance if available, fallback to aggregate
+            perf_summary = ledger.get_performance_summary_by_source(mode="PROD")
+            if not perf_summary:
+                perf_summary = ledger.get_performance_summary_by_source()
+
+            if hasattr(orchestrator, "fusion_engine"):
+                orchestrator.fusion_engine.update_weights_from_pnl(perf_summary)
+        except Exception as e:
+            logger.warning(f"Adaptive weight optimization failed: {e}")
+
+    runner.register_job("Adaptive_Weight_Optimization", adaptive_weight_optimization, interval_sec=3600.0)
 
     async def prune_feature_store():
         store = feature_store or getattr(cognitive_brain, "store", None)
@@ -57,7 +133,7 @@ def _setup_quantum_runner(
         if api_check["missing"]:
             alert = get_api_key_notifier().format_telegram_alert(api_check)
             if broadcaster and broadcaster.notifier:
-                await broadcaster.notifier.send_async(alert, parse_mode="Markdown")
+                await broadcaster.notifier.send_async(alert, parse_mode="HTML")
 
         timeout = httpx.Timeout(5.0, connect=3.0)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
@@ -105,13 +181,20 @@ def _setup_quantum_runner(
     async def daily_tca_report_job():
         from scripts.daily_tca_report import DailyTcaReportConfig, DailyTcaReportJob
 
-        job = DailyTcaReportJob(DailyTcaReportConfig())
+        metrics_log_path = os.getenv("EXECUTION_METRICS_LOG_PATH", "user_data/data/execution_metrics.jsonl")
+        state_path = os.path.join(os.path.dirname(metrics_log_path), "daily_tca_state.json")
+        config = DailyTcaReportConfig(metrics_log_path=metrics_log_path, state_path=state_path)
+        job = DailyTcaReportJob(broadcaster, config)
         await job.run()
 
     runner.register_job("Daily_TCA_Report", daily_tca_report_job, interval_sec=86400.0)
 
     async def train_and_rotate_models():
         if training_pipeline:
-            await run_blocking("training rotation", training_pipeline.run_cycle, timeout=300.0)
+            tickers = get_trading_config("model_tickers", ["SOL", "BTC", "ETH"], allow_env=False)
+            if isinstance(tickers, str):
+                tickers = tickers.split(",")
+            for ticker in [str(t).strip().upper() for t in tickers if str(t).strip()]:
+                await run_blocking(f"training rotation {ticker}", training_pipeline.run_cycle, ticker, timeout=300.0)
 
     runner.register_job("Train_And_Rotate_Models", train_and_rotate_models, interval_sec=21600.0)

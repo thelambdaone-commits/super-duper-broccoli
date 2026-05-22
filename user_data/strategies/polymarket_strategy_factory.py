@@ -9,6 +9,7 @@ from user_data.strategies.base_strategy import (
     StrategySignal,
     coerce_features,
 )
+from user_data.strategies.btc_15m_fusion import Btc15MinuteFusionStrategy
 
 
 @dataclass
@@ -56,10 +57,15 @@ class PolymarketStrategy:
 
 class InterMarketArbitrageStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
+        params = parameters or StrategyParameters(
+            min_edge=0.025,
+            min_confidence=0.58,
+            extra={"confidence_multiplier": 5.0}
+        )
         super().__init__(
             strategy_id="inter_market_arbitrage",
             name="Inter-Market Arbitrage",
-            parameters=parameters or StrategyParameters(min_edge=0.025, min_confidence=0.58),
+            parameters=params,
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
@@ -69,7 +75,8 @@ class InterMarketArbitrageStrategy(PolymarketStrategy):
             return None
         edge = float(reference - f.price)
         side = "BUY" if edge > 0 else "SELL"
-        confidence = min(1.0, 0.50 + abs(edge) * 5.0)
+        multiplier = float(self.parameters.extra.get("confidence_multiplier", 5.0))
+        confidence = min(1.0, 0.50 + abs(edge) * multiplier)
         return self._signal(
             f,
             side=side,
@@ -82,10 +89,15 @@ class InterMarketArbitrageStrategy(PolymarketStrategy):
 
 class MacroTrendMLStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
+        params = parameters or StrategyParameters(
+            min_edge=0.035,
+            min_confidence=0.60,
+            extra={"confidence_multiplier": 4.0, "regime_bonus": 0.08}
+        )
         super().__init__(
             strategy_id="macro_trend_ml",
             name="ML-Driven Macro Trend",
-            parameters=parameters or StrategyParameters(min_edge=0.035, min_confidence=0.60),
+            parameters=params,
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
@@ -97,8 +109,12 @@ class MacroTrendMLStrategy(PolymarketStrategy):
             return None
         edge = float(f.ml_probability - f.price)
         side = "BUY" if edge > 0 else "SELL"
-        regime_bonus = 0.08 if "TREND" in regime or "BULL" in regime else 0.0
-        confidence = min(1.0, 0.50 + abs(edge) * 4.0 + regime_bonus)
+
+        multiplier = float(self.parameters.extra.get("confidence_multiplier", 4.0))
+        bonus_val = float(self.parameters.extra.get("regime_bonus", 0.08))
+        regime_bonus = bonus_val if "TREND" in regime or "BULL" in regime else 0.0
+
+        confidence = min(1.0, 0.50 + abs(edge) * multiplier + regime_bonus)
         return self._signal(
             f,
             side=side,
@@ -111,19 +127,28 @@ class MacroTrendMLStrategy(PolymarketStrategy):
 
 class SemanticMomentumStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
+        params = parameters or StrategyParameters(
+            min_edge=0.03,
+            min_confidence=0.62,
+            extra={"edge_multiplier": 0.10, "sentiment_bonus_max": 0.20}
+        )
         super().__init__(
             strategy_id="semantic_momentum",
             name="LLM/Semantic Momentum",
-            parameters=parameters or StrategyParameters(min_edge=0.03, min_confidence=0.62),
+            parameters=params,
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
         if f.semantic_confidence <= 0.0 or f.sentiment_score == 0.0:
             return None
-        edge = float(f.sentiment_score * 0.10)
+
+        edge_mult = float(self.parameters.extra.get("edge_multiplier", 0.10))
+        bonus_max = float(self.parameters.extra.get("sentiment_bonus_max", 0.20))
+
+        edge = float(f.sentiment_score * edge_mult)
         side = "BUY" if edge > 0 else "SELL"
-        confidence = min(1.0, f.semantic_confidence + min(0.20, abs(f.sentiment_score) * 0.20))
+        confidence = min(1.0, f.semantic_confidence + min(bonus_max, abs(f.sentiment_score) * bonus_max))
         return self._signal(
             f,
             side=side,
@@ -169,10 +194,21 @@ class PassiveMarketMakingStrategy(PolymarketStrategy):
 
 class MeanReversionStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
+        params = parameters or StrategyParameters(
+            min_edge=0.02,
+            min_confidence=0.57,
+            max_spread=0.10,
+            extra={
+                "max_imbalance": 0.80,
+                "base_confidence": 0.54,
+                "confidence_multiplier": 5.0,
+                "imbalance_bonus": 0.20
+            }
+        )
         super().__init__(
             strategy_id="mean_reversion",
             name="Microstructure Mean Reversion",
-            parameters=parameters or StrategyParameters(min_edge=0.02, min_confidence=0.57, max_spread=0.10),
+            parameters=params,
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
@@ -184,10 +220,18 @@ class MeanReversionStrategy(PolymarketStrategy):
             return None
         fair_value = float(fair_value)
         edge = fair_value - f.price
-        if abs(f.order_imbalance) > 0.80:
+
+        max_imb = float(self.parameters.extra.get("max_imbalance", 0.80))
+        if abs(f.order_imbalance) > max_imb:
             return None
+
         side = "BUY" if edge > 0 else "SELL"
-        confidence = min(1.0, 0.54 + abs(edge) * 5.0 + max(0.0, 0.20 - abs(f.order_imbalance)) * 0.20)
+
+        base_conf = float(self.parameters.extra.get("base_confidence", 0.54))
+        conf_mult = float(self.parameters.extra.get("confidence_multiplier", 5.0))
+        imb_bonus = float(self.parameters.extra.get("imbalance_bonus", 0.20))
+
+        confidence = min(1.0, base_conf + abs(edge) * conf_mult + max(0.0, imb_bonus - abs(f.order_imbalance)) * imb_bonus)
         return self._signal(
             f,
             side=side,
@@ -556,4 +600,5 @@ def build_default_polymarket_strategies() -> list[PolymarketStrategy]:
         MonteCarloEdgeStrategy(),
         PairsTradingStrategy(),
         OpportunisticLiquidityTakerStrategy(),
+        Btc15MinuteFusionStrategy(),
     ]

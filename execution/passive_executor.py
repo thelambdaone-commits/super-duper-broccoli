@@ -14,6 +14,11 @@ class PassiveExecutor:
         self,
         freqai: Any,
         ledger: Optional[Any] = None,
+        wallet_manager: Optional[Any] = None,
+        wallet_private_key: Optional[str] = None,
+        usdc_spender_address: Optional[str] = None,
+        usdc_approval_buffer_multiplier: float = 10.0,
+        usdc_approval_min_buffer_usdc: float = 100.0,
         maker_timeout_seconds: float = 5.0,
         poll_interval: float = 0.5,
         post_only: bool = True,
@@ -23,6 +28,11 @@ class PassiveExecutor:
     ) -> None:
         self.freqai = freqai
         self.ledger = ledger
+        self.wallet_manager = wallet_manager
+        self.wallet_private_key = wallet_private_key
+        self.usdc_spender_address = usdc_spender_address or os.getenv("POLYMARKET_SPENDER_ADDRESS") or os.getenv("CLOB_SPENDER_ADDRESS")
+        self.usdc_approval_buffer_multiplier = usdc_approval_buffer_multiplier
+        self.usdc_approval_min_buffer_usdc = usdc_approval_min_buffer_usdc
         self.maker_timeout = maker_timeout_seconds
         self.poll_interval = poll_interval
         self.post_only = post_only
@@ -96,6 +106,7 @@ class PassiveExecutor:
 
         self._override_strict = override_strict_maker
         try:
+            await self._ensure_usdc_allowance(ticker, side, price, size)
             if self.post_only:
                 result = await self._maker_first(ticker, side, price, size)
             else:
@@ -103,6 +114,36 @@ class PassiveExecutor:
         finally:
             self._override_strict = False
         return result
+
+    async def _ensure_usdc_allowance(self, ticker: str, side: str, price: float, size: float) -> None:
+        if not self.wallet_manager or not self.wallet_private_key:
+            return
+        if not self.usdc_spender_address:
+            logger.debug("USDC allowance skipped for %s: spender address not configured", ticker)
+            return
+        if side.upper() not in {"BUY", "YES", "LONG"}:
+            return
+
+        required_amount = max(0.0, float(price) * float(size))
+        if required_amount <= 0:
+            return
+
+        try:
+            result = await self.wallet_manager.ensure_usdc_allowance(
+                private_key=self.wallet_private_key,
+                spender_address=self.usdc_spender_address,
+                required_amount=required_amount,
+                approval_buffer_multiplier=self.usdc_approval_buffer_multiplier,
+                approval_min_buffer_usdc=self.usdc_approval_min_buffer_usdc,
+            )
+            if not result.get("approved"):
+                logger.warning(
+                    "USDC allowance check failed for %s: %s",
+                    ticker,
+                    result.get("reason", result),
+                )
+        except Exception as exc:
+            logger.warning("USDC allowance check bypassed for %s: %s", ticker, exc)
 
     def _is_strict_maker_only(self) -> bool:
         if getattr(self, "_override_strict", False):
@@ -280,31 +321,30 @@ class PassiveExecutor:
         price: float,
         size: float,
     ) -> dict[str, Any]:
-        # 1. Apply simulated spread
-        # For a BUY, we pay higher; for a SELL, we receive lower.
-        spread_multiplier = 1 + (self.spread_bps / 10000.0) if side == "BUY" else 1 - (self.spread_bps / 10000.0)
-        execution_price = price * spread_multiplier
-        spread_cost = abs(execution_price - price) * size
-        self._metrics["simulated_spread_usd"] += spread_cost
-
-        # 2. Apply simulated slippage (size-based impact)
-        # Simplified model: slippage = factor * (size / avg_liquidity)
-        # We assume 10k USD as "standard" liquidity for base slippage
-        slippage_pct = (size / 10000.0) * self.slippage_factor
-        if side == "BUY":
-            execution_price *= (1 + slippage_pct)
-        else:
-            execution_price *= (1 - slippage_pct)
-
-        slippage_cost = abs(execution_price - (price * spread_multiplier)) * size
-        self._metrics["simulated_slippage_usd"] += slippage_cost
-
         mode = "PAPER"
         if self.ledger:
             try:
                 mode = self.ledger.get_execution_mode()
             except Exception:
                 pass
+        mode = str(mode or "PAPER").upper()
+
+        execution_price = price
+        slippage_pct = 0.0
+        if mode != "PROD":
+            spread_multiplier = 1 + (self.spread_bps / 10000.0) if side == "BUY" else 1 - (self.spread_bps / 10000.0)
+            execution_price = price * spread_multiplier
+            spread_cost = abs(execution_price - price) * size
+            self._metrics["simulated_spread_usd"] += spread_cost
+
+            slippage_pct = (size / 10000.0) * self.slippage_factor
+            if side == "BUY":
+                execution_price *= (1 + slippage_pct)
+            else:
+                execution_price *= (1 - slippage_pct)
+
+            slippage_cost = abs(execution_price - (price * spread_multiplier)) * size
+            self._metrics["simulated_slippage_usd"] += slippage_cost
 
         logger.info(
             f"[{mode}] Executing {side} {ticker} {size} @ {execution_price:.4f} "

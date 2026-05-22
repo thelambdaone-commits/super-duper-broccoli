@@ -8,7 +8,9 @@ class MockCore:
     def __init__(self):
         self.wallet_address = "0xMockAddress123"
         self.passive_executor_allowed = True
+        self._approved_until = 0.0
         self.wallet_manager = MagicMock()
+        self._check_admin_auth = AsyncMock(return_value=True)
 
         # Setup mock layout return
         self.wallet_manager.generer_layout_telegram.return_value = ("Mock Dashboard Layout", MagicMock())
@@ -17,6 +19,10 @@ class MockCore:
             "usdc_proxy": 50.0,
             "eth_balance": 0.05
         })
+
+    def authorize_high_value_trades(self, approver_id, ttl_seconds=900):
+        self._approved_until = ttl_seconds
+        return float(ttl_seconds)
 
 @pytest.mark.asyncio
 async def test_lobstar_command_router_start_routing():
@@ -60,9 +66,10 @@ async def test_lobstar_command_router_dynamic_crypto_sentiment():
     message.reply_text.assert_called_once()
     args, kwargs = message.reply_text.call_args
     text = args[0] if args else kwargs.get("text", "")
-    assert "🪙 LOBSTAR INTELLIGENCE LAYER: SOL" in text
-    assert "5m Rolling Frame" in text
-    assert "AI Sentiment Vector" in text
+    assert "🪙 ALPHA LAYER: SOL" in text
+
+    assert "• Frame: <code>5m</code>" in text
+    assert "AI Sentiment" in text
 
 @pytest.mark.asyncio
 async def test_lobstar_command_router_circuit_breakers():
@@ -86,3 +93,25 @@ async def test_lobstar_command_router_circuit_breakers():
     message.text = "/unfreeze"
     await router.route_telegram_command(update, context)
     assert core.passive_executor_allowed is True
+
+
+@pytest.mark.asyncio
+async def test_lobstar_command_router_approve_high_value_trades():
+    core = MockCore()
+    router = LobstarCommandRouter(platform_core=core)
+
+    update = MagicMock(spec=Update)
+    update.effective_user = MagicMock(id=7413500821)
+    message = AsyncMock(spec=Message)
+    message.text = "/approve 5"
+    update.message = message
+    update.effective_message = message
+
+    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+    context.args = ["5"]
+
+    await router.route_telegram_command(update, context)
+
+    core._check_admin_auth.assert_awaited_once()
+    assert core._approved_until == 300
+    message.reply_text.assert_called_once()

@@ -83,6 +83,25 @@ class InstitutionalMessageFormatter:
         ]
         return "\n".join(lines).strip()
 
+
+def format_main_menu(is_admin: bool = False):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    keyboard = [
+        [
+            InlineKeyboardButton("💼 Wallet", callback_data="wallet_refresh"),
+            InlineKeyboardButton("📈 Markets", callback_data="help_page_2"),
+        ],
+        [
+            InlineKeyboardButton("⚡ Trading", callback_data="help_page_3"),
+        ],
+    ]
+    if is_admin:
+        keyboard[1].append(InlineKeyboardButton("👑 Admin", callback_data="help_page_4"))
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu_main")])
+    text = "<b>📖 LOBSTAR COMMAND CENTER</b>\n\nChoisis une catégorie :"
+    return text, InlineKeyboardMarkup(keyboard)
+
     @staticmethod
     def format_risk_alert(data: Dict[str, Any]) -> str:
         """⚠️ RISK ALERT Report"""
@@ -172,30 +191,29 @@ def format_scan_report(result) -> str:
 
 def format_market_report(markets) -> str:
     if not markets:
-        return "🔍 *Market Discovery*\nNo active contracts found."
-    parts = ["📡 *LIVE MARKET FEED*\n"]
-    for m in markets[:8]:
+        return "🔍 <b>Market Discovery</b>\nNo active contracts found."
+    parts = ["📡 <b>LIVE MARKET FEED</b>\n"]
+    for m in markets[:6]:
         try:
             pct = m.probability_pct
             bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
-            parts.append(f"• *{m.question[:50]}*\n  {bar} `{pct:.0f}%` | `${m.yes_price:.3f}`\n")
+            parts.append(f"• <b>{_html(m.question[:45])}</b>\n  <code>{bar}</code> <code>{pct:.0f}%</code> | <code>${m.yes_price:.3f}</code>\n")
         except Exception:
-            parts.append(f"• {m.question[:50]}\n")
+            parts.append(f"• {_html(m.question[:45])}\n")
     return "\n".join(parts)
 
 
 def format_winning_bets_alert(signals) -> str:
     if not signals:
         return ""
-    parts = ["🏆 *INSTITUTIONAL SIGNAL ALERT*"]
+    parts = ["🏆 <b>SIGNAL ALERT</b>"]
     for s in signals:
         parts.append(
-            f"\n🔹 *{s.market_question[:60]}*"
-            f"\n   Side: `{s.side}` at {s.current_prob:.0f}%"
-            f"\n   Conf: `{s.confidence:.0%}` | Vol: `${s.volume:,.0f}`"
-            f"\n   Sentiment: *{s.sentiment}* | {s.direction}"
+            f"\n🔹 <b>{_html(s.market_question[:55])}</b>"
+            f"\n   Side: <code>{_html(s.side)}</code> | Prob: <code>{s.current_prob:.0f}%</code>"
+            f"\n   Conf: <code>{s.confidence:.0%}</code> | Vol: <code>${s.volume:,.0f}</code>"
         )
-    parts.append("\n⚡ _Execution suggested via /p or direct signal_")
+    parts.append("\n⚡ <i>Execution via /p or direct signal</i>")
     return "\n".join(parts)
 
 

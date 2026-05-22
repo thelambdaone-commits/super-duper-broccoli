@@ -10,90 +10,60 @@ class HelpManager:
             "title": "💼 WALLET",
             "icon": "💼",
             "content": (
-                "```\n"
-                "┌─────────────────────────┐\n"
-                "│    💼 WALLET MANUAL     │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                "• `/wallet add` ↳ Créer wallet généré\n"
-                "• `/wallet import` ↳ Importer wallet existant\n"
-                "• `/wallet use [default|import]` ↳ Activer\n"
-                "• `/wallet swap` ↳ Permuter wallet actif\n"
-                "• `/wallet backup` ↳ Sauvegarder wallet\n"
-                "• `/wallet status` ↳ Status wallet actif\n"
-                "• `/wallet delete` ↳ Supprimer un wallet\n\n"
-                "• `/transfer [adresse] [montant]` ↳ USDC\n"
-                "• `/polymarket [id] [montant]` ↳ Parier\n"
-                "• `/signals` ↳ Voir signaux actifs\n"
-                "─────────────────────────"
+                "<b>💼 WALLET MANUAL</b>\n"
+                "───────────────────\n"
+                "• <code>/wallet add</code> ↳ Créer wallet\n"
+                "• <code>/wallet import</code> ↳ Importer wallet\n"
+                "• <code>/wallet use</code> ↳ Activer wallet\n"
+                "• <code>/wallet backup</code> ↳ Sauvegarder\n"
+                "• <code>/wallet status</code> ↳ Etat actuel\n\n"
+                "• <code>/transfer</code> ↳ Envoyer USDC\n"
+                "• <code>/signals</code> ↳ Voir signaux\n"
             )
         },
         2: {
             "title": "📈 MARKETS",
             "icon": "📈",
             "content": (
-                "```\n"
-                "┌─────────────────────────┐\n"
-                "│    📈 MARKETS MANUAL    │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                "*AI Scoring:*\n"
-                "• `/markets discover` ↳ Meilleurs marchés IA\n"
-                "• `/markets opportunities` ↳ Paris edge %\n"
-                "• `/markets contrarian` ↳ Setup contrarien\n\n"
-                "*Screening:*\n"
-                "• `/markets vcp` ↳ Volatility Contraction\n"
-                "• `/markets canslim` ↳ CANSLIM patterns\n\n"
-                "*Market Info:*\n"
-                "• `/markets list` ↳ Top markets volume\n"
-                "• `/markets feed` ↳ Feed + crypto intel\n"
-                "• `/markets info <id>` ↳ Détails marché\n"
-                "• `/markets search <q>` ↳ Rechercher\n\n"
-                "• `/feed` ↳ Feed unifié\n"
-                "• `/whales` ↳ Suivi baleines\n"
-                "─────────────────────────"
+                "<b>📈 MARKETS MANUAL</b>\n"
+                "───────────────────\n"
+                "<b>AI Scoring:</b>\n"
+                "• <code>/markets discover</code> ↳ Meilleurs marchés\n"
+                "• <code>/markets opportunities</code> ↳ Paris edge %\n\n"
+                "<b>Screening:</b>\n"
+                "• <code>/markets vcp</code> ↳ Volatility patterns\n\n"
+                "<b>Market Info:</b>\n"
+                "• <code>/markets info</code> ↳ Détails marché\n"
+                "• <code>/markets search</code> ↳ Rechercher\n"
+                "• <code>/whales</code> ↳ Suivi baleines\n"
             )
         },
         3: {
             "title": "⚡ TRADING",
             "icon": "⚡",
             "content": (
-                "```\n"
-                "┌─────────────────────────┐\n"
-                "│    ⚡ TRADING MANUAL    │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                "• `/trade [ticker] [size] [side]` ↳ Exécuter\n"
-                "• `/paper [ticker]` ↳ Paper engine\n"
-                "• `/clob [ticker]` ↳ Statut CLOB\n"
-                "• `/ai [prompt]` ↳ Question IA trading\n"
-                "• `/model [action]` ↳ Gestion modèle ML\n\n"
-                "• `/btc5`, `/btc15`, `/btc1h` ↳ BTC horizons\n"
-                "• `/eth5`, `/eth15`, `/eth1h` ↳ ETH horizons\n"
-                "• `/sol5`, `/sol15`, `/sol1h` ↳ SOL horizons\n"
-                "• `/xrp5`, `/xrp15`, `/xrp1h` ↳ XRP horizons\n"
-                "• `/crypto` ↳ Menu crypto interactif\n"
-                "─────────────────────────"
+                "<b>⚡ TRADING MANUAL</b>\n"
+                "───────────────────\n"
+                "• <code>/trade [ticker] [size]</code> ↳ Exécuter\n"
+                "• <code>/paper [ticker]</code> ↳ Paper engine\n"
+                "• <code>/clob [ticker]</code> ↳ Statut CLOB\n"
+                "• <code>/ai [prompt]</code> ↳ Assistant IA\n\n"
+                "• <code>/btc15</code>, <code>/eth1h</code> ↳ Crypto intel\n"
+                "• <code>/crypto</code> ↳ Menu interactif\n"
             )
         },
         4: {
             "title": "👑 ADMIN",
             "icon": "👑",
             "content": (
-                "```\n"
-                "┌─────────────────────────┐\n"
-                "│     👑 ADMIN MANUAL     │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                "• `/risk` ↳ Stats risque portfolio\n"
-                "• `/risk freeze` ↳ Bloquer trading\n"
-                "• `/risk resume` ↳ Reprendre trading\n"
-                "• `/risk kill` ↳ Kill switch global\n\n"
-                "• `/liquidate [user]` ↳ Liquider position\n"
-                "• `/audit` ↳ Audit système complet\n"
-                "• `/mcp [cmd]` ↳ Commandes MCP\n"
-                "• `/dev [cmd]` ↳ Commandes dev\n"
-                "─────────────────────────"
+                "<b>👑 ADMIN MANUAL</b>\n"
+                "───────────────────\n"
+                "• <code>/risk</code> ↳ Stats portfolio\n"
+                "• <code>/risk freeze</code> ↳ Bloquer trading\n"
+                "• <code>/risk resume</code> ↳ Reprendre\n"
+                "• <code>/risk kill</code> ↳ Kill switch global\n\n"
+                "• <code>/audit</code> ↳ Audit complet\n"
+                "• <code>/dev</code> ↳ Commandes dev\n"
             )
         }
     }
@@ -116,7 +86,7 @@ class HelpManager:
         if page > 1:
             row.append(InlineKeyboardButton("◀️ Prec", callback_data=f"help_page_{page-1}"))
 
-        row.append(InlineKeyboardButton("📖 Menu", callback_data="help_menu"))
+        row.append(InlineKeyboardButton("🏠 Menu", callback_data="menu_main"))
 
         if page < HelpManager.MAX_PAGE:
             row.append(InlineKeyboardButton("Suiv ▶️", callback_data=f"help_page_{page+1}"))
@@ -141,14 +111,14 @@ class HelpManager:
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 text=page_data["content"],
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 reply_markup=reply_markup
             )
         else:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=page_data["content"],
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 reply_markup=reply_markup
             )
 
@@ -167,18 +137,22 @@ class HelpManager:
         if is_admin:
             keyboard[1].append(InlineKeyboardButton("👑 Admin", callback_data="help_page_4"))
 
+        keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="menu_main")])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
+
+        text = "<b>📖 LOBSTAR MANUAL</b>\n\nChoisis une catégorie :"
 
         if update.callback_query:
             await update.callback_query.edit_message_text(
-                text="📖 *MANUEL — Menu principal*\n\nChoisis une catégorie :",
-                parse_mode="Markdown",
+                text=text,
+                parse_mode="HTML",
                 reply_markup=reply_markup
             )
         else:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="📖 *MANUEL — Menu principal*\n\nChoisis une catégorie :",
-                parse_mode="Markdown",
+                text=text,
+                parse_mode="HTML",
                 reply_markup=reply_markup
             )

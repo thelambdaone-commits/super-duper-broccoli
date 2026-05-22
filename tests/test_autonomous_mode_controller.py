@@ -56,6 +56,11 @@ def test_mode_promotes_to_shadow_after_profitable_paper(tmp_path):
 
 
 def test_mode_promotes_to_prod_only_with_real_prerequisites(tmp_path, monkeypatch):
+    monkeypatch.delenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", raising=False)
+    monkeypatch.delenv("REAL", raising=False)
+    monkeypatch.delenv("MODE", raising=False)
+    monkeypatch.delenv("PROD_SECOND_FACTOR_SECRET", raising=False)
+
     ledger = _ledger(tmp_path)
     lifecycle = _lifecycle(tmp_path)
     state = lifecycle.states["mean_reversion"]
@@ -77,6 +82,37 @@ def test_mode_promotes_to_prod_only_with_real_prerequisites(tmp_path, monkeypatc
     assert decision.real_ready is True
 
 
+def test_force_prod_bypasses_profitability_gates_but_keeps_prerequisites(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTONOMOUS_FORCE_PROD", "true")
+    monkeypatch.setenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("REAL", "true")
+    monkeypatch.setenv("PROD_SECOND_FACTOR_SECRET", "test-secret")
+
+    ledger = _ledger(tmp_path)
+    lifecycle = _lifecycle(tmp_path)
+
+    decision = AutonomousModeController(ledger, lifecycle).decide()
+
+    assert decision.mode == "PROD"
+    assert decision.reason == "Forced PROD override enabled for non-interactive runtime"
+
+
+def test_force_prod_still_requires_prod_prerequisites(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTONOMOUS_FORCE_PROD", "true")
+    monkeypatch.delenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", raising=False)
+    monkeypatch.delenv("REAL", raising=False)
+    monkeypatch.delenv("MODE", raising=False)
+    monkeypatch.delenv("PROD_SECOND_FACTOR_SECRET", raising=False)
+
+    ledger = _ledger(tmp_path)
+    lifecycle = _lifecycle(tmp_path)
+
+    decision = AutonomousModeController(ledger, lifecycle).decide()
+
+    assert decision.mode == "PAPER"
+    assert "Insufficient" in decision.reason
+
+
 def test_apply_updates_ledger_mode(tmp_path):
     ledger = _ledger(tmp_path)
     lifecycle = _lifecycle(tmp_path)
@@ -87,3 +123,18 @@ def test_apply_updates_ledger_mode(tmp_path):
 
     assert decision.mode == "SHADOW"
     assert ledger.get_execution_mode() == "SHADOW"
+
+
+def test_apply_respects_manual_override(tmp_path):
+    ledger = _ledger(tmp_path)
+    lifecycle = _lifecycle(tmp_path)
+
+    # Manually set mode to PROD via Ledger (simulating Redis hot-swap)
+    ledger.set_execution_mode("PROD", manual=True)
+
+    # Even if logic would suggest PAPER, apply() must honor manual PROD
+    decision = AutonomousModeController(ledger, lifecycle).apply()
+
+    assert decision.mode == "PROD"
+    assert decision.reason == "Manual override active"
+    assert ledger.get_execution_mode() == "PROD"

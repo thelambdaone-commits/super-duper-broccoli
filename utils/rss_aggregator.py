@@ -8,6 +8,18 @@ from urllib.error import URLError
 
 logger = logging.getLogger("RSSAggregator")
 
+DEFAULT_FREE_NEWS_FEEDS = [
+    "https://cointelegraph.com/rss",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://decrypt.co/feed",
+    "https://bitcoinmagazine.com/.rss/full/",
+    "https://cryptoslate.com/feed/",
+    "https://dailyhodl.com/feed/",
+    "https://www.investing.com/rss/news_25.rss",
+    "https://feeds.reuters.com/reuters/businessNews",
+    "https://feeds.reuters.com/reuters/technologyNews",
+]
+
 
 def _parse_rss_bytes(data: bytes, source_url: str) -> List[Dict[str, Any]]:
     """Parse RSS 2.0 or Atom feed bytes into a list of news dicts."""
@@ -72,7 +84,12 @@ class RSSAggregator:
     Fetches market intelligence from configured news feeds.
     """
     def __init__(self, feeds: Optional[List[str]] = None, poll_interval: int = 300):
-        self.feeds = feeds or os.getenv("NEWS_FEEDS", "").split(",")
+        raw_feeds = feeds if feeds is not None else os.getenv("NEWS_FEEDS", "")
+        if isinstance(raw_feeds, str):
+            parsed_feeds = [f.strip() for f in raw_feeds.split(",") if f.strip()]
+        else:
+            parsed_feeds = [f.strip() for f in raw_feeds if f and f.strip()]
+        self.feeds = parsed_feeds or DEFAULT_FREE_NEWS_FEEDS[:]
         self.feeds = [f.strip() for f in self.feeds if f.strip()]
         self.poll_interval = poll_interval
         self._seen = set()

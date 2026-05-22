@@ -46,6 +46,7 @@ class LobstarOrchestrator:
         bot_instance: Any = None,
         predictive_gate_service: Optional[PredictiveGateService] = None,
         signal_router: Optional[SignalRouter] = None,
+        wallet_manager: Any = None,
     ) -> None:
         self.secrets = secrets
         self.execution_mode = execution_mode
@@ -67,6 +68,7 @@ class LobstarOrchestrator:
         self.history = history
         self.trade_notifications = trade_notifications
         self.metrics_exporter = metrics_exporter
+        self.wallet_manager = wallet_manager
         self.circuit_breaker_service = self._normalize_circuit_breaker(circuit_breaker)
         self.predictive_gate_service = predictive_gate_service or self._normalize_predictive_gate()
         self.signal_router = signal_router or self._normalize_signal_router()
@@ -95,18 +97,27 @@ class LobstarOrchestrator:
         # Initialize channel broadcaster for signal distribution
         self.broadcaster = broadcaster or TelegramChannelBroadcaster(bot_instance)
 
+        # Phase 4: Strategy Brain - Signal Fusion (Inspired by Aulekator)
+        from utils.signal_fusion import SignalFusionEngine
+        self.fusion_engine = SignalFusionEngine(threshold=0.60)
+
+        self.price_service = None # Will be injected by Lifecycle
+
         # Ingestion queue and tasks
         self._pending_queue = asyncio.Queue(maxsize=1000)
         self._active_tasks: List[asyncio.Task] = []
         self._queue_worker_task: Optional[asyncio.Task] = None
         self._main_loop = None
+        self._running = False
 
     def start(self) -> None:
+        self._running = True
         self._main_loop = asyncio.get_running_loop()
         self._queue_worker_task = asyncio.create_task(self._process_signal_queue())
         logger.info("⚡ [ORCHESTRATOR] Ingestion and execution worker loop started.")
 
     async def stop(self) -> None:
+        self._running = False
         if self._queue_worker_task:
             self._queue_worker_task.cancel()
         await self._drain_pending_tasks()
@@ -114,6 +125,23 @@ class LobstarOrchestrator:
 
     async def on_signal(self, signal: dict) -> None:
         logger.info("Signal received: %s", self._safe_signal_for_log(signal))
+
+        # --- AULEKATOR: Feed Divergence Detector if price data available ---
+        if "binance_price" in signal:
+            self.fusion_engine.divergence_detector.update_price("BINANCE", signal.get("ticker", "BTC"), signal["binance_price"])
+        if "coinbase_price" in signal:
+            self.fusion_engine.divergence_detector.update_price("COINBASE", signal.get("ticker", "BTC"), signal["coinbase_price"])
+
+        # Auto-inject divergence alpha if detected
+        alpha = self.fusion_engine.divergence_detector.detect_alpha(signal.get("ticker", "BTC"))
+        if alpha:
+            self.fusion_engine.add_signal("divergence_alpha", {
+                "ticker": alpha["ticker"],
+                "side": "BUY" if alpha["direction"] == "UP" else "SELL",
+                "confidence": alpha["confidence"],
+                "source": "divergence_detector"
+            })
+        # -------------------------------------------------------------------
 
         if self._swarm:
             asyncio.create_task(self._swarm.publish_event("SIGNAL_RECEIVED", {
@@ -150,9 +178,22 @@ class LobstarOrchestrator:
         await self._enqueue_signal(signal)
 
     async def _process_signal_queue(self) -> None:
-        while True:
+        consecutive_errors = 0
+        while self._running:
             try:
                 signal = await self._pending_queue.get()
+                consecutive_errors = 0
+
+                # --- AULEKATOR: Auto-feed prices from injected PriceService ---
+                if self.price_service:
+                    latest = self.price_service.get_prices()
+                    ticker = signal.get("ticker", "BTC")
+                    if ticker in latest["BINANCE"]:
+                        self.fusion_engine.divergence_detector.update_price("BINANCE", ticker, latest["BINANCE"][ticker])
+                    if ticker in latest["COINBASE"]:
+                        self.fusion_engine.divergence_detector.update_price("COINBASE", ticker, latest["COINBASE"][ticker])
+                # -------------------------------------------------------------
+
                 try:
                     current_size = self._pending_queue.qsize()
                     if current_size >= 800:
@@ -175,7 +216,11 @@ class LobstarOrchestrator:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error processing signal queue: {e}")
+                consecutive_errors += 1
+                logger.error(f"Error processing signal queue (consecutive={consecutive_errors}): {e}")
+                sleep_for = min(1.0 * (2 ** (consecutive_errors - 1)), 60.0)
+                logger.warning(f"⚠️ [ORCHESTRATOR] Backoff: sleeping {sleep_for:.1f}s")
+                await asyncio.sleep(sleep_for)
 
     async def _confirm_and_cleanup(self, task: asyncio.Task, signal: dict) -> None:
         try:
@@ -323,6 +368,19 @@ class LobstarOrchestrator:
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def _execute_signal_with_cognitive_brain(self, signal: dict) -> dict | None:
+        # 0. Enrich with Social Sentiment (Free Ingestion via snscrape)
+        ticker = signal.get("ticker")
+        if ticker:
+            try:
+                from scrapers.social_scraper import social_scraper
+                social_context = await social_scraper.get_crypto_sentiment_context(ticker)
+                if social_context:
+                    signal["metadata"] = signal.get("metadata", {})
+                    signal["metadata"]["social_sentiment_context"] = social_context
+                    logger.info(f"Enriched signal {ticker} with social sentiment context.")
+            except Exception as e:
+                logger.debug(f"Social enrichment failed: {e}")
+
         signal, allowed = await self._apply_predictive_gate(signal)
         if not allowed:
             return {
@@ -384,7 +442,7 @@ class LobstarOrchestrator:
         if not risk_allowed:
             logger.warning("Portfolio risk gate rejected signal: %s", risk_reason)
             self.notifier.send(
-                f"🛑 *PORTFOLIO RISK GATE*\nTicker: `{signal.get('ticker', 'Unknown')}`\nReason: `{risk_reason}`"
+                f"🛑 <b>PORTFOLIO RISK GATE</b>\nTicker: <code>{signal.get('ticker', 'Unknown')}</code>\nReason: <code>{risk_reason}</code>"
             )
             return {
                 "status": "SKIPPED",
@@ -393,11 +451,61 @@ class LobstarOrchestrator:
                 "side": signal.get("side", "Unknown"),
             }
 
+        # --- AULEKATOR INTEGRATION: Weighted Signal Fusion ---
+        self.fusion_engine.add_signal(signal.get("strategy_id", "llm_council"), signal)
+        consensus = self.fusion_engine.compute_consensus(signal.get("ticker", "UNKNOWN"))
+
+        if consensus:
+            logger.info(f"🏆 [FUSION] Consensus reached for {signal.get('ticker')}: {consensus['side']} (Score: {consensus['score']:.2f})")
+        else:
+            if os.getenv("STRICT_SIGNAL_FUSION", "false").lower() == "true":
+                logger.info(f"⏳ [FUSION] No consensus for {signal.get('ticker')}. Skipping in STRICT mode.")
+                return {
+                    "status": "WAITING_CONSENSUS",
+                    "reason": "Signal Fusion threshold not met",
+                    "ticker": signal.get("ticker"),
+                    "side": signal.get("side"),
+                }
+        # -----------------------------------------------------
+
+        # --- HITL (Human-in-the-Loop) Safeguard ---
+        hitl_threshold = float(os.getenv("HITL_PROD_THRESHOLD_USDC", "50.0"))
+        live_mode = self.ledger.get_execution_mode() if self.ledger else "PAPER"
+
+        # We estimate sizing again for the HITL gate
+        sizing = self.risk.compute_position_size(
+            ticker=signal.get("ticker", "N/A"),
+            side=signal.get("side", "BUY"),
+            price=signal.get("price", 0.5),
+            confidence=signal.get("cognitive_confidence", 0.5),
+            regime_label=label
+        )
+
+        temporary_hitl_approval = bool(
+            getattr(self.listener, "high_value_trades_authorized", lambda: False)()
+        )
+        if live_mode == "PROD" and sizing["capital_at_risk"] >= hitl_threshold:
+            logger.warning(f"⚠️ [HITL] High-value trade detected (${sizing['capital_at_risk']:.2f}). Waiting for manual authorization...")
+            if not os.getenv("AUTONOMOUS_HIGH_VALUE_TRADES", "false").lower() == "true" and not temporary_hitl_approval:
+                msg = (
+                    f"👮 <b>[HITL REQUIRED]</b>\nTrade on <code>{signal.get('ticker')}</code> "
+                    f"($<code>{sizing['capital_at_risk']:.2f}</code>) is paused.\n\n"
+                    "Set <code>AUTONOMOUS_HIGH_VALUE_TRADES=true</code> or use "
+                    "<code>/approve [minutes]</code>."
+                )
+                self.notifier.send(msg)
+                return {
+                    "status": "PAUSED",
+                    "reason": f"HITL Required: Size {sizing['capital_at_risk']:.2f} >= {hitl_threshold}",
+                    "ticker": signal.get("ticker"),
+                }
+        # ------------------------------------------
+
         try:
             await self.broadcaster.diffuser_signal_au_canal({
                 "ticker": signal.get("ticker", signal.get("market", "UNKNOWN")),
                 "side": "YES" if signal.get("side", "").upper() in ["YES", "BUY", "LONG"] else "NO",
-                "regime": signal.get("regime_label", "UNKNOWN"),
+                "regime": label,
                 "p_market": signal.get("price", 0.5),
                 "p_real": signal.get("predictive_probability", 0.0),
                 "edge": signal.get("predictive_edge", 0.0),
@@ -521,6 +629,8 @@ class LobstarOrchestrator:
         Gestionnaire centralisé des clics sur les boutons du portefeuille.
         Résout le problème des boutons qui ne répondent pas et actualise l'affichage en place.
         """
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
         query = update.callback_query
 
         # 1. CRITIQUE : Dit à Telegram que le clic a été reçu (Arrête le chargement infini)
@@ -535,20 +645,18 @@ class LobstarOrchestrator:
 
         # Gestion des actions du portefeuille
         if action == "wallet_refresh":
-            # Récupération des nouveaux soldes en direct
-            from core.wallet_manager import PolymarketWalletManager
-            wallet_manager = PolymarketWalletManager(vault_handler=None, polygon_rpc_url="")
-
-            # Simulation des soldes réels (à remplacer par l'appel RPC réel)
-            soldes = {
-                "usdc_direct": 0.00,
-                "usdc_proxy": 10.00,  # Tes 10 dollars détectés en pUSD !
-                "eth_balance": 19.9692
-            }
+            wallet_manager = self.wallet_manager
+            vault = getattr(wallet_manager, "vault", None)
+            session = vault.obtenir_wallet_session(chat_id) if vault and hasattr(vault, "obtenir_wallet_session") else None
+            wallet_address = (session or {}).get("POLYMARKET_WALLET_ADDRESS", "")
+            if wallet_manager and wallet_address:
+                soldes = await wallet_manager.recuperer_soldes_on_chain(wallet_address)
+            else:
+                soldes = {"usdc_direct": 0.0, "usdc_proxy": 0.0, "eth_balance": 0.0}
 
             texte_mis_a_jour, keyboard = wallet_manager.generer_layout_telegram(
                 wallet_name="session",
-                wallet_address="0xdc5585...cf614E",
+                wallet_address=wallet_address or "unavailable",
                 soldes=soldes,
                 total_connections=1
             )
@@ -559,7 +667,7 @@ class LobstarOrchestrator:
                 message_id=message_id,
                 text=texte_mis_a_jour,
                 reply_markup=keyboard,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             logger.info("🔄 [COCKPIT] Soldes mis à jour et réaffichage propre validé.")
 
@@ -569,16 +677,16 @@ class LobstarOrchestrator:
                 history = history_service.get_historical_performance(limit=10)
                 if history:
                     lines = [f"• {t['ticker']} {t['side']}: ${t['net_pnl']:+.2f} ({'W' if t['is_win'] else 'L'})" for t in history]
-                    text = "📜 *Historique*\n" + "\n".join(lines)
+                    text = "<b>📜 Historique</b>\n" + "\n".join(f"• {line}" for line in lines)
                 else:
-                    text = "📜 *Historique*\nAucune transaction complétée."
+                    text = "<b>📜 Historique</b>\nAucune transaction complétée."
             else:
-                text = "📜 *Historique*\nLedger non disponible."
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="Markdown")
+                text = "<b>📜 Historique</b>\nLedger non disponible."
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML")
 
         elif action == "wallet_orders":
-            text = "📋 *Ordres* :\nConsulte `/trade pnl` dans le chat pour les métriques."
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="Markdown")
+            text = "<b>📋 Ordres</b>\nConsulte <code>/trade pnl</code> dans le chat pour les métriques."
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML")
 
         elif action == "wallet_positions":
             history_service = self.history
@@ -586,12 +694,12 @@ class LobstarOrchestrator:
                 positions = history_service.get_open_positions()
                 if positions:
                     lines = [f"• {p['ticker']} {p['side']} — {p['size']} @ ${p['entry_price']:.4f}" for p in positions[:10]]
-                    text = "📊 *Positions ouvertes*\n" + "\n".join(lines)
+                    text = "<b>📊 Positions ouvertes</b>\n" + "\n".join(f"• {line}" for line in lines)
                 else:
-                    text = "📊 *Positions ouvertes*\nAucune position ouverte."
+                    text = "<b>📊 Positions ouvertes</b>\nAucune position ouverte."
             else:
-                text = "📊 *Positions ouvertes*\nLedger non disponible."
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="Markdown")
+                text = "<b>📊 Positions ouvertes</b>\nLedger non disponible."
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML")
 
         elif action == "wallet_pnl":
             history_service = self.history
@@ -601,24 +709,38 @@ class LobstarOrchestrator:
                 if perf and perf.get("total_trades", 0) > 0:
                     wr = perf["win_rate"] * 100
                     text = (
-                        f"💰 *PnL*\n"
-                        f"Net: `${perf['total_net_pnl']:+.2f}`\n"
-                        f"WR: `{wr:.1f}%` ({perf['winning_trades']}W/{perf['losing_trades']}L)\n"
-                        f"PF: `{perf['profit_factor']:.2f}`"
+                        "<b>💰 PnL</b>\n"
+                        f"Net: <code>${perf['total_net_pnl']:+.2f}</code>\n"
+                        f"WR: <code>{wr:.1f}%</code> ({perf['winning_trades']}W/{perf['losing_trades']}L)\n"
+                        f"PF: <code>{perf['profit_factor']:.2f}</code>"
                     )
                 else:
-                    text = "💰 *PnL*\nAucune donnée. Fais du paper trading d'abord."
+                    text = "<b>💰 PnL</b>\nAucune donnée. Fais du paper trading d'abord."
             else:
-                text = "💰 *PnL*\nLedger non disponible."
-            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="Markdown")
+                text = "<b>💰 PnL</b>\nLedger non disponible."
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode="HTML")
 
         elif action == "wallet_show_key":
-            # Affichage de la clé privée (avec sécurité)
+            # Demande de confirmation avant d'afficher la clé
+            text = (
+                "<b>⚠️ SÉCURITÉ CLÉ PRIVÉE</b>\n"
+                "───────────────────\n"
+                "Voulez-vous vraiment afficher la clé privée ?\n"
+                "Assurez-vous d'être seul et à l'abri des regards."
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Confirmer", callback_data="wallet_reveal_key_confirmed")],
+                [InlineKeyboardButton("❌ Annuler", callback_data="wallet_settings")]
+            ])
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=keyboard, parse_mode="HTML")
+
+        elif action == "wallet_reveal_key_confirmed":
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text="🔑 *Clé privée* :\n⚠️ **NE JAMAIS PARTAGER CETTE CLÉ**\n`0xdc5585...cf614E`",
-                parse_mode="Markdown"
+                text="🔒 <b>Clé privée protégée</b>\nLa clé privée ne peut pas être affichée dans Telegram. Réimporte le wallet si nécessaire.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour", callback_data="wallet_settings")]]),
+                parse_mode="HTML"
             )
 
         elif action == "wallet_change":
@@ -626,17 +748,61 @@ class LobstarOrchestrator:
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text="🔀 *Changer de portefeuille* :\nSélectionnez un portefeuille sauvegardé ou importez-en un nouveau.",
-                parse_mode="Markdown"
+                text="<b>🔀 Changer de portefeuille</b>\nSélectionnez un portefeuille sauvegardé ou importez-en un nouveau.",
+                parse_mode="HTML"
             )
 
         elif action == "wallet_disconnect":
-            # Déconnexion avec confirmation
+            # Demande de confirmation avant déconnexion
+            text = (
+                "<b>❌ DÉCONNEXION</b>\n"
+                "───────────────────\n"
+                "Voulez-vous déconnecter le portefeuille ?\n"
+                "Les clés seront purgées de la RAM."
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Déconnecter", callback_data="wallet_disconnect_confirmed")],
+                [InlineKeyboardButton("❌ Annuler", callback_data="wallet_settings")]
+            ])
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=keyboard, parse_mode="HTML")
+
+        elif action == "wallet_disconnect_confirmed":
+            wallet_manager = self.wallet_manager
+            vault = getattr(wallet_manager, "vault", None)
+            if not vault or not hasattr(vault, "supprimer_wallet_session"):
+                logger.warning("Wallet disconnect requested but no session vault is attached.")
+            else:
+                vault.supprimer_wallet_session(chat_id)
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                text="❌ *Portefeuille déconnecté avec succès*.\nLes clés ont été purgées de la RAM.",
-                parse_mode="Markdown"
+                text="❌ <b>Portefeuille déconnecté</b>.\nLes clés ont été purgées.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Principal", callback_data="menu_main")]]),
+                parse_mode="HTML"
+            )
+
+
+        elif action == "wallet_settings":
+            settings_keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("🔑 Show Private Key", callback_data="wallet_show_key"),
+                        InlineKeyboardButton("🔀 Switch Wallet", callback_data="wallet_change"),
+                    ],
+                    [
+                        InlineKeyboardButton("❌ Disconnect", callback_data="wallet_disconnect"),
+                    ],
+                    [
+                        InlineKeyboardButton("⬅️ Back", callback_data="wallet_refresh"),
+                    ],
+                ]
+            )
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="<b>⚙️ Wallet Settings</b>\nChoisis une action sensible:",
+                reply_markup=settings_keyboard,
+                parse_mode="HTML",
             )
 
         elif action == "menu_main":
@@ -648,6 +814,6 @@ class LobstarOrchestrator:
                 message_id=message_id,
                 text=main_text,
                 reply_markup=main_keyboard,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             logger.info("🏠 [COCKPIT] Retour au menu principal.")

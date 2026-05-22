@@ -26,6 +26,10 @@ function loadDotEnv(filePath) {
 
 const envFile = loadDotEnv(path.join(__dirname, ".env"));
 const env = (key, fallback = undefined) => process.env[key] || envFile[key] || fallback;
+const envBool = (key, fallback = "false") => String(env(key, fallback)).trim().toLowerCase() === "true";
+const realEnabled = envBool("REAL", "false") || String(env("EXECUTION_MODE", "")).trim().toUpperCase() === "PROD";
+const paperEnabled = envBool("PAPER", realEnabled ? "false" : "true");
+const forceProd = envBool("FORCE_PROD", realEnabled ? "true" : "false");
 
 module.exports = {
     apps: [{
@@ -72,9 +76,16 @@ module.exports = {
             SECRET_SOURCE: env("SECRET_SOURCE", "auto"),
             VAULT_ADDR: env("VAULT_ADDR", "false"),
             VAULT_TOKEN: env("VAULT_TOKEN"),
-            // PROD is intentionally not enabled here. main_agentic_clob.py requires
-            // an interactive confirmation plus LOBSTAR_PROD_CONFIRM_SECRET before
-            // any PROD startup can proceed.
+            EXECUTION_MODE: env("EXECUTION_MODE", realEnabled ? "PROD" : "PAPER"),
+            MODE: env("MODE", realEnabled ? "PRD" : "PAPER"),
+            REAL: realEnabled ? "true" : "false",
+            PAPER: paperEnabled ? "true" : "false",
+            FORCE_PROD: forceProd ? "true" : "false",
+            AUTONOMOUS_FORCE_PROD: env("AUTONOMOUS_FORCE_PROD", forceProd ? "true" : "false"),
+            AUTONOMOUS_REAL_EXECUTION_ENABLED: env("AUTONOMOUS_REAL_EXECUTION_ENABLED", "0"),
+            STRICT_SIGNAL_FUSION: env("STRICT_SIGNAL_FUSION", "false"),
+            PROD_SECOND_FACTOR_SECRET: env("PROD_SECOND_FACTOR_SECRET"),
+            LOBSTAR_PROD_CONFIRM_SECRET: env("LOBSTAR_PROD_CONFIRM_SECRET"),
         },
     }, {
         // MCP/API integration server. This process is read/write API surface; keep

@@ -211,8 +211,11 @@ class TestDataIngestion:
 
         class MiniStore:
             def __init__(self):
-                self._conn = None
                 self._data = []
+                self._conn = type("Conn", (), {
+                    "executemany": lambda self, q, rows: None,
+                    "commit": lambda self: None,
+                })()
 
             def record_feature(self, ticker, fname, value, ts=None):
                 pass

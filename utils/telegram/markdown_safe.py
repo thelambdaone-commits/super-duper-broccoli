@@ -8,7 +8,7 @@ Reference: https://docs.python-telegram-bot.org/en/stable/
 """
 
 from typing import Optional, Sequence
-from telegram.helpers import escape_markdown_v2
+from telegram.helpers import escape_markdown
 from telegram.constants import ParseMode
 
 
@@ -29,7 +29,7 @@ def safe_markdown_v2(text: str) -> str:
         >>> price = "50,000.00"
         >>> msg = f"Buy *{safe_markdown_v2(ticker)}* @ {safe_markdown_v2(price)}"
     """
-    return escape_markdown_v2(text)
+    return escape_markdown(text, version=2)
 
 
 def safe_format_trade(

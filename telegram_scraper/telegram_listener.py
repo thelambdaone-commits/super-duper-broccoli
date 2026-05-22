@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, Optional
 import httpx
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.error import NetworkError, RetryAfter, TimedOut
+from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -118,6 +118,9 @@ class TelegramListener:
         self._market_reader = None
         self.command_router = LobstarCommandRouter(platform_core=self)
         self.passive_executor_allowed = True
+        self._high_value_trade_approval_until: float = 0.0
+        self._high_value_trade_approved_by: Optional[int] = None
+        self._ready = asyncio.Event()
 
     def attach_components(
         self,
@@ -193,6 +196,19 @@ class TelegramListener:
                 logger.debug("Ledger mode lookup failed: %s", exc)
         return "unknown"
 
+    def authorize_high_value_trades(self, approver_id: int | None, ttl_seconds: int = 900) -> float:
+        ttl = max(60, int(ttl_seconds))
+        self._high_value_trade_approval_until = time.time() + ttl
+        self._high_value_trade_approved_by = approver_id
+        return self._high_value_trade_approval_until
+
+    def high_value_trades_authorized(self) -> bool:
+        return time.time() < self._high_value_trade_approval_until
+
+    def revoke_high_value_trade_authorization(self) -> None:
+        self._high_value_trade_approval_until = 0.0
+        self._high_value_trade_approved_by = None
+
     async def _telegram_call_with_retry(
         self,
         call: Callable[..., Awaitable[Any]],
@@ -244,6 +260,15 @@ class TelegramListener:
             return True
         except Exception as e:
             logger.warning(f"send_message failed: {e}")
+            return False
+
+    async def wait_until_ready(self, timeout: float = 30.0) -> bool:
+        if self._ready.is_set():
+            return True
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
             return False
 
     async def reply_to(
@@ -307,7 +332,13 @@ class TelegramListener:
         return False
 
     async def _handle_error(self, update: object, context: object) -> None:
-        logger.exception("Telegram handler failed", exc_info=getattr(context, "error", None))
+        error = getattr(context, "error", None)
+        if isinstance(error, BadRequest) and (
+            "query is too old" in str(error).lower() or "query id is invalid" in str(error).lower()
+        ):
+            logger.info("Ignoring expired Telegram callback query: %s", error)
+            return
+        logger.exception("Telegram handler failed", exc_info=error)
         if update is not None:
             await self.reply_to("Erreur interne. Consultez les logs.", update)
 
@@ -346,17 +377,16 @@ class TelegramListener:
             stats = self._copy_agent.get_stats()
             status = "🟢 Running" if self._copy_agent.is_running else "🔴 Stopped"
             msg = (
-                f"🎯 *Copy Trading Status*\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"Target: `{stats['target_wallet'][:10]}...`\n"
+                f"🎯 <b>Copy Trading Status</b>\n"
+                f"───────────────────\n"
+                f"Target: <code>{stats['target_wallet'][:10]}...</code>\n"
                 f"Status: {status}\n"
-                f"Multiplier: {stats['multiplier']*100}%\n"
-                f"Buy Only: {'✅' if stats['buy_only_mode'] else '❌'}\n"
-                f"Trades Copied: {stats['trades_copied']}\n"
-                f"Session Notional: ${stats['session_notional']:.2f}\n\n"
-                "_Usage: /copy start|stop|set <wallet>_"
+                f"Multiplier: <code>{stats['multiplier']*100}%</code>\n"
+                f"Trades: <code>{stats['trades_copied']}</code>\n"
+                f"Session: <b>${stats['session_notional']:.2f}</b>\n\n"
+                "<i>/copy start|stop|set &lt;wallet&gt;</i>"
             )
-            await self.reply_to(msg, update, parse_mode="Markdown")
+            await self.reply_to(msg, update, parse_mode="HTML")
             return
 
         cmd = args[0].lower()
@@ -398,7 +428,7 @@ class TelegramListener:
                     slippage_tolerance=current.slippage_tolerance,
                 )
             )
-            await self.reply_to(f"✅ Target wallet updated to `{wallet[:10]}...`", update, parse_mode="Markdown")
+            await self.reply_to(f"✅ Target wallet updated to <code>{wallet[:10]}...</code>", update, parse_mode="HTML")
         else:
             await self.reply_to("Usage: /copy start|stop|set <wallet>", update)
 
@@ -1935,13 +1965,25 @@ class TelegramListener:
             else:
                 await safe_edit_callback(query, "Scanner not available.", reply_markup=reply_markup)
         elif query.data == "improve":
-            # Trigger self-improvement agent in-place
-            from ai.agents.self_improvement_agent import SelfImprovementAgent
-            agent = SelfImprovementAgent()
-            report = agent.generate_improvement_report()
-            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]])
-            await safe_edit_callback(query, report, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+           # Trigger self-improvement agent in-place
+           from ai.agents.self_improvement_agent import SelfImprovementAgent
+           agent = SelfImprovementAgent()
+           report = agent.generate_improvement_report()
+           reply_markup = InlineKeyboardMarkup([
+               [InlineKeyboardButton("🛡️ Security Audit", callback_data="vibe_audit_security_hardener")],
+               [InlineKeyboardButton("⚡ Perf Audit", callback_data="vibe_audit_performance_profiler")],
+               [InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]
+           ])
+           await safe_edit_callback(query, report, reply_markup=reply_markup, parse_mode="HTML")
+        elif query.data.startswith("vibe_audit_"):
+           persona_id = query.data.replace("vibe_audit_", "")
+           from ai.agents.self_improvement_agent import SelfImprovementAgent
+           agent = SelfImprovementAgent()
+           result = await agent.run_vibe_audit(persona_id)
+           reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]])
+           await safe_edit_callback(query, f"🦞 **Vibe Protocol: {persona_id.upper()}**\n\n{result}", reply_markup=reply_markup, parse_mode="Markdown")
         elif query.data == "balance":
+
             await self._cmd_balance(update, context)
         elif query.data == "wallet":
             await self._cmd_wallet_cockpit(update, context)
@@ -1984,119 +2026,140 @@ class TelegramListener:
     async def start(self) -> None:
         self._running = True
         self._start_time = datetime.now(timezone.utc)
-        worker: Optional[asyncio.Task] = None
-        builder = Application.builder().token(self.bot_token)
-        if self.proxy_url:
-            builder.proxy_url(self.proxy_url)
-        self.application = builder.build()
-        polling_started = False
-        app_started = False
+        consecutive_errors = 0
+        self._ready.clear()
 
-        try:
-            listen_all_chats = False
-            if self.chat_id:
-                chat_filter = filters.Chat(chat_id=self.chat_id)
-                target = f"chat_id={self.chat_id}"
-                if self.channel:
-                    logger.info("CHAT_ID is set; TARGET_CHANNEL is ignored for Telegram filtering.")
-            elif self.channel:
-                chat_filter = filters.Chat(username=self.channel.removeprefix("@"))
-                target = f"@{self.channel}"
-            else:
-                chat_filter = filters.TEXT
-                target = "ALL chats"
-                listen_all_chats = True
-                logger.warning("No CHAT_ID or TARGET_CHANNEL set. Bot will listen to ALL chats.")
+        while self._running:
+            worker: Optional[asyncio.Task] = None
+            polling_started = False
+            app_started = False
 
-            photo_filter = filters.PHOTO if listen_all_chats else chat_filter & filters.PHOTO
+            try:
+                builder = Application.builder().token(self.bot_token)
+                if self.proxy_url:
+                    builder.proxy_url(self.proxy_url)
+                self.application = builder.build()
 
-            if self.allow_private_messages and self.private_chat_ids is None:
-                logger.warning(
-                    "Private Telegram messages are enabled for all private chats. "
-                    "Set TELEGRAM_PRIVATE_CHAT_IDS to restrict access."
-                )
+                listen_all_chats = False
+                if self.chat_id:
+                    chat_filter = filters.Chat(chat_id=self.chat_id)
+                    target = f"chat_id={self.chat_id}"
+                    if self.channel:
+                        logger.info("CHAT_ID is set; TARGET_CHANNEL is ignored for Telegram filtering.")
+                elif self.channel:
+                    chat_filter = filters.Chat(username=self.channel.removeprefix("@"))
+                    target = f"@{self.channel}"
+                else:
+                    chat_filter = filters.TEXT
+                    target = "ALL chats"
+                    listen_all_chats = True
+                    logger.warning("No CHAT_ID or TARGET_CHANNEL set. Bot will listen to ALL chats.")
 
-            self.application.add_handler(CommandHandler("h", self._cmd_help))
-            self.application.add_handler(CommandHandler("help", self._cmd_help))
-            self.application.add_handler(CommandHandler("copy", self._cmd_copy))
-            self.application.add_handler(CommandHandler("s", self._cmd_status))
-            self.application.add_handler(CommandHandler("status", self._cmd_status))
-            self.application.add_handler(CommandHandler("m", self._cmd_mode))
-            self.application.add_handler(CommandHandler("mode", self._cmd_mode))
-            self.application.add_handler(CommandHandler("b", self._cmd_balance))
-            self.application.add_handler(CommandHandler("balance", self._cmd_balance))
-            self.application.add_handler(CommandHandler("p", self._cmd_positions))
-            self.application.add_handler(CommandHandler("positions", self._cmd_positions))
-            self.application.add_handler(CommandHandler("risk", self._cmd_portfolio))
-            self.application.add_handler(CommandHandler("portfolio", self._cmd_portfolio))
-            self.application.add_handler(CommandHandler("r", self._cmd_regime))
-            self.application.add_handler(CommandHandler("regime", self._cmd_regime))
-            self.application.add_handler(CommandHandler("cb", self._cmd_circuit))
-            self.application.add_handler(CommandHandler("circuit", self._cmd_circuit))
-            self.application.add_handler(CommandHandler("ck", self._cmd_check))
-            self.application.add_handler(CommandHandler("check", self._cmd_check))
-            self.application.add_handler(CommandHandler("gen", self._cmd_gen))
-            self.application.add_handler(CommandHandler("generate_wallet", self._cmd_gen))
-            self.application.add_handler(CommandHandler("import", self._cmd_import))
-            self.application.add_handler(CommandHandler("wallets", self._cmd_wallets))
-            self.application.add_handler(CommandHandler("wallet", self._cmd_wallet_cockpit))
+                photo_filter = filters.PHOTO if listen_all_chats else chat_filter & filters.PHOTO
 
-            # Register new institutional command router
-            router = CommandRouter(self, market_reader=self._market_reader, order_manager=getattr(self, '_order_manager', None))
-            router.register_all()
+                if self.allow_private_messages and self.private_chat_ids is None:
+                    logger.warning(
+                        "Private Telegram messages are enabled for all private chats. "
+                        "Set TELEGRAM_PRIVATE_CHAT_IDS to restrict access."
+                    )
 
-            # Register new Lobstar Command Router MessageHandler
-            self.application.add_handler(
-                MessageHandler(
-                    (chat_filter | filters.ChatType.PRIVATE) & filters.TEXT & filters.Regex(r"^/"),
-                    self._handle_command_router
-                ),
-                group=0,
-            )
+                self.application.add_handler(CommandHandler("h", self._cmd_help))
+                self.application.add_handler(CommandHandler("help", self._cmd_help))
+                self.application.add_handler(CommandHandler("copy", self._cmd_copy))
+                self.application.add_handler(CommandHandler("s", self._cmd_status))
+                self.application.add_handler(CommandHandler("status", self._cmd_status))
+                self.application.add_handler(CommandHandler("m", self._cmd_mode))
+                self.application.add_handler(CommandHandler("mode", self._cmd_mode))
+                self.application.add_handler(CommandHandler("b", self._cmd_balance))
+                self.application.add_handler(CommandHandler("balance", self._cmd_balance))
+                self.application.add_handler(CommandHandler("p", self._cmd_positions))
+                self.application.add_handler(CommandHandler("positions", self._cmd_positions))
+                self.application.add_handler(CommandHandler("risk", self._cmd_portfolio))
+                self.application.add_handler(CommandHandler("portfolio", self._cmd_portfolio))
+                self.application.add_handler(CommandHandler("r", self._cmd_regime))
+                self.application.add_handler(CommandHandler("regime", self._cmd_regime))
+                self.application.add_handler(CommandHandler("cb", self._cmd_circuit))
+                self.application.add_handler(CommandHandler("circuit", self._cmd_circuit))
+                self.application.add_handler(CommandHandler("ck", self._cmd_check))
+                self.application.add_handler(CommandHandler("check", self._cmd_check))
+                self.application.add_handler(CommandHandler("gen", self._cmd_gen))
+                self.application.add_handler(CommandHandler("generate_wallet", self._cmd_gen))
+                self.application.add_handler(CommandHandler("import", self._cmd_import))
+                self.application.add_handler(CommandHandler("wallets", self._cmd_wallets))
+                self.application.add_handler(CommandHandler("wallet", self._cmd_wallet_cockpit))
 
-            self.application.add_handler(
-                MessageHandler(chat_filter & filters.TEXT & ~filters.COMMAND, self._handle_message),
-                group=1,
-            )
-            self.application.add_handler(
-                MessageHandler(photo_filter, self._handle_photo),
-                group=1,
-            )
-            if self.allow_private_messages:
+                # Register new institutional command router
+                router = CommandRouter(self, market_reader=self._market_reader, order_manager=getattr(self, '_order_manager', None))
+                router.register_all()
+
+                # Register new Lobstar Command Router MessageHandler
                 self.application.add_handler(
                     MessageHandler(
-                        filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
-                        self._handle_private_message,
+                        (chat_filter | filters.ChatType.PRIVATE) & filters.TEXT & filters.Regex(r"^/"),
+                        self._handle_command_router
                     ),
-                    group=1,
+                    group=0,
                 )
 
-            self.application.add_handler(CallbackQueryHandler(self._handle_callback))
+                self.application.add_handler(
+                    MessageHandler(chat_filter & filters.TEXT & ~filters.COMMAND, self._handle_message),
+                    group=1,
+                )
+                self.application.add_handler(
+                    MessageHandler(photo_filter, self._handle_photo),
+                    group=1,
+                )
+                if self.allow_private_messages:
+                    self.application.add_handler(
+                        MessageHandler(
+                            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+                            self._handle_private_message,
+                        ),
+                        group=1,
+                    )
 
-            await self.application.initialize()
-            await self.application.start()
-            app_started = True
-            await self.application.updater.start_polling()
-            polling_started = True
-            worker = asyncio.create_task(self._lobstar_worker())
+                self.application.add_handler(CallbackQueryHandler(self._handle_callback))
+                self.application.add_error_handler(self._handle_error)
 
-            logger.info(f"TELEGRAM BOT: Listening to {target}")
+                await self.application.initialize()
+                await self.application.start()
+                app_started = True
+                await self.application.updater.start_polling()
+                polling_started = True
+                self._ready.set()
+                worker = asyncio.create_task(self._lobstar_worker())
 
-            while self._running:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self._running = False
-            if worker:
-                worker.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await worker
-            if polling_started:
-                await self.application.updater.stop()
-            if app_started:
-                await self.application.stop()
-            await self.application.shutdown()
+                logger.info(f"TELEGRAM BOT: Listening to {target}")
+                consecutive_errors = 0
+
+                while self._running:
+                    await asyncio.sleep(1)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                consecutive_errors += 1
+                logger.error(f"Telegram listener crash (consecutive={consecutive_errors}): {e}")
+                sleep_for = min(2.0 * (2 ** (consecutive_errors - 1)), 120.0)
+                logger.warning(f"⚠️ [TELEGRAM] Backoff: sleeping {sleep_for:.1f}s before restart")
+                await asyncio.sleep(sleep_for)
+            finally:
+                self._ready.clear()
+                if worker:
+                    worker.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await worker
+                if polling_started:
+                    with contextlib.suppress(Exception):
+                        await self.application.updater.stop()
+                if app_started:
+                    with contextlib.suppress(Exception):
+                        await self.application.stop()
+                if self.application:
+                    with contextlib.suppress(Exception):
+                        await self.application.shutdown()
+                self.application = None
 
     async def stop(self) -> None:
         self._running = False
+        self._ready.clear()

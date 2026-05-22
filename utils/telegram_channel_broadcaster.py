@@ -110,6 +110,6 @@ class TelegramChannelBroadcaster:
         if self.transport:
             return await asyncio.to_thread(self.transport.send_raw_message, text)
         if self.bot:
-            await self.bot.send_message(chat_id=self.channel_id, text=text, parse_mode="MarkdownV2")
+            await self.bot.send_message(chat_id=self.channel_id, text=text, parse_mode="HTML")
             return True
         return False

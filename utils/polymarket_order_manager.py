@@ -1,3 +1,5 @@
+import math
+import time
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -128,64 +130,60 @@ class PolymarketOrderManager:
         side: str,
         price: float,
         amount: float,
-        slippage_tolerance: float = 0.05,  # 5%
+        slippage_tolerance: float = 0.05,
         dry_run: bool = True,
     ) -> PolymarketOrder:
-        """
-        Place a bet on Polymarket.
-
-        Args:
-            market_id: Polymarket market ID
-            token_id: Token ID for the outcome
-            outcome: "YES" or "NO"
-            side: "BUY" or "SELL"
-            price: Price per share (0.0-1.0)
-            amount: Number of shares
-            slippage_tolerance: Acceptable slippage as decimal (0.05 = 5%)
-            dry_run: If True, don't execute
-
-        Returns:
-            PolymarketOrder with transaction details
-        """
         if not self._clob_client:
             return PolymarketOrder(
-                order_id="",
-                market_id=market_id,
-                token_id=token_id,
-                outcome=outcome,
-                side=side,
-                price=price,
-                amount=amount,
-                collateral_value=0,
-                status="failed",
-                created_at=datetime.utcnow(),
+                order_id="", market_id=market_id, token_id=token_id,
+                outcome=outcome, side=side, price=price, amount=amount,
+                collateral_value=0, status="failed", created_at=datetime.utcnow(),
                 error_message="ClobClient not initialized",
             )
 
         try:
+            order_side = "BUY" if side.upper() in ("BUY", "YES", "LONG") else "SELL"
             cost_est = self.estimate_bet_cost(amount, price, side)
-            logger.info(f"Placing order: {side} {amount}x {outcome} @ {price} = ${cost_est['total_cost']:.2f}")
 
             if dry_run:
-                logger.info("DRY RUN: Not placing order")
-                order_id = f"dry_{market_id}_{side}_{datetime.utcnow().timestamp()}"
+                logger.info(f"DRY RUN: {side} {amount}x {outcome} @ {price}")
                 return PolymarketOrder(
-                    order_id=order_id,
-                    market_id=market_id,
-                    token_id=token_id,
-                    outcome=outcome,
-                    side=side,
-                    price=price,
-                    amount=amount,
+                    order_id=f"dry_{token_id}_{int(time.time())}",
+                    market_id=market_id, token_id=token_id, outcome=outcome,
+                    side=side, price=price, amount=amount,
                     collateral_value=cost_est["collateral_or_proceeds"],
-                    status="pending",
-                    created_at=datetime.utcnow(),
+                    status="pending", created_at=datetime.utcnow(),
                 )
 
-            # Create and submit order via ClobClient
-            # Note: Full implementation requires py-clob-client OrderBuilder
-            # For now, return a pending order
-            order_id = f"poly_{market_id}_{int(datetime.utcnow().timestamp())}"
+            from py_clob_client.clob_types import OrderArgs, PartialCreateOrderOptions
+
+            # Robust normalization similar to FreqAIEngine
+            shares = int(math.floor(float(amount)))
+            if shares <= 0:
+                raise ValueError("Amount too small (must be at least 1 share)")
+
+            order_args = OrderArgs(
+                price=float(price),
+                size=shares,
+                side=order_side,
+                token_id=token_id,
+            )
+
+            # Try to get tick size for the market
+            options = None
+            try:
+                market = self._clob_client.get_market(market_id)
+                tick_size = market.get("tick_size")
+                if tick_size:
+                    options = PartialCreateOrderOptions(tick_size=str(tick_size))
+            except Exception:
+                pass
+
+            resp = self._clob_client.create_and_post_order(order_args, options=options)
+            order_id = resp.get("orderID") or resp.get("id")
+
+            if not order_id:
+                raise ValueError(f"No order ID returned: {resp}")
 
             order = PolymarketOrder(
                 order_id=order_id,
@@ -199,25 +197,15 @@ class PolymarketOrderManager:
                 status="pending",
                 created_at=datetime.utcnow(),
             )
-
             self._pending_orders[order_id] = order
-            logger.info(f"Order created: {order_id}")
-
             return order
 
         except Exception as e:
             logger.error(f"Failed to place order: {e}")
             return PolymarketOrder(
-                order_id="",
-                market_id=market_id,
-                token_id=token_id,
-                outcome=outcome,
-                side=side,
-                price=price,
-                amount=amount,
-                collateral_value=0,
-                status="failed",
-                created_at=datetime.utcnow(),
+                order_id="", market_id=market_id, token_id=token_id,
+                outcome=outcome, side=side, price=price, amount=amount,
+                collateral_value=0, status="failed", created_at=datetime.utcnow(),
                 error_message=str(e),
             )
 
@@ -263,6 +251,20 @@ class PolymarketOrderManager:
                 if str(token_dict.get("outcome", "")).upper() == outcome.upper():
                     token_id_str = token_dict.get("token_id")
                     break
+
+            # Dry run must remain dependency-light and should not require web3.
+            amount_to_claim = 0.0
+            target_address = "dry_run"
+
+            if dry_run:
+                logger.info(f"[DRY RUN] Would claim {amount_to_claim:.2f} USDC for address {target_address}")
+                return ClaimReceipt(
+                    market_id=market_id,
+                    outcome=outcome,
+                    amount_claimed=amount_to_claim,
+                    status="pending",
+                    error_message="Dry run active",
+                )
 
             # 2. Setup Web3 provider
             import os
@@ -354,16 +356,6 @@ class PolymarketOrderManager:
                 has_winnings = True
 
             amount_to_claim = max(eoa_balance, proxy_balance) / 10**6  # USDC scales at 6 decimals
-
-            if dry_run:
-                logger.info(f"[DRY RUN] Would claim {amount_to_claim:.2f} USDC for address {target_address}")
-                return ClaimReceipt(
-                    market_id=market_id,
-                    outcome=outcome,
-                    amount_claimed=amount_to_claim,
-                    status="pending",
-                    error_message="Dry run active",
-                )
 
             if not has_winnings:
                 logger.info(f"No active redeemable balance found on-chain for {outcome} on market {market_id}.")

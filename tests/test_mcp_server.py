@@ -22,7 +22,7 @@ def test_mcp_server_specialist_and_skills_registration():
     assert "run_swarm_backtest" in tool_names
     assert "find_arbitrage_opportunities" in tool_names
     assert "calculate_market_making_spreads" in tool_names
-    assert "search_brave_web" in tool_names
+    assert "search_news_feeds" in tool_names
 
     # ── Verify Continuous Improvement is registered ──
     assert "get_continuous_improvement_report" in tool_names

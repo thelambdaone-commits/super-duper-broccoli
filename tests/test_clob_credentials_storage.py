@@ -11,6 +11,7 @@ from utils.vault_handler import VaultHandler
 
 
 TEST_PRIVATE_KEY = "0x" + "1" * 64
+TEST_ENCRYPTION_KEY = "F9U0WUdQxZpg_NTGWJm6_u8x2J1r1JnjBIQI4cfLz68="
 
 
 def _patch_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path) -> str:
@@ -18,7 +19,7 @@ def _patch_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path) -> str:
     data_dir.mkdir()
     wallet_path = str(data_dir / "polymarket.wallet.enc")
     monkeypatch.setenv("DATA_PATH", str(data_dir))
-    monkeypatch.setenv("ENCRYPTION_KEY", "F9U0WUdQxZpg_NTGWJm6_u8x2J1r1JnjBIQI4cfLz68=")
+    monkeypatch.setenv("ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
     monkeypatch.setattr("utils.credential_manager.DEFAULT_DATA_DIR", str(data_dir))
     monkeypatch.setattr("utils.credential_manager.POLYMARKET_WALLET_PATH", wallet_path)
     monkeypatch.setattr("utils.vault_handler.POLYMARKET_WALLET_PATH", wallet_path)
@@ -76,6 +77,24 @@ def test_vault_handler_rejects_env_private_key_without_enc_wallet(monkeypatch: p
         vault.fetch_quantum_secrets()
 
     assert "CLOB_PRIVATE_KEY is missing from user credentials and encrypted vault" in str(exc.value)
+
+
+def test_vault_handler_allows_paper_mode_without_clob_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    _patch_data_dir(monkeypatch, tmp_path)
+    monkeypatch.setenv("SECRET_SOURCE", "env")
+    monkeypatch.setenv("EXECUTION_MODE", "PAPER")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("CHAT_ID", "123")
+    monkeypatch.setenv("ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
+    monkeypatch.delenv("CLOB_PRIVATE_KEY", raising=False)
+    monkeypatch.delenv("VAULT_TOKEN", raising=False)
+    monkeypatch.setenv("VAULT_ADDR", "false")
+
+    vault = VaultHandler()
+    secrets = vault.fetch_quantum_secrets()
+
+    assert secrets["TELEGRAM_BOT_TOKEN"] == "token"
+    assert "CLOB_PRIVATE_KEY" not in secrets
 
 
 def test_credential_manager_rejects_wallet_path_outside_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

@@ -37,6 +37,10 @@ class SelfImprovementAgent:
         The AutonomicHealer uses seek/tell (incremental scanning) which is more
         efficient than reading the last N lines each time.
         """
+        if not os.path.exists(log_file):
+            logger.info("No log file found for self-improvement scan: %s", log_file)
+            return []
+
         try:
             from core.autonomic_healer import LobstarAutonomicHealer
             healer = LobstarAutonomicHealer(log_file_path=log_file)
@@ -54,8 +58,6 @@ class SelfImprovementAgent:
             logger.warning(f"Log analysis via AutonomicHealer failed, falling back: {e}")
             # Fallback: lightweight local pattern scan (no remediation actions)
             findings = []
-            if not os.path.exists(log_file):
-                return []
             with open(log_file, "r") as f:
                 lines = f.readlines()[-500:]
             if sum(1 for l in lines if "latency" in l.lower() and "ms" in l.lower()) > 10:
@@ -140,6 +142,37 @@ class SelfImprovementAgent:
 
         report += "Status: Awaiting validation before autonomous implementation."
         return report
+
+    def get_vibe_audit_prompt(self, persona_id: str) -> Optional[str]:
+        """Retrieves a specific Vibe Protocol audit prompt."""
+        vibe_config_path = "config/vibe_prompts.json"
+        if not os.path.exists(vibe_config_path):
+            return None
+
+        try:
+            with open(vibe_config_path, "r") as f:
+                config = json.load(f)
+
+            for persona in config.get("audit_personas", []):
+                if persona["id"] == persona_id:
+                    return f"### PERSONA: {persona['name']}\n\nINSTRUCTIONS: {persona['instructions']}\n\nOUTPUT_FORMAT: {persona['output_format']}"
+        except Exception as e:
+            logger.error(f"Failed to load Vibe prompts: {e}")
+
+        return None
+
+    async def run_vibe_audit(self, persona_id: str) -> str:
+        """Executes a deep-tissue audit using a Vibe persona."""
+        prompt = self.get_vibe_audit_prompt(persona_id)
+        if not prompt:
+            return f"❌ Error: Persona {persona_id} not found."
+
+        logger.info(f"🚀 Launching Vibe Audit: {persona_id}")
+
+        # In a production environment, this would call the LLM (Groq/OpenRouter)
+        # with the full codebase context or relevant file chunks.
+        # For now, we simulate the audit summary.
+        return f"### {persona_id.upper()} AUDIT INITIATED\n\nInstructions received. Scanning codebase... (Simulated result for demo)"
 
     async def execute_refactor(self, plan: dict):
         """Placeholder for autonomous PR generation."""

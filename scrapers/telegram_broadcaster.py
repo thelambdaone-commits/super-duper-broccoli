@@ -270,24 +270,21 @@ class TelegramBroadcaster:
         if not self.enabled:
             return False
         if not escape_body:
-            title = self._formatter.escape_markdown_v2(alert_data.get("title", "Alert"))
+            title = self._formatter._html(alert_data.get("title", "Alert"))
             body = alert_data.get("message", "")
             severity = str(alert_data.get("severity", "info")).upper()
             emoji = "⚠️" if severity == "WARNING" else "🔴" if severity == "CRITICAL" else "ℹ️"
-            generated_at = self._formatter.escape_markdown_v2(alert_data.get("timestamp") or datetime.now(timezone.utc).strftime("%H:%M:%S UTC"))
             text = (
-                f"{emoji} *LOBSTAR RISK ALERT*\n"
-                "────────────────────────\n"
-                f"*{title}*\n"
+                f"<b>{emoji} RISK ALERT: {title}</b>\n"
+                "───────────────────\n"
                 f"{body}\n"
-                "────────────────────────\n"
-                f"⏱️ _At: {generated_at}_"
+                "───────────────────"
             )
         else:
-            text = self._formatter.format_risk_alert(alert_data)
-        return await self._send(text, parse_mode="MarkdownV2")
+            text = self._formatter.format_risk_alert_html(alert_data)
+        return await self._send(text, parse_mode="HTML")
 
-    async def _send(self, text: str, parse_mode: str = "MARKDOWN") -> bool:
+    async def _send(self, text: str, parse_mode: str = "HTML") -> bool:
         if not self.notifier.enabled:
             logger.info("Telegram broadcaster disabled")
             return False

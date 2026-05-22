@@ -8,6 +8,7 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
+from pydantic import BaseModel, Field, ValidationError
 
 from utils.feature_store import FeatureStore
 
@@ -19,6 +20,16 @@ POLYMARKET_CLOB_WS_URL = os.getenv(
 
 SnapshotCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
 
+class Level(BaseModel):
+    price: float
+    size: float
+
+class ClobSnapshot(BaseModel):
+    asset_id: str = Field(alias="asset_id", default="")
+    market: str = Field(alias="market", default="")
+    bids: list[Level] = Field(default_factory=list)
+    asks: list[Level] = Field(default_factory=list)
+    timestamp: str | int | float = Field(alias="timestamp", default_factory=time.time)
 
 @dataclass(frozen=True)
 class CLOBListenerConfig:
@@ -55,7 +66,7 @@ class CLOBListener:
         for tid in token_ids:
             if tid not in self.token_ids:
                 self.token_ids.append(tid)
-        
+
         self._subscription_queue.put_nowait(token_ids)
         logger.info("Dynamic subscription scheduled for %s token IDs", len(token_ids))
 
@@ -147,7 +158,7 @@ class CLOBListener:
                     # Initial subscription
                     if self.token_ids:
                         await websocket.send(self.subscription_message(self.token_ids))
-                    
+
                     # Task to handle dynamic subscriptions
                     async def subscription_worker():
                         while True:
@@ -159,7 +170,7 @@ class CLOBListener:
                                 self._subscription_queue.task_done()
 
                     worker_task = asyncio.create_task(subscription_worker())
-                    
+
                     try:
                         async for message in websocket:
                             try:
@@ -173,7 +184,7 @@ class CLOBListener:
                         worker_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await worker_task
-                        
+
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -185,17 +196,35 @@ class CLOBListener:
 
     @staticmethod
     def _normalize_snapshot(item: dict[str, Any]) -> Optional[dict[str, Any]]:
-        token_id = str(
-            item.get("asset_id")
-            or item.get("token_id")
-            or item.get("asset")
-            or ""
-        )
-        if not token_id:
+        # 1. Strictly validate using Pydantic
+        try:
+            snapshot = ClobSnapshot.model_validate(item)
+        except ValidationError as e:
+            # Fallback to manual for semi-malformed but usable items
+            # or log and skip for total failure
+            logger.debug(f"Pydantic validation failed, attempting legacy normalization: {e}")
+            token_id = str(item.get("asset_id") or item.get("token_id") or item.get("asset") or "")
+            if not token_id:
+                return None
+            bids_raw = item.get("bids") or item.get("buys") or []
+            asks_raw = item.get("asks") or item.get("sells") or []
+            ts_raw = item.get("timestamp") or item.get("ts")
+
+            # Map back to a clean dict that mimics the validated output
+            snapshot = ClobSnapshot(
+                asset_id=token_id,
+                bids=[Level(price=float(l.get("price", 0)), size=float(l.get("size", 0))) for l in (bids_raw if isinstance(bids_raw, list) else [])],
+                asks=[Level(price=float(l.get("price", 0)), size=float(l.get("size", 0))) for l in (asks_raw if isinstance(asks_raw, list) else [])],
+                timestamp=ts_raw if ts_raw else time.time()
+            )
+
+        token_id = snapshot.asset_id
+        bids = [{"price": l.price, "size": l.size} for l in snapshot.bids]
+        asks = [{"price": l.price, "size": l.size} for l in snapshot.asks]
+
+        if not bids and not asks:
             return None
 
-        bids = _levels(item.get("bids") or item.get("buys") or [])
-        asks = _levels(item.get("asks") or item.get("sells") or [])
         best_bid = bids[0]["price"] if bids else 0.0
         best_ask = asks[0]["price"] if asks else 0.0
         mid = (best_bid + best_ask) / 2.0 if best_bid > 0 and best_ask > 0 else 0.0
@@ -204,7 +233,7 @@ class CLOBListener:
         ask_depth = sum(level["size"] for level in asks[:3])
         total_depth = bid_depth + ask_depth
         imbalance = bid_depth / total_depth if total_depth > 0 else 0.5
-        timestamp = _timestamp(item.get("timestamp") or item.get("ts"))
+        timestamp = _timestamp(snapshot.timestamp)
 
         return {
             "token_id": token_id,

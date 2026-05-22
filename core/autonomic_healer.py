@@ -365,10 +365,12 @@ class LobstarAutonomicHealer:
         logger.info(f"🏥 [AUTONOMIC HEALER] Démarrage du scan continu (interval: {interval_seconds}s)")
 
         try:
+            consecutive_errors = 0
             while True:
                 try:
                     # Analyser les nouveaux logs
                     erreurs = self.analyser_nouveaux_logs()
+                    consecutive_errors = 0
 
                     # Déployer les correctifs
                     for erreur_id in erreurs:
@@ -382,8 +384,15 @@ class LobstarAutonomicHealer:
                     logger.info("💤 [AUTONOMIC HEALER] Scan continu annulé")
                     break
                 except Exception as e:
+                    consecutive_errors += 1
                     logger.error(f"❌ [AUTONOMIC HEALER] Erreur dans la boucle de scan: {e}")
-                    await asyncio.sleep(interval_seconds)
+                    sleep_for = min(interval_seconds * max(1, consecutive_errors), 30.0)
+                    logger.warning(
+                        "⚠️ [AUTONOMIC HEALER] Backoff after %s consecutive errors: sleeping %.1fs",
+                        consecutive_errors,
+                        sleep_for,
+                    )
+                    await asyncio.sleep(sleep_for)
 
         except Exception as e:
             logger.error(f"❌ [AUTONOMIC HEALER] Erreur critique: {e}")

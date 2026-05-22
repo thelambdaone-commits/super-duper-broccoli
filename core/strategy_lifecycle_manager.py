@@ -67,14 +67,17 @@ class SanityReport:
         return self.heartbeat_ok and self.tensor_fallback_ok and self.strict_json_ok and self.risk_veto_ok
 
 
+from utils.config_loader import TRADING_PARAMS
+
 @dataclass
 class StrategyLifecycleConfig:
-    min_sharpe: float = 2.0
+    min_sharpe: float = TRADING_PARAMS["MIN_SHARPE_BACKTEST"]
     min_profit: float = 0.0
     max_drawdown: float = 0.20
     min_backtest_trades: int = 3
-    min_paper_trades: int = 5
+    min_paper_trades: int = TRADING_PARAMS["MIN_PAPER_TRADES"]
     min_paper_profit: float = 0.0
+
     max_paper_slippage: float = 0.04
     max_rejected_orders: int = 0
     max_consecutive_losses: int = 3
@@ -93,6 +96,7 @@ class StrategyLifecycleState:
     sanity: SanityReport = field(default_factory=SanityReport)
     allocation_usdc: float = 0.0
     disabled_reason: str = ""
+    force_real: bool = False
     mutations: list[dict[str, Any]] = field(default_factory=list)
     pnl_history: list[dict[str, Any]] = field(default_factory=list)
     updated_at: float = field(default_factory=time.time)
@@ -123,6 +127,15 @@ class StrategyLifecycleManager:
             for sid, strategy in self.strategies.items()
         }
         self._load_state()
+
+    def register_strategy(self, strategy: PolymarketStrategy) -> None:
+        sid = strategy.strategy_id
+        if sid not in self.strategies:
+            self.strategies[sid] = strategy
+            self.states[sid] = StrategyLifecycleState(strategy_id=sid, name=strategy.name)
+            logger.info(f"New strategy registered in lifecycle: {sid} ({strategy.name})")
+            # Try to reload if state already existed in file
+            self._load_state()
 
     def run_backtests(self, rows_by_strategy: Mapping[str, list[Mapping[str, Any]]] | list[Mapping[str, Any]]) -> dict[str, BacktestMetrics]:
         results: dict[str, BacktestMetrics] = {}
@@ -410,6 +423,7 @@ def _state_from_json(raw: Mapping[str, Any]) -> StrategyLifecycleState:
         sanity=SanityReport(**dict(raw.get("sanity") or {})),
         allocation_usdc=float(raw.get("allocation_usdc", 0.0) or 0.0),
         disabled_reason=str(raw.get("disabled_reason", "")),
+        force_real=bool(raw.get("force_real", False)),
         mutations=list(raw.get("mutations") or []),
         pnl_history=list(raw.get("pnl_history") or []),
         updated_at=float(raw.get("updated_at", time.time())),

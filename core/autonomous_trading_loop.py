@@ -14,6 +14,8 @@ from ledger.ledger_db import Ledger
 from user_data.strategies.base_strategy import MarketFeatures, StrategySignal
 from utils.feature_store import FeatureStore
 
+from utils.config_loader import TRADING_PARAMS
+
 logger = logging.getLogger("AutonomousTradingLoop")
 
 
@@ -24,15 +26,16 @@ class PriceProvider(Protocol):
 
 @dataclass
 class AutonomousTradingConfig:
+    _a = TRADING_PARAMS.get("AUTONOMOUS", {})
     mode: str = "PAPER"
     poll_interval_seconds: float = 5.0
-    default_take_profit_pct: float = 0.12
-    default_stop_loss_pct: float = 0.06
-    trailing_stop_pct: float = 0.04
-    min_signal_edge: float = 0.02
-    max_open_positions_per_strategy: int = 3
-    max_total_open_positions: int = 12
-    default_paper_capital_usdc: float = 10.0
+    default_take_profit_pct: float = float(_a.get("take_profit_pct", 0.12))
+    default_stop_loss_pct: float = float(_a.get("stop_loss_pct", 0.06))
+    trailing_stop_pct: float = float(_a.get("trailing_stop_pct", 0.04))
+    min_signal_edge: float = float(_a.get("min_signal_edge", 0.02))
+    max_open_positions_per_strategy: int = int(_a.get("max_open_positions_per_strategy", 3))
+    max_total_open_positions: int = int(_a.get("max_total_open_positions", 12))
+    default_paper_capital_usdc: float = float(_a.get("default_paper_capital_usdc", 10.0))
     top_k_opportunities: int = 3
     allow_real_execution: bool = field(
         default_factory=lambda: os.getenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", "").strip().lower()
@@ -70,6 +73,7 @@ class AutonomousTradingLoop:
         price_provider: PriceProvider | None = None,
         order_manager: Any | None = None,
         config: AutonomousTradingConfig | None = None,
+        executor: Any | None = None,
     ) -> None:
         self.ledger = ledger
         self.lifecycle = lifecycle or StrategyLifecycleManager()
@@ -77,6 +81,7 @@ class AutonomousTradingLoop:
         self.feature_store = feature_store
         self.price_provider = price_provider
         self.order_manager = order_manager
+        self.executor = executor
         self.config = config or AutonomousTradingConfig(mode=self.ledger.get_execution_mode())
         self.mode_controller = AutonomousModeController(self.ledger, self.lifecycle)
         self.selector = StrategySelector(
@@ -187,19 +192,21 @@ class AutonomousTradingLoop:
             total_capital=self._total_capital(),
         )
         if not selected and features:
-            # Fallback: create one synthetic candidate from the first market so
-            # bootstrap can still seed the calibration loop.
+            # Fallback: seed from the first market using its own feature quality.
             first = next(iter(features_by_market.values()))
             selected = [type("_Scored", (), {
                 "signal": StrategySignal(
                     strategy_id="bootstrap",
                     market_id=first.market_id,
                     ticker=first.ticker,
-                    side="BUY",
+                    side="BUY" if (first.ml_probability or first.semantic_confidence or 0.5) >= first.price else "SELL",
                     price=first.price if first.price > 0 else 0.5,
-                    confidence=max(0.55, min(0.75, first.semantic_confidence or 0.62)),
-                    edge=max(0.02, abs((first.ml_probability or 0.5) - 0.5)),
-                    reason="bootstrap synthetic seed",
+                    confidence=max(0.50, min(0.80, first.semantic_confidence or 0.62)),
+                    edge=max(
+                        0.01,
+                        abs((first.ml_probability if first.ml_probability is not None else first.semantic_confidence or 0.5) - first.price),
+                    ),
+                    reason="bootstrap feature-based seed",
                     metadata={"hmm_regime": first.hmm_regime},
                 )
             })()]
@@ -216,11 +223,12 @@ class AutonomousTradingLoop:
 
             position_id = open_action.position_id
             entry_price = signal.price
-            # Alternate wins/losses to seed both classes while biasing wins
-            # slightly when the signal edge is positive.
-            win = (idx % 3) != 2
-            gain = max(0.02, min(0.15, abs(signal.edge) * 1.5 + signal.confidence * 0.03))
-            exit_price = entry_price * (1.0 + gain if win else 1.0 - gain)
+            # Resolve paper trades using signal-derived direction rather than
+            # alternating synthetic wins/losses.
+            favorable_move = max(0.01, min(0.12, abs(signal.edge) * 1.2 + signal.confidence * 0.02))
+            direction = 1.0 if signal.side.upper() in {"BUY", "YES", "LONG"} else -1.0
+            win = signal.edge >= 0
+            exit_price = entry_price * (1.0 + favorable_move * direction if win else 1.0 - favorable_move * direction)
             pnl = self._position_pnl(signal.side, entry_price, exit_price, self._paper_size_from_action(open_action, signal.price))
             self.ledger.close_paper_position(position_id, exit_price=exit_price, pnl=pnl, is_win=win)
             self.selector.update_feedback(signal.strategy_id, pnl=pnl, slippage=0.0, filled=True)
@@ -317,11 +325,18 @@ class AutonomousTradingLoop:
     def _approved_strategy_signals(self, features: MarketFeatures) -> list[StrategySignal]:
         signals: list[StrategySignal] = []
         for strategy_id, strategy in self.lifecycle.strategies.items():
-            phase = self.lifecycle.states[strategy_id].phase
-            if phase not in {StrategyPhase.PAPER, StrategyPhase.SANITY, StrategyPhase.REAL}:
+            state = self.lifecycle.states[strategy_id]
+            phase = state.phase
+
+            # Autorise PAPER, SANITY, REAL ou si FORCÉ
+            if phase not in {StrategyPhase.PAPER, StrategyPhase.SANITY, StrategyPhase.REAL} and not state.force_real:
                 continue
+
             signal = strategy.generate_signal(features)
             if signal:
+                # Si la stratégie est forcée, on s'assure qu'elle est traitée comme du REAL
+                if state.force_real:
+                    signal.metadata["force_real_execution"] = True
                 signals.append(signal)
         return signals
 
@@ -358,10 +373,44 @@ class AutonomousTradingLoop:
         validation = self.ledger.validate_and_reserve(signal.ticker, signal.side, signal.price, size)
         if not validation.get("authorized"):
             return AutonomousAction("open", "REJECTED", signal.strategy_id, signal.ticker, reason=str(validation.get("reason", "risk rejected")))
+
+        final_size = float(validation.get("size", size))
+
+        # 1. Preferred Path: PassiveExecutor (Maker rebates, chase logic)
+        if self.executor:
+            try:
+                exec_result = await self.executor.execute(
+                    ticker=signal.ticker,
+                    side=signal.side,
+                    price=signal.price,
+                    size=final_size
+                )
+                if exec_result.get("status") in {"FILLED", "TAKER_FILLED"}:
+                    position_id = f"{signal.ticker}-{signal.side}-{int(time.time())}"
+                    self.ledger.record_order(
+                        position_id=position_id,
+                        ticker=signal.ticker,
+                        side=signal.side,
+                        price=signal.price,
+                        size=final_size,
+                        requested_qty=final_size,
+                        filled_qty=float(exec_result.get("filled_size", final_size)),
+                        execution_price=float(exec_result.get("price", signal.price)),
+                        notional_usd=float(exec_result.get("price", signal.price)) * final_size,
+                        exchange_order_id=exec_result.get("order_id"),
+                    )
+                    self.ledger.set_position_sltp(position_id, self._stop_loss_for_signal(signal), self._take_profit_for_signal(signal))
+                    return AutonomousAction("open", "OPENED", signal.strategy_id, signal.ticker, position_id=position_id, reason=signal.reason)
+                else:
+                    return AutonomousAction("open", "FAILED", signal.strategy_id, signal.ticker, reason=str(exec_result.get("error", "executor failed")))
+            except Exception as e:
+                logger.error(f"Executor failed in autonomous loop: {e}")
+                # Fallback to direct manager if executor crashes
+
+        # 2. Legacy/Fallback Path: OrderManager
         if not self.order_manager:
             return AutonomousAction("open", "FAILED", signal.strategy_id, signal.ticker, reason="order manager unavailable")
 
-        final_size = float(validation.get("size", size))
         order = await self.order_manager.place_order(
             market_id=signal.market_id,
             token_id=signal.ticker,

@@ -12,7 +12,6 @@ from utils.secret_validation import normalize_private_key, validate_private_key_
 logger = logging.getLogger("VaultHandler")
 
 REQUIRED_SECRET_KEYS = [
-    "CLOB_PRIVATE_KEY",
     "CLOB_API_KEY",
     "CLOB_API_SECRET",
     "CLOB_API_PASSPHRASE",
@@ -72,6 +71,14 @@ def _normalize_secret_source(value: str | None) -> str:
     if normalized in {"vault", "env", "auto"}:
         return normalized
     return "auto"
+
+
+def _execution_mode() -> str:
+    return (os.getenv("EXECUTION_MODE") or os.getenv("MODE") or "PAPER").upper()
+
+
+def _needs_clob_credentials() -> bool:
+    return _execution_mode() in {"SHADOW", "PROD"}
 
 
 def _load_env_file() -> None:
@@ -176,7 +183,12 @@ class VaultHandler:
             if enc_secrets:
                 logger.info("Loaded wallet profile secrets from encrypted storage")
 
-            for key in REQUIRED_SECRET_KEYS:
+            clob_required = _needs_clob_credentials()
+            keys_to_load = list(REQUIRED_SECRET_KEYS)
+            if clob_required:
+                keys_to_load.insert(0, "CLOB_PRIVATE_KEY")
+
+            for key in keys_to_load:
                 val = None
                 prefer_env_file = self.secret_source == "env" or os.getenv("VAULT_ADDR", "").lower() == "false"
 
@@ -189,8 +201,10 @@ class VaultHandler:
                         val = _resolve_private_key(candidate, source_name)
                         if val:
                             break
-                    if not val:
+                    if not val and clob_required:
                         raise QuantFatal("CLOB_PRIVATE_KEY is missing from user credentials and encrypted vault.")
+                    if not val:
+                        continue
                 else:
                     if key in user_creds:
                         val = user_creds.get(key)
@@ -202,6 +216,8 @@ class VaultHandler:
                         val = enc_secrets.get(key)
 
                 if not val and key in ["CLOB_API_KEY", "CLOB_API_SECRET", "CLOB_API_PASSPHRASE"]:
+                    if not clob_required:
+                        continue
                     pk = validated_secrets.get("CLOB_PRIVATE_KEY", "")
                     if not pk:
                         pk = _resolve_private_key(user_creds.get("CLOB_PRIVATE_KEY"), "user credentials") or "" if user_creds else ""

@@ -29,6 +29,7 @@ master.key
 user_data/strategies/__pycache__/
 user_data/data/
 user_data/models/
+data/ml_weights.json
 .mcp_session/
 
 # Runtime logs and deployment
@@ -80,3 +81,9 @@ scratch/
 .idea/
 *.swp
 *.swo
+
+# IDE Metadata
+.cursor/
+.vscode/
+.idea/
+.antigravity/

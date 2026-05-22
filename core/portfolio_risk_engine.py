@@ -11,8 +11,10 @@ REGIME_SIZING_MULTIPLIER = _REGIME_SIZING_MULTIPLIER
 
 logger = logging.getLogger("PortfolioRiskEngine")
 
+DEFAULT_FALLBACK_CAPITAL_USDC = TRADING_PARAMS["FALLBACK_CAPITAL_USDC"]
 
-BLOCKED_REGIMES = {"ERRATIC_VOLATILITY"}
+
+BLOCKED_REGIMES = set(TRADING_PARAMS["BLOCKED_REGIMES"])
 
 
 class PortfolioRiskEngine:
@@ -27,36 +29,65 @@ class PortfolioRiskEngine:
     ) -> None:
         self.ledger = ledger or _NullLedger()
         self.hmm = hmm_filter
-        self.kelly_fraction: float = 0.25
-        self.max_single_position_pct: float = max(0.0, min(float(max_single_position_pct), 1.0))
+        self.kelly_fraction: float = TRADING_PARAMS["KELLY_FRACTION_DEFAULT"]
+        self.max_single_position_pct: float = float(TRADING_PARAMS["MAX_SINGLE_POSITION_PCT"])
         self.max_correlated_drawdown_pct: float = (
             max(0.0, min(float(max_exposure_pct), 1.0))
             if max_exposure_pct is not None else 0.15
         )
-        self.max_concentration_pct: float = 0.30
-        self.target_portfolio_vol: float = 0.15
+        self.max_concentration_pct: float = TRADING_PARAMS["MAX_CONCENTRATION_PCT"]
+        self.target_portfolio_vol: float = TRADING_PARAMS["TARGET_PORTFOLIO_VOL"]
         self.max_trailing_drawdown_pct: float = (
             max(0.0, min(float(max_drawdown_pct), 1.0))
-            if max_drawdown_pct is not None else max_trailing_drawdown_pct
+            if max_drawdown_pct is not None else abs(TRADING_PARAMS["GLOBAL_DRAWDOWN_LIMIT"])
         )
         self.max_real_notional_usdc: float = float(TRADING_PARAMS.get("MAX_REAL_NOTIONAL_USDC", 6.0))
         self._exposures: dict[str, float] = {}
         self._peak_equity: float = 0.0
-        self._beta_to_btc: dict[str, float] = {
-            "BTC": 1.0, "SOL": 0.8, "ETH": 0.85,
-            "POLY": 0.6, "LINK": 0.7, "ARB": 0.75,
-            "OP": 0.7, "USDC": 0.0,
-        }
+        self._beta_to_btc: dict[str, float] = TRADING_PARAMS["ASSET_BETAS"]
         self._is_drawdown_tripped: bool = False
+        self._drawdown_trip_reason: Optional[str] = None
 
     @property
     def net_beta_exposure_pct(self) -> float:
+        default_beta = self._beta_to_btc.get("DEFAULT", 0.5)
         total = sum(
-            size * self._beta_to_btc.get(t.split("-")[0] if "-" in t else t, 0.5)
+            size * self._beta_to_btc.get(t.split("-")[0] if "-" in t else t, default_beta)
             for t, size in self._exposures.items()
         )
-        cap = self.ledger.get_capital_summary().get("total_capital", 10_000.0)
+        cap = self._resolved_capital_summary().get("total_capital", DEFAULT_FALLBACK_CAPITAL_USDC)
         return (total / cap * 100) if cap > 0 else 0.0
+
+    def _resolved_capital_summary(self) -> dict[str, float]:
+        summary = self.ledger.get_capital_summary() or {}
+        total = summary.get("total_capital")
+        available = summary.get("available_capital")
+
+        try:
+            total_value = float(total)
+        except (TypeError, ValueError):
+            total_value = 0.0
+        try:
+            available_value = float(available)
+        except (TypeError, ValueError):
+            available_value = 0.0
+
+        if total_value <= 0.0:
+            logger.warning(
+                "Ledger returned non-positive capital summary; using conservative fallback of %.2f USDC "
+                "to avoid oversized sizing decisions.",
+                DEFAULT_FALLBACK_CAPITAL_USDC,
+            )
+            total_value = DEFAULT_FALLBACK_CAPITAL_USDC
+            available_value = min(available_value if available_value > 0.0 else total_value, total_value)
+
+        if available_value <= 0.0:
+            available_value = total_value
+
+        return {
+            "total_capital": total_value,
+            "available_capital": min(available_value, total_value),
+        }
 
     def _kelly_size(self, win_prob: float, win_loss_ratio: float, capital: float) -> float:
         win_prob = max(0.0, min(float(win_prob), 1.0))
@@ -104,32 +135,39 @@ class PortfolioRiskEngine:
         return new_net <= max_allowed
 
     def _update_drawdown_tracking(self, current_capital: float) -> Optional[str]:
+        if self._is_drawdown_tripped:
+            return self._drawdown_trip_reason or "DRAWDOWN_LATCHED"
+
         if current_capital > self._peak_equity:
             self._peak_equity = current_capital
 
         if hasattr(self.ledger, "get_global_drawdown"):
             global_drawdown_raw = self.ledger.get_global_drawdown()
             try:
-                global_drawdown = float(global_drawdown_raw)
+                if not isinstance(global_drawdown_raw, (int, float, str)):
+                    global_drawdown = 0.0
+                else:
+                    global_drawdown = float(global_drawdown_raw)
             except (TypeError, ValueError):
                 global_drawdown = 0.0
-            if global_drawdown <= -0.10:
+            drawdown_limit = abs(float(TRADING_PARAMS["GLOBAL_DRAWDOWN_LIMIT"]))
+            if abs(global_drawdown) >= drawdown_limit:
                 self._is_drawdown_tripped = True
+                self._drawdown_trip_reason = f"GLOBAL_DRAWDOWN_TRIPPED:{global_drawdown*100:.1f}%"
                 try:
                     from mcp_agents.mcp_server import emergency_circuit_breaker
                     emergency_circuit_breaker("ENGAGE")
                     logger.critical(f"GLOBAL DRAWDOWN TRIPPED ({global_drawdown*100:.2f}%%). EMERGENCY CIRCUIT BREAKER ENGAGED.")
                 except Exception as e:
                     logger.error(f"Failed to engage emergency circuit breaker: {e}")
-                return f"GLOBAL_DRAWDOWN_TRIPPED:{global_drawdown*100:.1f}%"
+                return self._drawdown_trip_reason
 
         if self._peak_equity > 0:
             drawdown = (self._peak_equity - current_capital) / self._peak_equity
             if drawdown >= self.max_trailing_drawdown_pct:
                 self._is_drawdown_tripped = True
-                return f"DRAWDOWN_TRIPPED:{drawdown*100:.1f}%"
-            if drawdown > 0:
-                self._is_drawdown_tripped = False
+                self._drawdown_trip_reason = f"DRAWDOWN_TRIPPED:{drawdown*100:.1f}%"
+                return self._drawdown_trip_reason
         return None
 
     def compute_position_size(
@@ -143,12 +181,9 @@ class PortfolioRiskEngine:
         asset_volatility: float = 0.5,
         regime_label: str = "LOW_VOLATILITY",
     ) -> dict:
-        cap = self.ledger.get_capital_summary()
-        total = cap.get("total_capital", 10_000.0)
+        cap = self._resolved_capital_summary()
+        total = cap.get("total_capital", DEFAULT_FALLBACK_CAPITAL_USDC)
         available = cap.get("available_capital", total)
-
-        if total <= 0:
-            return self._zero_size_result("NO_CAPITAL")
 
         dd_reason = self._update_drawdown_tracking(total)
         if dd_reason is not None:
@@ -228,7 +263,7 @@ class PortfolioRiskEngine:
         return res.get("capital_at_risk", 0.0)
 
     def get_concentration(self, ticker: str) -> float:
-        cap = self.ledger.get_capital_summary().get("total_capital", 10_000.0)
+        cap = self._resolved_capital_summary().get("total_capital", DEFAULT_FALLBACK_CAPITAL_USDC)
         if cap <= 0:
             return 0.0
         return abs(self._exposures.get(ticker, 0.0)) / cap
@@ -241,7 +276,7 @@ class PortfolioRiskEngine:
         active_positions: dict[str, float] | None = None,
     ) -> tuple[bool, str]:
         active_positions = active_positions or {}
-        cap = current_portfolio_value or 10_000.0
+        cap = current_portfolio_value or DEFAULT_FALLBACK_CAPITAL_USDC
 
         dd_reason = self._update_drawdown_tracking(cap)
         if dd_reason is not None:
@@ -304,12 +339,9 @@ class PortfolioRiskEngine:
         confidence: float = 0.5,
         kelly_fraction: float = 0.25,
     ) -> dict:
-        cap = self.ledger.get_capital_summary()
-        total = cap.get("total_capital", 10_000.0)
+        cap = self._resolved_capital_summary()
+        total = cap.get("total_capital", DEFAULT_FALLBACK_CAPITAL_USDC)
         available = cap.get("available_capital", total)
-
-        if total <= 0:
-            return self._zero_size_result("NO_CAPITAL")
 
         dd_reason = self._update_drawdown_tracking(total)
         if dd_reason is not None:
@@ -373,4 +405,7 @@ class PortfolioRiskEngine:
 
 class _NullLedger:
     def get_capital_summary(self) -> dict:
-        return {"total_capital": 10_000.0, "available_capital": 10_000.0}
+        return {
+            "total_capital": DEFAULT_FALLBACK_CAPITAL_USDC,
+            "available_capital": DEFAULT_FALLBACK_CAPITAL_USDC,
+        }

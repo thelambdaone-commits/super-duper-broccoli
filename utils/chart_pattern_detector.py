@@ -116,3 +116,44 @@ class ChartPatternDetector:
             "model_name": self.model_name,
             "supported_patterns": self._supported_labels,
         }
+
+    def detect_spike(self, ohlcv: list[dict], window: int = 20) -> float:
+        """
+        Calcule un score de spike (anomalie de prix/volume).
+        Retourne une valeur entre -1.0 (crash) et 1.0 (moon).
+        """
+        if len(ohlcv) < 5:
+            return 0.0
+
+        try:
+            import numpy as np
+            closes = np.array([float(x.get("close", x.get("Close", 0))) for x in ohlcv])
+            volumes = np.array([float(x.get("volume", x.get("Volume", 0))) for x in ohlcv])
+
+            if len(closes) < 2:
+                return 0.0
+
+            # Momentum relatif
+            returns = np.diff(closes) / closes[:-1]
+            last_return = returns[-1]
+
+            # Volatilité historique
+            hist_vol = np.std(returns[-window:]) if len(returns) >= window else np.std(returns)
+            if hist_vol == 0:
+                return 0.0
+
+            # Score de prix (Z-score simplifié)
+            price_score = last_return / hist_vol
+
+            # Multiplication par le volume relatif si disponible
+            if len(volumes) > 1 and volumes[-1] > 0:
+                avg_vol = np.mean(volumes[-window:]) if len(volumes) >= window else np.mean(volumes)
+                vol_multiplier = volumes[-1] / avg_vol if avg_vol > 0 else 1.0
+                price_score *= min(3.0, vol_multiplier)  # Cap à 3x pour éviter les outliers extrêmes
+
+            # Normalisation sigmoid-like vers [-1, 1]
+            return float(np.tanh(price_score / 5.0))
+
+        except Exception as e:
+            logger.warning("Spike detection error: %s", e)
+            return 0.0

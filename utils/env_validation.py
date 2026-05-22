@@ -6,8 +6,9 @@ from typing import Iterable
 from utils.exceptions import QuantFatal
 
 
-def _missing(keys: Iterable[str]) -> list[str]:
-    return [key for key in keys if not os.getenv(key)]
+def _missing(keys: Iterable[str], secrets: dict[str, str] | None = None) -> list[str]:
+    secrets = secrets or {}
+    return [key for key in keys if not (os.getenv(key) or secrets.get(key))]
 
 
 def validate_runtime_env(mode: str, secrets: dict[str, str] | None = None) -> None:
@@ -22,7 +23,7 @@ def validate_runtime_env(mode: str, secrets: dict[str, str] | None = None) -> No
     if mode_upper == "PROD" and not (secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")):
         raise QuantFatal("OPENROUTER_API_KEY is required for PROD mode.")
 
-    missing = _missing(required)
+    missing = _missing(required, secrets)
     if missing:
         raise QuantFatal(f"Missing required environment variables for {mode_upper}: {', '.join(sorted(set(missing)))}")
 

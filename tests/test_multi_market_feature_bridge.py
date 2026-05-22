@@ -55,6 +55,25 @@ def test_multi_market_feature_frame_asof_aligns_binance_and_polymarket() -> None
             os.remove(path)
 
 
+def test_binance_window_features_accept_raw_book_ticker_fields() -> None:
+    rows = [
+        (
+            1_700_000_000.0,
+            {"s": "BTCUSDT", "b": "100.00", "a": "100.10", "B": "10.0", "A": "30.0"},
+        ),
+        (
+            1_700_000_060.0,
+            {"s": "BTCUSDT", "b": "101.00", "a": "101.10", "B": "30.0", "A": "10.0"},
+        ),
+    ]
+
+    features = FeatureStore._compute_binance_window_features(rows, 1_700_000_060.0, window_seconds=300)
+
+    assert features["binance_return_1m"] > 0.0
+    assert features["binance_spread_bps"] > 0.0
+    assert features["binance_order_imbalance"] == pytest.approx(0.5)
+
+
 class _FakeFeatureStore:
     def __init__(self, events: list[dict]) -> None:
         self._events = events

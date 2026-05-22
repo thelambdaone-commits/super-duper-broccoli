@@ -14,10 +14,10 @@ def _get_aggregator():
         # For this synchronous skill entrypoint, we'll fetch on-demand if empty.
     return _aggregator
 
-def search_brave_web(query: str, count: int = 5) -> dict:
+def search_news_feeds(query: str, count: int = 5) -> dict:
     """
     Queries local RSS news aggregator for live market intelligence.
-    Replaces paid Brave Search API with free RSS feeds.
+    Replaces paid web search APIs with free RSS feeds.
     """
     agg = _get_aggregator()
 
@@ -95,3 +95,8 @@ def search_brave_web(query: str, count: int = 5) -> dict:
         "results_count": len(fallback_results),
         "results": fallback_results[:count]
     }
+
+
+def search_brave_web(query: str, count: int = 5) -> dict:
+    """Backward-compatible alias for legacy dispatchers."""
+    return search_news_feeds(query, count=count)
