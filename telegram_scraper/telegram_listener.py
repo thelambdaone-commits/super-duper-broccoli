@@ -1027,10 +1027,9 @@ class TelegramListener:
                 return
             total = cap.get("total_capital", 0)
             available = cap.get("available_capital", 0)
-            allocated = cap.get("allocated_pct", 0)
             engaged = total - available
 
-            pct = float(allocated)
+            pct = 100.0
             bar_len = min(max(int(pct / 10), 0), 10)
             bar = "█" * bar_len + "░" * (10 - bar_len)
 
@@ -1039,17 +1038,13 @@ class TelegramListener:
             engaged_str = f"{engaged:,.2f}"
 
             text = (
-                "```\n"
-                "┌────────────────────────────────┐\n"
-                "│     💎 PORTFOLIO VALUATION     │\n"
-                "└────────────────────────────────┘\n"
-                "```\n"
-                f"💰 *Capital Total* : `{total_str} USD`\n"
-                f"💵 *Liquidités* : `{available_str} USD`\n"
-                f"🔒 *Fonds Engagés* : `{engaged_str} USD`\n\n"
-                f"📊 *Allocation Risque* : `{pct:.1f}%`\n"
-                f"`[{bar}]`\n"
-                "────────────────────────"
+                "💎 *Portfolio*\n"
+                "──────────────\n"
+                f"💰 Total: `{total_str} USD`\n"
+                f"💵 Cash: `{available_str} USD`\n"
+                f"🔒 Engagé: `{engaged_str} USD`\n\n"
+                f"📊 Risque: `{pct:.0f}%`\n"
+                f"`[{bar}]`"
             )
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             keyboard = [[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]]
