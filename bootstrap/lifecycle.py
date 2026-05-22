@@ -164,6 +164,13 @@ class BotLifecycle:
         validate_runtime_env(mode, secrets)
         if mode == "PROD":
             await container.sync_real_capital()
+            # New: Reconcile positions to handle fills while bot was offline
+            try:
+                from core.services.reconciliation_service import PositionReconciliationService
+                reconciler = PositionReconciliationService(ledger, secrets.get("POLYMARKET_WALLET_ADDRESS") or secrets.get("WALLET_ADDRESS", ""))
+                await reconciler.reconcile()
+            except Exception as e:
+                logger.error(f"Position reconciliation failed on startup: {e}")
 
         # Start Prometheus Exporter
         try:
