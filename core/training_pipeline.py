@@ -6,9 +6,18 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.calibration import calibration_curve
 from sklearn.model_selection import TimeSeriesSplit
 
+from core.calibration.metrics import (
+    audit_model_calibration,
+    calculate_dissimilarity_index,
+)
+from core.training.model_manager import (
+    list_trained_models,
+    prepare_prediction_input,
+    prune_model_artifacts,
+    should_retrain,
+)
 from utils.feature_store import FeatureStore
 
 logger = logging.getLogger("TrainingPipeline")
@@ -80,39 +89,8 @@ class TrainingPipeline:
             return None, cursor
         return rows[cursor][1], cursor
 
-    @staticmethod
-    def calculate_dissimilarity_index(
-        X_train: np.ndarray,
-        X_live: np.ndarray,
-    ) -> float:
-        train = np.asarray(X_train, dtype=np.float64)
-        live = np.asarray(X_live, dtype=np.float64)
-        if train.ndim != 2 or live.ndim != 2 or train.size == 0 or live.size == 0:
-            return 0.0
-        mean = np.mean(train, axis=0)
-        std = np.std(train, axis=0)
-        std = np.where(std < 1e-8, 1.0, std)
-        z = np.abs((live[-1] - mean) / std)
-        return float(np.max(z))
-
-    @staticmethod
-    def audit_model_calibration(
-        y_true: np.ndarray,
-        y_prob_predicted: np.ndarray,
-        n_bins: int = 10,
-    ) -> dict[str, Any]:
-        y_true_arr = np.asarray(y_true, dtype=np.int32)
-        y_prob_arr = np.asarray(y_prob_predicted, dtype=np.float64)
-        if y_prob_arr.ndim == 2:
-            y_prob_arr = y_prob_arr[:, 1]
-        true_freq, pred_prob = calibration_curve(y_true_arr, y_prob_arr, n_bins=n_bins, strategy="uniform")
-        ece = float(np.mean(np.abs(true_freq - pred_prob))) if len(true_freq) else 0.0
-        return {
-            "ece": round(ece, 6),
-            "true_frequencies": true_freq.tolist(),
-            "pred_probabilities": pred_prob.tolist(),
-            "n_bins": int(n_bins),
-        }
+    calculate_dissimilarity_index = staticmethod(calculate_dissimilarity_index)
+    audit_model_calibration = staticmethod(audit_model_calibration)
 
     def _build_training_set(
         self, ticker: str, feature_names: list[str], target_feature: str = "",
@@ -418,18 +396,7 @@ class TrainingPipeline:
             "ood_alert": ood_alert,
         }
 
-    @staticmethod
-    def _prepare_prediction_input(model: Any, features: np.ndarray) -> Any:
-        feature_names = list(getattr(model, "_feature_names", []) or [])
-        if isinstance(features, pd.DataFrame):
-            if feature_names and list(features.columns) != feature_names and len(feature_names) == features.shape[1]:
-                return features.copy().set_axis(feature_names, axis=1)
-            return features
-
-        arr = np.asarray(features)
-        if arr.ndim == 2 and feature_names and arr.shape[1] == len(feature_names):
-            return pd.DataFrame(arr, columns=feature_names)
-        return arr
+    _prepare_prediction_input = staticmethod(prepare_prediction_input)
 
     def latest_features_as_vector(
         self, ticker: str, max_history: int = 50
@@ -518,15 +485,9 @@ class TrainingPipeline:
         }
 
     def should_retrain(self, ticker: str) -> bool:
-        model_path = os.path.join(self.model_dir, f"{ticker}_hybrid.pkl")
-        if not os.path.exists(model_path):
-            return True
-        mtime = os.path.getmtime(model_path)
-        elapsed = (time.time() - mtime) / 3600
-        return elapsed >= self.retrain_interval
+        return should_retrain(self.model_dir, ticker, self.retrain_interval)
 
     def run_cycle(self, ticker: str) -> Optional[dict]:
-        """Convenience method for health-check triggered retraining."""
         return self.train(ticker)
 
     def auto_retrain_if_needed(
@@ -546,53 +507,10 @@ class TrainingPipeline:
         return results
 
     def list_trained_models(self) -> list[dict]:
-        models: list[dict] = []
-        if not os.path.exists(self.model_dir):
-            return models
-        for f in os.listdir(self.model_dir):
-            if f.endswith("_hybrid.pkl"):
-                path = os.path.join(self.model_dir, f)
-                ticker = f.replace("_hybrid.pkl", "")
-                models.append({
-                    "ticker": ticker,
-                    "path": path,
-                    "size_kb": round(os.path.getsize(path) / 1024, 1),
-                    "mtime": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(),
-                })
-        return models
+        return list_trained_models(self.model_dir)
 
     def prune_model_artifacts(self, ticker: str, keep_latest: int = 2) -> dict[str, int]:
-        """
-        Keep only the active artifacts for a ticker and remove stale pkl files.
-        """
-        removed = 0
-
-        candidates: list[tuple[float, str]] = []
-        if os.path.exists(self.model_dir):
-            for fname in os.listdir(self.model_dir):
-                if fname.startswith(f"{ticker}_") and fname.endswith(".pkl"):
-                    path = os.path.join(self.model_dir, fname)
-                    candidates.append((os.path.getmtime(path), path))
-
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        keep_paths = set()
-        for suffix in ("_hybrid.pkl", "_calibrated.pkl", "_calibrator.pkl"):
-            path = os.path.join(self.model_dir, f"{ticker}{suffix}")
-            if os.path.exists(path):
-                keep_paths.add(path)
-
-        for _, path in candidates:
-            try:
-                if path in keep_paths:
-                    continue
-                os.remove(path)
-                removed += 1
-            except FileNotFoundError:
-                continue
-            except Exception as exc:
-                logger.warning("Failed to prune model artifact %s: %s", path, exc)
-
-        return {"removed": removed, "kept": len(keep_paths)}
+        return prune_model_artifacts(self.model_dir, ticker)
 
     def update_calibration_from_paper_trades(
         self, ticker: str, ledger: Any
