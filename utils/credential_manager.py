@@ -321,10 +321,15 @@ class CredentialManager:
             elif key == "CLOB_API_PASSPHRASE":
                 creds[key] = user_data.get("clob_api_passphrase", "")
 
-        if user_data.get("proxy_wallet"):
-            creds["POLYMARKET_WALLET_ADDRESS"] = user_data["proxy_wallet"]
-        elif user_data.get("address"):
+        # Map both EOA and Proxy
+        if user_data.get("address"):
             creds["POLYMARKET_WALLET_ADDRESS"] = user_data["address"]
+            creds["EOA_ADDRESS"] = user_data["address"]
+        
+        if user_data.get("proxy_wallet"):
+            creds["POLYMARKET_PROXY_WALLET_ADDRESS"] = user_data["proxy_wallet"]
+            # Historically, some services expect the "active" address in this key
+            creds["POLYMARKET_WALLET_ADDRESS"] = user_data["proxy_wallet"]
 
         return creds
 

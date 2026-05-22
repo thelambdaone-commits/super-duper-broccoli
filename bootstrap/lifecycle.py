@@ -167,7 +167,7 @@ class BotLifecycle:
             # New: Reconcile positions to handle fills while bot was offline
             try:
                 from core.services.reconciliation_service import PositionReconciliationService
-                reconciler = PositionReconciliationService(ledger, secrets.get("POLYMARKET_WALLET_ADDRESS") or secrets.get("WALLET_ADDRESS", ""))
+                reconciler = PositionReconciliationService(ledger, self.ctx.secrets.get("POLYMARKET_WALLET_ADDRESS") or self.ctx.secrets.get("EOA_ADDRESS") or self.ctx.secrets.get("WALLET_ADDRESS", ""))
                 await reconciler.reconcile()
             except Exception as e:
                 logger.error(f"Position reconciliation failed on startup: {e}")

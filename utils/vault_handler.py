@@ -266,6 +266,16 @@ class VaultHandler:
                 elif validated_secrets.get("address"):
                     validated_secrets["POLYMARKET_WALLET_ADDRESS"] = validated_secrets["address"]
 
+            if "POLYMARKET_PROXY_WALLET_ADDRESS" not in validated_secrets:
+                if user_creds and user_creds.get("POLYMARKET_PROXY_WALLET_ADDRESS"):
+                    validated_secrets["POLYMARKET_PROXY_WALLET_ADDRESS"] = user_creds["POLYMARKET_PROXY_WALLET_ADDRESS"]
+                elif enc_secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS"):
+                    validated_secrets["POLYMARKET_PROXY_WALLET_ADDRESS"] = enc_secrets["POLYMARKET_PROXY_WALLET_ADDRESS"]
+                elif enc_secrets.get("proxy_wallet"):
+                    validated_secrets["POLYMARKET_PROXY_WALLET_ADDRESS"] = enc_secrets["proxy_wallet"]
+                elif validated_secrets.get("proxy_wallet"):
+                    validated_secrets["POLYMARKET_PROXY_WALLET_ADDRESS"] = validated_secrets["proxy_wallet"]
+
             self.valider_initialisation(validated_secrets)
             return validated_secrets
 

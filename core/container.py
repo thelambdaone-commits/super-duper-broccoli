@@ -37,22 +37,23 @@ class ServiceContainer:
         self.ledger = Ledger()
 
         # Resolve active proxy/funder wallet
-        from utils.credential_manager import CredentialManager
-        funder = None
-        try:
-            mgr = CredentialManager()
-            chat_id = os.getenv("CHAT_ID")
-            if chat_id:
-                for wtype in ["import", "default"]:
-                    try:
-                        u_data = mgr.load_user(chat_id, wtype)
-                        if u_data.get("proxy_wallet"):
-                            funder = u_data["proxy_wallet"]
-                            break
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning(f"Unable to load active proxy wallet: {e}")
+        funder = self.secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS")
+        if not funder:
+            from utils.credential_manager import CredentialManager
+            try:
+                mgr = CredentialManager()
+                chat_id = os.getenv("CHAT_ID")
+                if chat_id:
+                    for wtype in ["import", "default"]:
+                        try:
+                            u_data = mgr.load_user(chat_id, wtype)
+                            if u_data.get("proxy_wallet"):
+                                funder = u_data["proxy_wallet"]
+                                break
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.warning(f"Unable to load active proxy wallet: {e}")
 
         self.freqai = FreqAIEngine(
             private_key=self.secrets["CLOB_PRIVATE_KEY"],
@@ -172,8 +173,8 @@ class ServiceContainer:
         """Syncs the ledger with real-world capital if RPC is available."""
         from core.wallet_manager import PolymarketWalletManager
 
-        wallet_address = os.getenv("POLYMARKET_WALLET_ADDRESS") or os.getenv("WALLET_ADDRESS")
-        proxy_address = os.getenv("POLYMARKET_PROXY_WALLET_ADDRESS") or os.getenv("PROXY_WALLET_ADDRESS")
+        wallet_address = self.secrets.get("POLYMARKET_WALLET_ADDRESS") or self.secrets.get("EOA_ADDRESS") or os.getenv("WALLET_ADDRESS")
+        proxy_address = self.secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS") or os.getenv("PROXY_WALLET_ADDRESS")
         rpc_url = self.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL")
 
         if not wallet_address or not rpc_url:
