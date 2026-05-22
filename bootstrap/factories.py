@@ -53,15 +53,21 @@ def build_telegram_listener(
     if not token:
         raise QuantFatal("TELEGRAM_BOT_TOKEN is missing from Vault/Environment.")
     raw_private = secrets.get("TELEGRAM_PRIVATE_CHAT_IDS") or os.getenv("TELEGRAM_PRIVATE_CHAT_IDS", "")
-    if not raw_private and chat_id:
-        raw_private = str(chat_id)
-    private_chat_ids = parse_private_chat_ids(raw_private)
     raw_admin = secrets.get("TELEGRAM_ADMIN_CHAT_IDS") or os.getenv("TELEGRAM_ADMIN_CHAT_IDS", "")
     admin_chat_ids = parse_chat_ids(raw_admin) or set()
+    if not raw_private:
+        if admin_chat_ids:
+            raw_private = ",".join(str(chat_id) for chat_id in sorted(admin_chat_ids))
+        elif chat_id and chat_id > 0:
+            raw_private = str(chat_id)
+    private_chat_ids = parse_private_chat_ids(raw_private)
+    listener_chat_id = chat_id if chat_id and chat_id > 0 else None
+    if listener_chat_id is None and admin_chat_ids:
+        listener_chat_id = sorted(admin_chat_ids)[0]
     return TelegramListener(
         bot_token=token,
         on_signal=on_signal,
-        chat_id=chat_id,
+        chat_id=listener_chat_id,
         private_chat_ids=private_chat_ids,
         admin_chat_ids=admin_chat_ids,
         access_control=access_control,

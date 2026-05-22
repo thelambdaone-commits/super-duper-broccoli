@@ -43,6 +43,10 @@ def _callback_user_id(query: Any) -> int | None:
     user = getattr(query, "from_user", None)
     return getattr(user, "id", None) if user else None
 
+
+def _is_private_chat_id(chat_id: int | None) -> bool:
+    return chat_id is not None and chat_id > 0
+
 CMD_HELP = (
     "```\n"
     "┌─────────────────────────┐\n"
@@ -303,9 +307,17 @@ class TelegramListener:
         user_id = _effective_user_id(update)
 
         if self.chat_id is None:
+            if self.private_chat_ids is not None or self.admin_chat_ids or self.access_control:
+                if self._is_authorized_private_message(update) or self._is_admin_chat(update):
+                    return True
+                await self.reply_to("Unauthorized.", update)
+                return False
             return True
 
-        if msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id) or self._is_admin_chat(update):
+        if (
+            _is_private_chat_id(self.chat_id)
+            and (msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id))
+        ) or self._is_admin_chat(update):
             return True
 
         await self.reply_to("Unauthorized.", update)
@@ -319,7 +331,9 @@ class TelegramListener:
         user_id = _effective_user_id(update)
 
         is_admin = False
-        if self.chat_id is not None and (msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)):
+        if _is_private_chat_id(self.chat_id) and (
+            msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)
+        ):
             is_admin = True
         elif self.access_control:
             is_admin = self.access_control.est_admin(msg.chat_id) or (user_id is not None and self.access_control.est_admin(user_id))
@@ -1337,7 +1351,9 @@ class TelegramListener:
 
         user_id = _effective_user_id(update)
 
-        if self.chat_id is not None and (msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)):
+        if _is_private_chat_id(self.chat_id) and (
+            msg.chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)
+        ):
             return True
 
         if self.access_control:
@@ -1350,7 +1366,7 @@ class TelegramListener:
         if not msg or not getattr(msg, "photo", None):
             return False
 
-        if self.chat_id is not None and msg.chat_id != self.chat_id and not self._is_admin_chat(update):
+        if _is_private_chat_id(self.chat_id) and msg.chat_id != self.chat_id and not self._is_admin_chat(update):
             return False
         if msg.chat and msg.chat.type == "private":
             if not self._is_authorized_private_message(update) and not self._is_admin_chat(update):
@@ -1446,12 +1462,24 @@ class TelegramListener:
         user_id = _callback_user_id(query)
 
         is_admin = False
-        if self.chat_id is not None and (chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)):
+        if _is_private_chat_id(self.chat_id) and (
+            chat_id == self.chat_id or (user_id is not None and user_id == self.chat_id)
+        ):
             is_admin = True
         elif self.access_control:
             is_admin = self.access_control.est_admin(chat_id) or (user_id is not None and self.access_control.est_admin(user_id))
         else:
             is_admin = chat_id in self.admin_chat_ids or (user_id is not None and user_id in self.admin_chat_ids)
+
+        if not is_admin:
+            logger.warning(
+                "🚨 [SECURITY WARNING: Unauthorized Callback Attempt] Chat ID: %s User ID: %s (callback: %s)",
+                chat_id,
+                user_id,
+                query.data,
+            )
+            await query.answer("Unauthorized.", show_alert=True)
+            return
 
         async def safe_edit_callback(q, text, reply_markup=None, parse_mode=None):
             if hasattr(q, "edit_message_text"):
@@ -1873,11 +1901,6 @@ class TelegramListener:
                         await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
                 return
 
-        if not is_admin:
-            logger.warning(f"🚨 [SECURITY WARNING: Unauthorized Admin Query Attempt] Chat ID: {chat_id} (callback: {query.data})")
-            await query.answer("Unauthorized.", show_alert=True)
-            return
-
         # Handle specific prefix queries first
         if query.data.startswith("wallet_select:"):
             addr = query.data.split(":")[-1]
@@ -2036,7 +2059,11 @@ class TelegramListener:
                 self.application = builder.build()
 
                 listen_all_chats = False
-                if self.chat_id:
+                allowed_private_chat_ids = set(self.private_chat_ids or set()) | set(self.admin_chat_ids)
+                if allowed_private_chat_ids:
+                    chat_filter = filters.Chat(chat_id=sorted(allowed_private_chat_ids))
+                    target = f"private/admin chat_ids={sorted(allowed_private_chat_ids)}"
+                elif _is_private_chat_id(self.chat_id):
                     chat_filter = filters.Chat(chat_id=self.chat_id)
                     target = f"chat_id={self.chat_id}"
                     if self.channel:
