@@ -253,7 +253,7 @@ async def test_risk_alert_escapes_message_text() -> None:
 async def test_notifier_keeps_background_task_and_logs_failure(monkeypatch, caplog) -> None:
     notifier = TelegramNotifier(bot_token="token", chat_id="chat")
 
-    async def failing_send_async(message: str, parse_mode: str = "Markdown") -> bool:
+    async def failing_send_async(message: str, parse_mode: str = "HTML") -> bool:
         raise RuntimeError("telegram boom")
 
     monkeypatch.setattr(notifier, "send_async", failing_send_async)

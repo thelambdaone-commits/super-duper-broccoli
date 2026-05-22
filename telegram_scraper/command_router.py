@@ -257,15 +257,15 @@ class CommandRouter:
         if not await self.listener._check_auth(update): return
         
         welcome_text = (
-            f"👋 *Bienvenue sur LOBSTAR Agent v2*\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"Je suis votre assistant de trading agentique spécialisé sur *Polymarket*.\n\n"
-            f"🔍 *Ce que je peux faire pour vous :*\n"
+            f"👋 <b>Bienvenue sur LOBSTAR Agent v2</b>\n"
+            f"───────────────────\n"
+            f"Je suis votre assistant de trading agentique spécialisé sur <b>Polymarket</b>.\n\n"
+            f"🔍 <b>Ce que je peux faire pour vous :</b>\n"
             f"• Analyser les marchés avec mon conseil d'IA.\n"
             f"• Gérer vos wallets et transferts USDC.\n"
             f"• Exécuter des ordres automatiques ou manuels.\n"
             f"• Surveiller les baleines et les inefficacités.\n\n"
-            f"🚀 _Utilisez les boutons ci-dessous pour commencer._"
+            f"🚀 <i>Utilisez les boutons ci-dessous pour commencer.</i>"
         )
         
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -285,7 +285,7 @@ class CommandRouter:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await self.listener.reply_to(welcome_text, update, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        await self.listener.reply_to(welcome_text, update, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
     def _register_crypto_horizon_commands(self):
         for asset in ("btc", "eth", "sol", "xrp", "hype", "doge", "bnb", "ada", "avax", "link", "sui", "pepe", "wif", "ton", "near"):
@@ -337,7 +337,7 @@ class CommandRouter:
                 format_horizon_sentiment(sentiment, asset, horizon),
                 update,
                 reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.HTML
             )
             logger.info(
                 "Crypto horizon command replied: asset=%s horizon=%s found=%s sent=%s",
@@ -393,33 +393,33 @@ class CommandRouter:
                 return
 
             lines = [
-                f"📡 *MARCHÉS ACTIFS POUR {asset}* 📡",
-                "────────────────────────",
+                f"📡 <b>MARCHÉS ACTIFS POUR {asset}</b>",
+                "───────────────────",
             ]
             for i, m in enumerate(active_markets[:8], 1):
                 try:
                     pct = m.probability_pct
                     bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
                     lines.extend([
-                        f"{i}. *{m.question[:80]}*",
-                        f"   {bar} `{pct:.0f}%` | `${m.yes_price:.3f}`",
-                        f"   Slug: `{m.slug}`",
+                        f"{i}. <b>{m.question[:80]}</b>",
+                        f"   <code>{bar}</code> <code>{pct:.0f}%</code> | <code>${m.yes_price:.3f}</code>",
+                        f"   Slug: <code>{m.slug}</code>",
                         "",
                     ])
                 except Exception:
                     lines.extend([
-                        f"{i}. *{m.question[:80]}*",
-                        f"   Slug: `{m.slug}`",
+                        f"{i}. <b>{m.question[:80]}</b>",
+                        f"   Slug: <code>{m.slug}</code>",
                         "",
                     ])
 
-            lines.append("────────────────────────")
-            lines.append(f"Utilise `BUY <slug> <prix>` pour placer un ordre papier.")
+            lines.append("───────────────────")
+            lines.append("Utilise <code>BUY &lt;slug&gt; &lt;prix&gt;</code> pour placer un ordre papier.")
 
             await self.listener.reply_to(
                 "\n".join(lines).strip(),
                 update,
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.HTML
             )
         except Exception as e:
             logger.error(f"Error in crypto markets search handler: {e}")
@@ -457,15 +457,15 @@ class CommandRouter:
         reply_markup = InlineKeyboardMarkup(asset_rows + [horizon_row])
 
         text = (
-            "🧭 *CENTRE CRYPTO LOBSTAR*\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🧭 <b>CENTRE CRYPTO LOBSTAR</b>\n"
+            "───────────────────\n"
             "Choisis un actif ou un horizon pour ouvrir le bon écran.\n\n"
             "• Les boutons d'actif montrent les marchés actifs.\n"
             "• Les boutons d'horizon ouvrent le sentiment détaillé.\n"
-            "• Les alias `/btc5`, `/eth1h`, etc. restent disponibles.\n"
-            "━━━━━━━━━━━━━━━━━━━━"
+            "• Les alias <code>/btc5</code>, <code>/eth1h</code>, etc. restent disponibles.\n"
+            "───────────────────"
         )
-        await self.listener.reply_to(text, update, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        await self.listener.reply_to(text, update, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
     async def _cmd_all_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
@@ -496,8 +496,8 @@ class CommandRouter:
                 return
 
             lines = [
-                "📡 *TOUS LES MARCHÉS CRYPTO ACTIFS* 📡",
-                "────────────────────────",
+                "📡 <b>TOUS LES MARCHÉS CRYPTO ACTIFS</b>",
+                "───────────────────",
             ]
             for i, m in enumerate(active_crypto_markets[:10], 1):
                 asset_label = classifier._classify_asset(m)
@@ -505,25 +505,25 @@ class CommandRouter:
                     pct = m.probability_pct
                     bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
                     lines.extend([
-                        f"{i}. *[{asset_label}] {m.question[:80]}*",
-                        f"   {bar} `{pct:.0f}%` | `${m.yes_price:.3f}`",
-                        f"   Slug: `{m.slug}`",
+                        f"{i}. <b>[{asset_label}] {m.question[:80]}</b>",
+                        f"   <code>{bar}</code> <code>{pct:.0f}%</code> | <code>${m.yes_price:.3f}</code>",
+                        f"   Slug: <code>{m.slug}</code>",
                         "",
                     ])
                 except Exception:
                     lines.extend([
-                        f"{i}. *[{asset_label}] {m.question[:80]}*",
-                        f"   Slug: `{m.slug}`",
+                        f"{i}. <b>[{asset_label}] {m.question[:80]}</b>",
+                        f"   Slug: <code>{m.slug}</code>",
                         "",
                     ])
 
-            lines.append("────────────────────────")
-            lines.append(f"Utilise `BUY <slug> <prix>` pour placer un ordre papier.")
+            lines.append("───────────────────")
+            lines.append("Utilise <code>BUY &lt;slug&gt; &lt;prix&gt;</code> pour placer un ordre papier.")
 
             await self.listener.reply_to(
                 "\n".join(lines).strip(),
                 update,
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.HTML
             )
         except Exception as e:
             logger.error(f"Error in all crypto markets search handler: {e}")
@@ -637,10 +637,10 @@ class CommandRouter:
                 await self.listener.reply_to(f"🔍 Aucun marché type UpDown actif trouvé{asset_suffix}.", update)
                 return
 
-            header = f"📡 *MARCHÉS CRYPTO UPDOWN ACTIFS ({target_asset})* 📡" if target_asset else "📡 *TOUS LES MARCHÉS CRYPTO UPDOWN ACTIFS* 📡"
+            header = f"📡 <b>MARCHÉS CRYPTO UPDOWN ACTIFS ({target_asset})</b>" if target_asset else "📡 <b>TOUS LES MARCHÉS CRYPTO UPDOWN ACTIFS</b>"
             lines = [
                 header,
-                "────────────────────────",
+                "───────────────────",
             ]
             for i, (asset_label, m) in enumerate(updown_markets[:15], 1):
                 try:
@@ -648,25 +648,25 @@ class CommandRouter:
                     pct = max(yes, no) * 100
                     bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
                     lines.extend([
-                        f"{i}. *[{asset_label}] {m.question[:80]}*",
-                        f"   {bar} `{pct:.0f}%` | `YES: ${yes:.3f} | NO: ${no:.3f}`",
-                        f"   Slug: `{m.slug}`",
+                        f"{i}. <b>[{asset_label}] {m.question[:80]}</b>",
+                        f"   <code>{bar}</code> <code>{pct:.0f}%</code> | <code>YES: ${yes:.3f}</code> <code>NO: ${no:.3f}</code>",
+                        f"   Slug: <code>{m.slug}</code>",
                         "",
                     ])
                 except Exception:
                     lines.extend([
-                        f"{i}. *[{asset_label}] {m.question[:80]}*",
-                        f"   Slug: `{m.slug}`",
+                        f"{i}. <b>[{asset_label}] {m.question[:80]}</b>",
+                        f"   Slug: <code>{m.slug}</code>",
                         "",
                     ])
 
-            lines.append("────────────────────────")
-            lines.append(f"Utilise `BUY <slug> <prix>` pour placer un ordre papier.")
+            lines.append("───────────────────")
+            lines.append("Utilise <code>BUY &lt;slug&gt; &lt;prix&gt;</code> pour placer un ordre papier.")
 
             await self.listener.reply_to(
                 "\n".join(lines).strip(),
                 update,
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.HTML
             )
         except Exception as e:
             logger.error(f"Error in updown markets search handler: {e}")
@@ -683,27 +683,27 @@ class CommandRouter:
             from utils.ai_specialists import list_ai_specialists
             specialists = list_ai_specialists()
             msg = (
-                "🧠 *AI Agents Status / CONSEIL D'IA LOBSTAR*\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *Spécialistes* : `{len(specialists)} agents` actifs\n"
-                "• *LLM Council* : `OpenRouter / Groq` ✅\n"
-                "• *Mémoire* : `Persistante (SQLite)` ✅\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Posez une question directement : `/ai quel est le sentiment sur SOL ?`"
+                "🧠 <b>AI Agents Status / CONSEIL D'IA LOBSTAR</b>\n"
+                "───────────────────\n"
+                f"• <b>Spécialistes</b> : <code>{len(specialists)} agents</code> actifs\n"
+                "• <b>LLM Council</b> : <code>OpenRouter / Groq</code> ✅\n"
+                "• <b>Mémoire</b> : <code>Persistante (SQLite)</code> ✅\n"
+                "───────────────────\n"
+                "Posez une question directement : <code>/ai quel est le sentiment sur SOL ?</code>"
             )
             await self.listener.reply_to(msg, update)
         elif prompt.lower() == "errors":
             try:
                 with open("logs/pm2-error.log", "r") as f:
                     lines = f.readlines()[-10:]
-                msg = "🚨 *DERNIÈRES ERREURS AI*\n━━━━━━━━━━━━━━━━━━━━\n```\n" + "".join(lines) + "\n```"
+                msg = "🚨 <b>DERNIÈRES ERREURS AI</b>\n───────────────────\n<pre>" + "".join(lines) + "</pre>"
                 await self.listener.reply_to(msg, update)
             except Exception as e:
                 await self.listener.reply_to(f"❌ Failed to read logs: {e}", update)
         else:
             status_msg = await self.listener.reply_to(
-                "🤔 *Lobstar AI Council is reflecting...*\n"
-                "🤔 *Le Conseil d'IA Lobstar réfléchit...*\n\n"
+                "🤔 <b>Lobstar AI Council is reflecting...</b>\n"
+                "🤔 <b>Le Conseil d'IA Lobstar réfléchit...</b>\n\n"
                 "• Analyse des signaux de marché...\n"
                 "• Consultation des agents spécialistes...\n"
                 "• Synthèse du Chairman en cours...",
@@ -717,32 +717,32 @@ class CommandRouter:
 
                 if not api_key:
                     final_msg = (
-                        "🚨 *OPENROUTER API KEY MISSING*\n\n"
-                        "🚨 *CLEF API MANQUANTE*\n\n"
-                        "La synthèse multi-agent nécessite une `OPENROUTER_API_KEY`."
+                        "🚨 <b>OPENROUTER API KEY MISSING</b>\n\n"
+                        "🚨 <b>CLEF API MANQUANTE</b>\n\n"
+                        "La synthèse multi-agent nécessite une <code>OPENROUTER_API_KEY</code>."
                     )
-                    await status_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
+                    await status_msg.edit_text(final_msg, parse_mode=ParseMode.HTML)
                     return
 
                 res = await council.ask(prompt)
                 guardrail = council.config.get("safety", {}).get("trading_guardrail", "Avis consultatif uniquement.")
                 final_msg = (
-                    "🧠 *SYNTHÈSE DU CONSEIL D'IA*\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"*Question*: _{prompt}_\n\n"
+                    "🧠 <b>SYNTHÈSE DU CONSEIL D'IA</b>\n"
+                    "───────────────────\n"
+                    f"<b>Question</b>: <i>{prompt}</i>\n\n"
                     f"{res.final_answer}\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🛡️ _{guardrail}_"
+                    "───────────────────\n"
+                    f"🛡️ <i>{guardrail}</i>"
                 )
-                await status_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
+                await status_msg.edit_text(final_msg, parse_mode=ParseMode.HTML)
             except Exception as e:
                 logger.error(f"Error executing AI council prompt: {e}")
-                await status_msg.edit_text(f"❌ *ERREUR AI COUNCIL*\n\nUne erreur est survenue : `{str(e)[:100]}`", parse_mode=ParseMode.MARKDOWN)
+                await status_msg.edit_text(f"❌ <b>ERREUR AI COUNCIL</b>\n\nUne erreur est survenue : <code>{str(e)[:100]}</code>", parse_mode=ParseMode.HTML)
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
         if not self.listener._hmm:
-            await self.listener.reply_to("❌ *ERREUR MODÈLE*\n\nLe filtre HMM n'est pas initialisé.", update)
+            await self.listener.reply_to("❌ <b>ERREUR MODÈLE</b>\n\nLe filtre HMM n'est pas initialisé.", update)
             return
 
         args = context.args
@@ -1040,10 +1040,10 @@ class CommandRouter:
         args = context.args
         if not args:
             await self.listener.reply_to(
-                "❌ *Usage*: `/gsd [--dry-run] [description de l'issue]`\n"
-                "Exemple: `/gsd --dry-run timing delay in websocket`",
+                "❌ <b>Usage</b>: <code>/gsd [--dry-run] [description de l'issue]</code>\n"
+                "Exemple: <code>/gsd --dry-run timing delay in websocket</code>",
                 update,
-                parse_mode=ParseMode.MARKDOWN
+                parse_mode=ParseMode.HTML
             )
             return
 
@@ -1058,12 +1058,12 @@ class CommandRouter:
             return
 
         status_msg = await self.listener.reply_to(
-            f"🚀 *Lancement du GSD Problem Solver Agent...*\n"
-            f"🎯 *Cible*: `{issue_text}`\n"
-            f"⚙️ *Dry-Run*: `{dry_run}`\n\n"
+            f"🚀 <b>Lancement du GSD Problem Solver Agent...</b>\n"
+            f"🎯 <b>Cible</b>: <code>{issue_text}</code>\n"
+            f"⚙️ <b>Dry-Run</b>: <code>{dry_run}</code>\n\n"
             f"⏳ Traitement des phases (Intake, Context, Implementation, Verification)...",
             update,
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.HTML
         )
 
         try:
@@ -1082,28 +1082,28 @@ class CommandRouter:
             handoff = report.phases.get("handoff", {})
 
             msg = (
-                f"📊 *GSD RESOLUTION PROCESS COMPLETE*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚡ *Statut*: `{status_str}`\n\n"
-                f"📋 *Phase A (Intake)*:\n"
+                f"📊 <b>GSD RESOLUTION PROCESS COMPLETE</b>\n"
+                f"───────────────────\n"
+                f"⚡ <b>Statut</b>: <code>{status_str}</code>\n\n"
+                f"📋 <b>Phase A (Intake)</b>:\n"
                 f"• Goal: {intake.get('goal')}\n"
                 f"• Scope: {', '.join(intake.get('scope', []))[:100]}...\n\n"
-                f"🔍 *Phase B (Context)*:\n"
-                f"• Target Files: `{', '.join(context_p.get('priority_files', []))}`\n\n"
-                f"🛠️ *Phase C & D (Code)*:\n"
-                f"• Modified Files: `{', '.join(report.changed_files) or 'None'}`\n"
-                f"• Tests Executed: `{', '.join(report.tests_run) or 'None'}`\n"
-                f"• Residual Risks: `{report.residual_risks}`\n\n"
-                f"📤 *Phase E (Handoff)*:\n"
+                f"🔍 <b>Phase B (Context)</b>:\n"
+                f"• Target Files: <code>{', '.join(context_p.get('priority_files', []))}</code>\n\n"
+                f"🛠️ <b>Phase C & D (Code)</b>:\n"
+                f"• Modified Files: <code>{', '.join(report.changed_files) or 'None'}</code>\n"
+                f"• Tests: <code>{', '.join(report.tests_run) or 'None'}</code>\n"
+                f"• Residual Risks: <code>{report.residual_risks}</code>\n\n"
+                f"📤 <b>Phase E (Handoff)</b>:\n"
                 f"• Summary: {handoff.get('summary')}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📝 _Rapport complet enregistré sous user_data/reports/gsd_issue_resolver_report.md_"
+                f"───────────────────\n"
+                f"📝 <i>Rapport complet: user_data/reports/gsd_issue_resolver_report.md</i>"
             )
-            await status_msg.edit_text(msg, parse_mode=ParseMode.MARKDOWN)
+            await status_msg.edit_text(msg, parse_mode=ParseMode.HTML)
 
         except Exception as e:
             logger.error(f"Error in Telegram GSD command: {e}")
-            await status_msg.edit_text(f"❌ *Erreur GSD Solver Agent:* {str(e)}", parse_mode=ParseMode.MARKDOWN)
+            await status_msg.edit_text(f"❌ <b>Erreur GSD Solver Agent:</b> <code>{str(e)}</code>", parse_mode=ParseMode.HTML)
 
     # NEW WALLET / TRANSFER / POLYMARKET / SIGNALS / MARKETS COMMANDS
 
@@ -1323,34 +1323,34 @@ class CommandRouter:
             if horizon_match:
                 asset, horizon = horizon_match.group(1).upper(), horizon_match.group(2)
                 text = (
-                    f"📈 *MANUEL LOBSTAR — /{target}*\n"
-                    "────────────────────────\n"
-                    f"📂 *Catégorie* : `MARKETS`\n"
-                    f"📝 *Description* : Sentiment du marché crypto pour {asset} sur l'horizon {horizon}.\n"
-                    f"⚡ *Usage* : `/{target}`\n"
-                    f"💡 *Exemple* : `/{target}`\n\n"
-                    f"ℹ️ *Notes* : Construit des probabilités calibrées à partir de Polymarket.\n"
-                    "────────────────────────"
+                    f"📈 <b>MANUEL LOBSTAR — /{target}</b>\n"
+                    "───────────────────\n"
+                    f"📂 <b>Catégorie</b> : <code>MARKETS</code>\n"
+                    f"📝 <b>Description</b> : Sentiment du marché crypto pour {asset} sur l'horizon {horizon}.\n"
+                    f"⚡ <b>Usage</b> : <code>/{target}</code>\n"
+                    f"💡 <b>Exemple</b> : <code>/{target}</code>\n\n"
+                    f"ℹ️ <i>Notes</i> : Construit des probabilités calibrées à partir de Polymarket.\n"
+                    "───────────────────"
                 )
-                await self.listener.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
+                await self.listener.reply_to(text, update, parse_mode=ParseMode.HTML)
                 return
 
             if target in COMMAND_REGISTRY:
                 info = COMMAND_REGISTRY[target]
                 text = (
-                    f"📖 *MANUEL LOBSTAR — /{target}*\n"
-                    "────────────────────────\n"
-                    f"📂 *Catégorie* : `{info['category']}`\n"
-                    f"📝 *Description* : {info['description']}\n"
-                    f"⚡ *Usage* : `{info['usage']}`\n"
-                    f"💡 *Exemple* : `{info['example']}`\n\n"
-                    f"ℹ️ *Notes* : {info['notes']}\n"
-                    "────────────────────────"
+                    f"📖 <b>MANUEL LOBSTAR — /{target}</b>\n"
+                    "───────────────────\n"
+                    f"📂 <b>Catégorie</b> : <code>{info['category']}</code>\n"
+                    f"📝 <b>Description</b> : {info['description']}\n"
+                    f"⚡ <b>Usage</b> : <code>{info['usage']}</code>\n"
+                    f"💡 <b>Exemple</b> : <code>{info['example']}</code>\n\n"
+                    f"ℹ️ <i>Notes</i> : {info['notes']}\n"
+                    "───────────────────"
                 )
-                await self.listener.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
+                await self.listener.reply_to(text, update, parse_mode=ParseMode.HTML)
                 return
             else:
-                await self.listener.reply_to(f"🔍 Commande `/{target}` introuvable. Tapez `/man` pour voir le menu.", update)
+                await self.listener.reply_to(f"🔍 Commande <code>/{target}</code> introuvable. Tapez <code>/man</code> pour voir le menu.", update)
                 return
 
         from utils.help_manager import HelpManager

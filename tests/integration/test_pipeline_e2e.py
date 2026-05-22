@@ -24,7 +24,7 @@ class FakeNotifier:
     def __init__(self) -> None:
         self.messages: list[str] = []
 
-    def send(self, message: str, parse_mode: str = "Markdown") -> bool:
+    def send(self, message: str, parse_mode: str = "HTML") -> bool:
         self.messages.append(message)
         return True
 

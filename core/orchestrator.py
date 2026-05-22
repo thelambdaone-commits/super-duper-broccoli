@@ -207,7 +207,7 @@ class LobstarOrchestrator:
                             f"🚨 SYSTEM INGESTION WARNING: Ingest queue is 80% saturated ({current_size}/1000)!"
                         )
                         self.notifier.send(
-                            f"⚠️ *INGESTION ALERT*\nIngest queue is 80% saturated: `{current_size}/1000`!"
+                            f"⚠️ <b>INGESTION ALERT</b>\nIngest queue is 80% saturated: <code>{current_size}/1000</code>!"
                         )
 
                     task = asyncio.create_task(self._confirm_and_cleanup(
@@ -271,7 +271,7 @@ class LobstarOrchestrator:
         if self.circuit_breaker_service.check_signal(signal):
             return False
         logger.error("CIRCUIT BREAKER OPEN. Skipping signal.")
-        self.notifier.send("🛑 *CIRCUIT BREAKER OPEN*\nTrading paused due to consecutive failures.")
+        self.notifier.send("🛑 <b>CIRCUIT BREAKER OPEN</b>\nTrading paused due to consecutive failures.")
         await self.broadcaster.diffuser_alerte_risque_au_canal({
             "title": "Circuit Breaker Activated",
             "message": "Trading paused due to consecutive failures. Manual intervention required.",
@@ -327,7 +327,7 @@ class LobstarOrchestrator:
                 self._pending_queue.put_nowait(signal)
             except asyncio.QueueFull:
                 logger.critical("🚨 INGESTION QUEUE FULL: Signal dropped!")
-                self.notifier.send("🚨 *INGESTION ALERT*\nIngest queue is completely full! Signal dropped.")
+                self.notifier.send("🚨 <b>INGESTION ALERT</b>\nIngest queue is completely full! Signal dropped.")
                 await self.broadcaster.diffuser_alerte_risque_au_canal({
                     "title": "Ingestion Queue Full",
                     "message": "Signal queue is completely full. Possible signal loss.",

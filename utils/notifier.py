@@ -45,7 +45,7 @@ class TelegramNotifier:
             self.enabled = False
             logger.info("Telegram signals disabled via config")
 
-    def send(self, message: str, parse_mode: str = "Markdown") -> bool:
+    def send(self, message: str, parse_mode: str = "HTML") -> bool:
         if not self.enabled:
             return False
 
@@ -77,7 +77,7 @@ class TelegramNotifier:
                 logger.warning(f"Failed to send Telegram notification: {e}")
             return False
 
-    async def send_async(self, message: str, parse_mode: str = "Markdown") -> bool:
+    async def send_async(self, message: str, parse_mode: str = "HTML") -> bool:
         if not self.enabled:
             return False
 

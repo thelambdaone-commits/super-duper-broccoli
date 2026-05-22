@@ -20,18 +20,18 @@ async def handle_polymarket_bet(
         
         if len(args) < 4:
             help_text = """
-Usage: `/polymarket bet <market_id> <outcome> <amount> [--dry-run]`
+Usage: <code>/polymarket bet &lt;market_id&gt; &lt;outcome&gt; &lt;amount&gt; [--dry-run]</code>
 
-**Outcomes:** YES, NO
+<b>Outcomes:</b> YES, NO
 
-**Example:**
-`/polymarket bet 0x123abc YES 10`
-`/polymarket bet 0x123abc NO 5 --dry-run`
+<b>Example:</b>
+<code>/polymarket bet 0x123abc YES 10</code>
+<code>/polymarket bet 0x123abc NO 5 --dry-run</code>
 """
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=help_text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -44,7 +44,7 @@ Usage: `/polymarket bet <market_id> <outcome> <amount> [--dry-run]`
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="❌ Outcome must be YES or NO",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -54,7 +54,7 @@ Usage: `/polymarket bet <market_id> <outcome> <amount> [--dry-run]`
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=f"❌ Invalid amount: {amount_str}",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -80,7 +80,7 @@ Usage: `/polymarket bet <market_id> <outcome> <amount> [--dry-run]`
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=order_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
@@ -88,7 +88,7 @@ Usage: `/polymarket bet <market_id> <outcome> <amount> [--dry-run]`
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -104,8 +104,8 @@ async def handle_polymarket_claim(
         if len(args) < 2:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/polymarket claim <market_id> <outcome>`",
-                parse_mode=ParseMode.MARKDOWN,
+                text="Usage: <code>/polymarket claim &lt;market_id&gt; &lt;outcome&gt;</code>",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -126,7 +126,7 @@ async def handle_polymarket_claim(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=receipt_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
@@ -134,30 +134,30 @@ async def handle_polymarket_claim(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
 async def handle_polymarket_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /polymarket help command."""
     help_text = """
-🎲 **Polymarket Commands**
+🎲 <b>Polymarket Commands</b>
 
-• `/polymarket bet <market_id> <YES|NO> <amount> [--dry-run]` — Place a bet
-• `/polymarket claim <market_id> <YES|NO> [--dry-run]` — Claim winnings
-• `/polymarket help` — Show this help
+• <code>/polymarket bet &lt;market_id&gt; &lt;YES|NO&gt; &lt;amount&gt; [--dry-run]</code> — Place a bet
+• <code>/polymarket claim &lt;market_id&gt; &lt;YES|NO&gt; [--dry-run]</code> — Claim winnings
+• <code>/polymarket help</code> — Show this help
 
-**Fee Structure:**
+<b>Fee Structure:</b>
 • Taker: 2.0%
 • Maker: 0.0%
 
-**Examples:**
-• `/polymarket bet 0xabcd YES 10` — Bet 10 USDC on YES
-• `/polymarket claim 0xabcd YES --dry-run` — Simulate claiming
+<b>Examples:</b>
+• <code>/polymarket bet 0xabcd YES 10</code> — Bet 10 USDC on YES
+• <code>/polymarket claim 0xabcd YES --dry-run</code> — Simulate claiming
 """
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=help_text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
     )

@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
+from utils.telegram.layout import wallet_url_short
 from utils.polymarket_crawler.traders import MarketInfo, EnrichedTrader
 
 
@@ -130,7 +131,9 @@ def fmt_leaderboard_html(traders: list[EnrichedTrader], category: str = "OVERALL
     ]
     for i, t in enumerate(traders[:limit], 1):
         lines.append(
-            f"{i}. <b>{t.name}</b> | {fmt_pnl(t.total_pnl)} | Vol: ${t.total_volume:,.0f} | {len(t.positions)} positions"
+            f"{i}. <b>{t.name}</b> | {fmt_pnl(t.total_pnl)} | Vol: ${t.total_volume:,.0f} | {len(t.positions)} pos"
         )
-    lines.append("")
+        if t.wallet:
+            lines.append(f"   {wallet_url_short(t.wallet)}")
+        lines.append("")
     return "\n".join(lines)

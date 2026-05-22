@@ -30,8 +30,8 @@ async def handle_markets_list(
         if not markets:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="🔍 *RECHERCHE MARCHÉS*\n━━━━━━━━━━━━━━━━━━━━\n\nAucun marché actif trouvé pour le moment.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="🔍 <b>RECHERCHE MARCHÉS</b>\n━━━━━━━━━━━━━━━━━━━━\n\nAucun marché actif trouvé pour le moment.",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -41,7 +41,7 @@ async def handle_markets_list(
         # Add Header if missing
         if "━━━━━━━━━" not in markets_msg:
             markets_msg = (
-                f"📈 *TOP {limit} MARCHÉS ({sort_by.upper()})*\n"
+                f"📈 <b>TOP {limit} MARCHÉS ({sort_by.upper()})</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{markets_msg}\n"
                 f"━━━━━━━━━━━━━━━━━━━━"
@@ -50,15 +50,15 @@ async def handle_markets_list(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=markets_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
         logger.error(f"Error in markets list handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ *ERREUR MARCHÉS*\n\nImpossible de lister les marchés : `{str(e)[:100]}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>ERREUR MARCHÉS</b>\n\nImpossible de lister les marchés : <code>{str(e)[:100]}</code>",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -75,12 +75,12 @@ async def handle_markets_info(
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=(
-                    "ℹ️ *DÉTAILS MARCHÉ*\n"
+                    "ℹ️ <b>DÉTAILS MARCHÉ</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    "Usage: `/markets info <slug_ou_id>`\n\n"
-                    "💡 _Exemple: /markets info solana-price-prediction_"
+                    "Usage: <code>/markets info &lt;slug_ou_id&gt;</code>\n\n"
+                    "💡 <i>Exemple: /markets info solana-price-prediction</i>"
                 ),
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -92,8 +92,8 @@ async def handle_markets_info(
         if not snapshot:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ *MARCHÉ INTROUVABLE*\n\nAucun marché correspondant à `{market_id}` n'a été trouvé.",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ <b>MARCHÉ INTROUVABLE</b>\n\nAucun marché correspondant à <code>{market_id}</code> n'a été trouvé.",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -102,7 +102,7 @@ async def handle_markets_info(
         
         if "━━━━━━━━━" not in market_msg:
             market_msg = (
-                f"📊 *ANALYSE DE MARCHÉ*\n"
+                f"📊 <b>ANALYSE DE MARCHÉ</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{market_msg}\n"
                 f"━━━━━━━━━━━━━━━━━━━━"
@@ -111,15 +111,15 @@ async def handle_markets_info(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=market_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
         logger.error(f"Error in markets info handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ *ERREUR ANALYSE*\n\nÉchec de la récupération des détails : `{str(e)[:100]}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>ERREUR ANALYSE</b>\n\nÉchec de la récupération des détails : <code>{str(e)[:100]}</code>",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -135,8 +135,8 @@ async def handle_markets_search(
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/markets search <query>`",
-                parse_mode=ParseMode.MARKDOWN,
+                text="Usage: <code>/markets search &lt;query&gt;</code>",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -149,7 +149,7 @@ async def handle_markets_search(
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=f"No markets found for: {query}",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -158,7 +158,7 @@ async def handle_markets_search(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=markets_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
@@ -166,42 +166,42 @@ async def handle_markets_search(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
 async def handle_markets_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /markets help command."""
     help_text = """
-📈 **Polymarket Commands**
+📈 <b>Polymarket Commands</b>
 
-*Market Discovery (AI Scored):*
-• `/markets discover [limit] [-category]` — Find best markets by AI scoring
-• `/markets opportunities [min_edge]` — Find best betting edges (spread > min_edge%)
-• `/markets contrarian [limit]` — Find contrarian betting opportunities
+<b>Market Discovery (AI Scored):</b>
+• <code>/markets discover [limit] [-category]</code> — Find best markets by AI scoring
+• <code>/markets opportunities [min_edge]</code> — Find best betting edges (spread &gt; min_edge%)
+• <code>/markets contrarian [limit]</code> — Find contrarian betting opportunities
 
-*Screening (VCP/CANSLIM):*
-• `/markets vcp [limit]` — Volatility Contraction Pattern screener
-• `/markets canslim [limit]` — CANSLIM methodology screener
+<b>Screening (VCP/CANSLIM):</b>
+• <code>/markets vcp [limit]</code> — Volatility Contraction Pattern screener
+• <code>/markets canslim [limit]</code> — CANSLIM methodology screener
 
-*Market Info:*
-• `/markets list [limit] [sort]` — List top markets (volume/liquidity)
-• `/markets feed` — Show unified market feed + crypto intelligence
-• `/markets info <id>` — Get market details
-• `/markets search <query>` — Search markets
-• `/markets help` — Show this help
+<b>Market Info:</b>
+• <code>/markets list [limit] [sort]</code> — List top markets (volume/liquidity)
+• <code>/markets feed</code> — Show unified market feed + crypto intelligence
+• <code>/markets info &lt;id&gt;</code> — Get market details
+• <code>/markets search &lt;query&gt;</code> — Search markets
+• <code>/markets help</code> — Show this help
 
-**Examples:**
-• `/markets discover` — Show top 10 scored markets
-• `/markets vcp` — Find VCP patterns
-• `/markets canslim` — Find CANSLIM opportunities
-• `/markets opportunities 10` — Find edges > 10%
+<b>Examples:</b>
+• <code>/markets discover</code> — Show top 10 scored markets
+• <code>/markets vcp</code> — Find VCP patterns
+• <code>/markets canslim</code> — Find CANSLIM opportunities
+• <code>/markets opportunities 10</code> — Find edges &gt; 10%
 """
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=help_text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -243,14 +243,14 @@ async def handle_markets_feed(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=report_text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
         logger.error(f"Error in markets feed handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error generating feed: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -279,7 +279,7 @@ async def handle_markets_discover(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except ImportError as e:
@@ -287,14 +287,14 @@ async def handle_markets_discover(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⚠️ Market discovery module not available.",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
         logger.error(f"Error in markets discover handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -327,7 +327,7 @@ async def handle_markets_opportunities(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except ImportError as e:
@@ -335,14 +335,14 @@ async def handle_markets_opportunities(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⚠️ Market discovery module not available.",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
         logger.error(f"Error in markets opportunities handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -366,12 +366,12 @@ async def handle_markets_contrarian(
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="❌ No contrarian opportunities found.",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
         
         lines = [
-            "🎭 *CONTRARIAN OPPORTUNITIES* 🎭",
+            "🎭 <b>CONTRARIAN OPPORTUNITIES</b> 🎭",
             "────────────────────────",
         ]
         
@@ -380,11 +380,11 @@ async def handle_markets_contrarian(
             if isinstance(opp.get("days_to_resolution"), (int, float)):
                 horizon = f" | T- {opp['days_to_resolution']:.1f}j"
             lines.extend([
-                f"{i}. *{opp['question'][:50]}...*",
-                f"   📊 Current: `{opp['current_odds']}`",
-                f"   🎯 Bet: `{opp['contrarian_bet']}`",
+                f"{i}. <b>{opp['question'][:50]}...</b>",
+                f"   📊 Current: <code>{opp['current_odds']}</code>",
+                f"   🎯 Bet: <code>{opp['contrarian_bet']}</code>",
                 f"   💡 {opp['reason']}",
-                f"   💰 Vol: `${opp['volume']:,.0f}`{horizon}",
+                f"   💰 Vol: <code>${opp['volume']:,.0f}</code>{horizon}",
                 "",
             ])
         
@@ -394,7 +394,7 @@ async def handle_markets_contrarian(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="\n".join(lines),
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except ImportError as e:
@@ -404,7 +404,7 @@ async def handle_markets_contrarian(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -426,7 +426,7 @@ async def handle_markets_vcp(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except ImportError as e:
@@ -434,14 +434,14 @@ async def handle_markets_vcp(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⚠️ Screener module not available.",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
         logger.error(f"Error in markets vcp handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -463,7 +463,7 @@ async def handle_markets_canslim(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=text,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except ImportError as e:
@@ -471,12 +471,12 @@ async def handle_markets_canslim(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⚠️ Screener module not available.",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
     except Exception as e:
         logger.error(f"Error in markets canslim handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )

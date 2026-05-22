@@ -22,14 +22,14 @@ async def handle_signals(
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=(
-                    "📊 *FLUX DE SIGNAUX*\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    "Usage: `/signals <asset> [timeframe]`\n\n"
-                    "💎 *Assets*: `BTC`, `SOL`, `ETH`\n"
-                    "⏱️ *Timeframes*: `5m`, `15m`, `1h`"
-                ),
-                parse_mode=ParseMode.MARKDOWN,
+            text=(
+                "📊 <b>FLUX DE SIGNAUX</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Usage: <code>/signals &lt;asset&gt; [timeframe]</code>\n\n"
+                "💎 <b>Assets</b>: <code>BTC</code>, <code>SOL</code>, <code>ETH</code>\n"
+                "⏱️ <b>Timeframes</b>: <code>5m</code>, <code>15m</code>, <code>1h</code>"
+            ),
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -42,8 +42,8 @@ async def handle_signals(
         if not signals:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"🔍 *AUCUN SIGNAL*\n\nAucun signal disponible pour `{asset}` actuellement.",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"🔍 <b>AUCUN SIGNAL</b>\n\nAucun signal disponible pour <code>{asset}</code> actuellement.",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -51,8 +51,8 @@ async def handle_signals(
             available = list(signals.keys())
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"⚠️ *TIMEFRAME INCORRECT*\n\nL'horizon `{timeframe}` n'est pas disponible.\nDisponibles: `{', '.join(available)}`.",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"⚠️ <b>TIMEFRAME INCORRECT</b>\n\nL'horizon <code>{timeframe}</code> n'est pas disponible.\nDisponibles: <code>{', '.join(available)}</code>.",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -62,7 +62,7 @@ async def handle_signals(
         
         if "━━━━━━━━━" not in signal_msg:
             signal_msg = (
-                f"📡 *SIGNAL DE TRADING DETECTÉ*\n"
+                f"📡 <b>SIGNAL DE TRADING DETECTÉ</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{signal_msg}\n"
                 f"━━━━━━━━━━━━━━━━━━━━"
@@ -71,15 +71,15 @@ async def handle_signals(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=signal_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
         logger.error(f"Error in signals handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ *ERREUR SIGNAL*\n\nÉchec du traitement du signal : `{str(e)[:100]}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>ERREUR SIGNAL</b>\n\nÉchec du traitement du signal : <code>{str(e)[:100]}</code>",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -95,7 +95,7 @@ async def handle_signals_all(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=report,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
@@ -103,48 +103,48 @@ async def handle_signals_all(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
 async def handle_signals_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /signals help command."""
     help_text = """
-📊 **Trading Signals Commands**
+📊 <b>Trading Signals Commands</b>
 
-• `/signals <asset> [timeframe]` — Get signal for asset/timeframe
-• `/signals_all` — Show all available signals
-• `/signals matrix <ticker>` — Cognitive matrix decision
-• `/signals help` — Show this help
+• <code>/signals &lt;asset&gt; [timeframe]</code> — Get signal for asset/timeframe
+• <code>/signals_all</code> — Show all available signals
+• <code>/signals matrix &lt;ticker&gt;</code> — Cognitive matrix decision
+• <code>/signals help</code> — Show this help
 
-**Supported Assets:**
+<b>Supported Assets:</b>
 • BTC (Bitcoin)
 • SOL (Solana)
 • ETH (Ethereum)
 
-**Supported Timeframes:**
+<b>Supported Timeframes:</b>
 • 5m (5 minutes)
 • 15m (15 minutes)
 • 1h (1 hour)
 
-**Signal Types:**
-• 🚀 STRONG_BUY — Confidence > 75%
+<b>Signal Types:</b>
+• 🚀 STRONG_BUY — Confidence &gt; 75%
 • 📈 BUY — Bullish signal
 • ⏸️ NEUTRAL — Mixed signals
 • 📉 SELL — Bearish signal
-• 💥 STRONG_SELL — Confidence > 75% bearish
+• 💥 STRONG_SELL — Confidence &gt; 75% bearish
 • ⏳ WAIT — Trading not allowed
 
-**Examples:**
-• `/signals BTC 15m`
-• `/signals SOL 1h`
-• `/signals_all`
+<b>Examples:</b>
+• <code>/signals BTC 15m</code>
+• <code>/signals SOL 1h</code>
+• <code>/signals_all</code>
 """
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=help_text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -182,14 +182,14 @@ async def handle_signals_matrix(
     matrix_output = fusion.format_cognitive_matrix(fused)
 
     emit = fusion.should_emit_signal(fused)
-    emit_status = f"✅ *EMIT SIGNAL*" if emit else f"❌ *BLOCKED*"
+    emit_status = f"✅ <b>EMIT SIGNAL</b>" if emit else f"❌ <b>BLOCKED</b>"
 
     final_output = f"{matrix_output}\n\n{emit_status}"
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=final_output,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -230,23 +230,23 @@ async def handle_paper_test(
     )
 
     output = (
-        f"🧪 *PAPER ENGINE TEST*\n"
+        f"🧪 <b>PAPER ENGINE TEST</b>\n"
         f"────────────────────────\n"
-        f"🎯 `{ticker}` | SIDE: YES | TYPE: MARKET\n"
-        f"💰 Capital: `$500`\n\n"
-        f"📊 *RESULT:* `{result.status}`\n"
-        f"📦 *Fill Price:* `${result.fill_price:.4f}`\n"
-        f"📦 *Size:* `{result.size_contracts:.2f}` contracts\n"
-        f"💵 *Friction:* `${result.friction_cost:.4f}`\n"
-        f"📉 *Slippage:* `{result.slippage:.4f}` ({result.slippage_pct:.2f}%)\n"
-        f"⏱️ *Exec Time:* `{result.execution_time_ms:.1f}ms`\n"
+        f"🎯 <code>{ticker}</code> | SIDE: YES | TYPE: MARKET\n"
+        f"💰 Capital: <code>$500</code>\n\n"
+        f"📊 <b>RESULT:</b> <code>{result.status}</code>\n"
+        f"📦 <b>Fill Price:</b> <code>${result.fill_price:.4f}</code>\n"
+        f"📦 <b>Size:</b> <code>{result.size_contracts:.2f}</code> contracts\n"
+        f"💵 <b>Friction:</b> <code>${result.friction_cost:.4f}</code>\n"
+        f"📉 <b>Slippage:</b> <code>{result.slippage:.4f}</code> ({result.slippage_pct:.2f}%)\n"
+        f"⏱️ <b>Exec Time:</b> <code>{result.execution_time_ms:.1f}ms</code>\n"
     )
 
     if result.partial_fill:
-        output += f"\n⚠️ *PARTIAL FILL:* `${result.filled_volume_usdc:.2f}` / `${result.requested_volume_usdc:.2f}`"
+        output += f"\n⚠️ <b>PARTIAL FILL:</b> <code>${result.filled_volume_usdc:.2f}</code> / <code>${result.requested_volume_usdc:.2f}</code>"
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=output,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
     )

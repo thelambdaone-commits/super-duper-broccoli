@@ -423,7 +423,7 @@ def main(
             payload = {
                 "chat_id": chat_id,
                 "text": msg,
-                "parse_mode": "Markdown"
+                "parse_mode": "HTML"
             }
             httpx.post(url, json=payload, timeout=10.0)
             logger.info("Telegram notification sent")

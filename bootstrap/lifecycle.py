@@ -28,7 +28,7 @@ from utils.clob_feed_utils import extract_live_clob_token_ids
 from scrapers.clob_listener import CLOBListener
 from scrapers.user_clob_listener import UserCLOBListener
 from py_clob_client import ApiCreds
-from utils.message_formatter import format_market_report, format_scan_report, format_winning_bets_alert
+from utils.message_formatter import format_market_report, format_winning_bets_alert
 from utils.notifier import TelegramNotifier
 from utils.snapshot_manager import get_snapshot_manager
 from utils.telegram_helpers import parse_private_chat_ids
@@ -131,7 +131,7 @@ class BotLifecycle:
         listener = None
         container = ServiceContainer.get_instance()
         notifier = context.notifier
-        notifier.send(f"🚀 *System Started*\nMode: `{self.execution_mode}`\nEnvironment: `{os.uname().nodename}`")
+        notifier.send(f"🚀 <b>System Started</b>\nMode: <code>{self.execution_mode}</code>\nEnvironment: <code>{os.uname().nodename}</code>")
         ledger = context.ledger
         freqai = context.freqai
         hmm = context.hmm

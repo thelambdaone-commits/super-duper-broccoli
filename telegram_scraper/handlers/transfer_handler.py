@@ -20,17 +20,17 @@ async def handle_transfer(
         
         if len(args) < 3:
             help_text = (
-                "📤 *TRANSFERT DE FONDS*\n"
+                "📤 <b>TRANSFERT DE FONDS</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "Usage: `/transfer <montant> <token> <adresse_dest>`\n\n"
-                "💎 *Tokens supportés* : `MATIC`, `USDC`, `POL`\n"
-                "⚙️ *Option* : `--dry-run` (simuler)\n\n"
-                "💡 _Exemple: /transfer 10 USDC 0x742...f42dE_"
+                "Usage: <code>/transfer &lt;montant&gt; &lt;token&gt; &lt;adresse_dest&gt;</code>\n\n"
+                "💎 <b>Tokens supportés</b> : <code>MATIC</code>, <code>USDC</code>, <code>POL</code>\n"
+                "⚙️ <b>Option</b> : <code>--dry-run</code> (simuler)\n\n"
+                "💡 <i>Exemple: /transfer 10 USDC 0x742...f42dE</i>"
             )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=help_text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -44,8 +44,8 @@ async def handle_transfer(
         except ValueError:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ *MONTANT INVALIDE*\n\n`{amount_str}` n'est pas un nombre valide.",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ <b>MONTANT INVALIDE</b>\n\n<code>{amount_str}</code> n'est pas un nombre valide.",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -53,8 +53,8 @@ async def handle_transfer(
         if not transfer_manager.wallet_manager.is_valid_address(to_address):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ *ADRESSE INVALIDE*\n\nL'adresse de destination est incorrecte.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="❌ <b>ADRESSE INVALIDE</b>\n\nL'adresse de destination est incorrecte.",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -66,28 +66,28 @@ async def handle_transfer(
         if "error" in gas_est:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ *ESTIMATION ÉCHOUÉE*\n\n{gas_est['error']}",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ <b>ESTIMATION ÉCHOUÉE</b>\n\n{gas_est['error']}",
+                parse_mode=ParseMode.HTML,
             )
             return
 
         # Show estimate
         estimate_msg = (
-            "📤 *DEVIS DE TRANSFERT*\n"
+            "📤 <b>DEVIS DE TRANSFERT</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"• *Token* : `{token}`\n"
-            f"• *Montant* : `{amount}`\n"
-            f"• *Vers* : `{to_address[:6]}...{to_address[-4:]}`\n"
-            f"• *Gaz Estimé* : `{gas_est['gas_estimate']} units`\n"
-            f"• *Coût Total* : `{gas_est['estimated_gas_cost_gwei']:.6f} POL`\n"
+            f"• <b>Token</b> : <code>{token}</code>\n"
+            f"• <b>Montant</b> : <code>{amount}</code>\n"
+            f"• <b>Vers</b> : <code>{to_address[:6]}...{to_address[-4:]}</code>\n"
+            f"• <b>Gaz Estimé</b> : <code>{gas_est['gas_estimate']} units</code>\n"
+            f"• <b>Coût Total</b> : <code>{gas_est['estimated_gas_cost_gwei']:.6f} POL</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "⚡ _Exécution en cours..._"
+            "⚡ <i>Exécution en cours...</i>"
         )
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=estimate_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
         # Execute transfer
@@ -99,7 +99,7 @@ async def handle_transfer(
         receipt_msg = transfer_manager.format_transfer_receipt(receipt)
         if "━━━━━━━━━" not in receipt_msg:
             receipt_msg = (
-                "✅ *TRANSFERT TERMINÉ*\n"
+                "✅ <b>TRANSFERT TERMINÉ</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"{receipt_msg}\n"
                 "━━━━━━━━━━━━━━━━━━━━"
@@ -108,41 +108,41 @@ async def handle_transfer(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=receipt_msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
         logger.error(f"Error in transfer handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ *ERREUR TRANSFERT*\n\n`{str(e)[:100]}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>ERREUR TRANSFERT</b>\n\n<code>{str(e)[:100]}</code>",
+            parse_mode=ParseMode.HTML,
         )
 
 
 async def handle_transfer_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /transfer help command."""
     help_text = """
-📤 **Transfer Commands**
+📤 <b>Transfer Commands</b>
 
-• `/transfer <amount> <token> <address> [--dry-run]` — Transfer tokens
-• `/transfer help` — Show this help
+• <code>/transfer &lt;amount&gt; &lt;token&gt; &lt;address&gt; [--dry-run]</code> — Transfer tokens
+• <code>/transfer help</code> — Show this help
 
-**Tokens:**
+<b>Tokens:</b>
 • MATIC (native token)
 • USDC (stablecoin)
 • POL (governance token)
 
-**Options:**
-• `--dry-run` — Simulate without executing
+<b>Options:</b>
+• <code>--dry-run</code> — Simulate without executing
 
-**Examples:**
-• `/transfer 10 USDC 0x742d35Cc6634C0532925a3b844Bc9e7595f42dE`
-• `/transfer 1 MATIC 0x742d35Cc6634C0532925a3b844Bc9e7595f42dE --dry-run`
+<b>Examples:</b>
+• <code>/transfer 10 USDC 0x742d35Cc6634C0532925a3b844Bc9e7595f42dE</code>
+• <code>/transfer 1 MATIC 0x742d35Cc6634C0532925a3b844Bc9e7595f42dE --dry-run</code>
 """
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=help_text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
     )

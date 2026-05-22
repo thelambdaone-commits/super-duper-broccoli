@@ -8,8 +8,13 @@ Reference: https://docs.python-telegram-bot.org/en/stable/
 """
 
 from typing import Optional, Sequence
-from telegram.helpers import escape_markdown
+from telegram.helpers import escape_markdown as _escape_md
 from telegram.constants import ParseMode
+
+
+def escape_markdown_v2(text: str) -> str:
+    """Safely escape text for Markdown V2."""
+    return _escape_md(text, version=2)
 
 
 def safe_markdown_v2(text: str) -> str:
@@ -262,4 +267,4 @@ EMOJI_WARNING = "⚠️"
 EMOJI_INFO = "ℹ️"
 EMOJI_WAITING = "⏳"
 
-PARSE_MODE_DEFAULT = ParseMode.MARKDOWN_V2  # Always use V2
+PARSE_MODE_DEFAULT = ParseMode.HTML  # Default to HTML

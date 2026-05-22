@@ -47,13 +47,13 @@ async def handle_wallet_balance(
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=(
-                    "💰 *CHECK BALANCE*\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    "Usage: `/wallet balance <adresse_ou_alias>`\n\n"
-                    "💡 _Exemple: /wallet balance 0x71C...3a9_"
-                ),
-                parse_mode=ParseMode.MARKDOWN,
+            text=(
+                "💰 <b>CHECK BALANCE</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Usage: <code>/wallet balance &lt;adresse_ou_alias&gt;</code>\n\n"
+                "💡 <i>Exemple: /wallet balance 0x71C...3a9</i>"
+            ),
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -63,8 +63,8 @@ async def handle_wallet_balance(
         if not wallet_manager.is_valid_address(wallet_address):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ *ERREUR ADRESSE*\n\nL'adresse fournie n'est pas un format Ethereum/Polygon valide.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="❌ <b>ERREUR ADRESSE</b>\n\nL'adresse fournie n'est pas un format Ethereum/Polygon valide.",
+                parse_mode=ParseMode.HTML,
             )
             return
 
@@ -74,7 +74,7 @@ async def handle_wallet_balance(
         # Wrap report in Lobstar style if it's not already
         if "━━━━━━━━━" not in report:
             report = (
-                f"💰 *SOLDE DU WALLET*\n"
+                f"💰 <b>SOLDE DU WALLET</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{report}\n"
                 f"━━━━━━━━━━━━━━━━━━━━"
@@ -83,15 +83,15 @@ async def handle_wallet_balance(
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=report,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
         logger.error(f"Error in wallet balance handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ *ERREUR SYSTÈME*\n\nUne erreur est survenue lors de la récupération du solde : `{str(e)[:100]}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>ERREUR SYSTÈME</b>\n\nUne erreur est survenue lors de la récupération du solde : <code>{str(e)[:100]}</code>",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -106,31 +106,31 @@ async def handle_wallet_health(
         status_text = "OPÉRATIONNEL" if health["connected"] else "DÉCONNECTÉ"
         
         lines = [
-            f"🛡️ *SANTÉ DU WALLET MANAGER*",
+            f"🛡️ <b>SANTÉ DU WALLET MANAGER</b>",
             f"━━━━━━━━━━━━━━━━━━━━",
-            f"• *Statut* : `{status_text}` {status_emoji}",
-            f"• *Chain ID* : `{health['chain_id']}`",
-            f"• *Bloc Actuel* : `{health.get('latest_block', 'N/A')}`",
-            f"• *Latency* : `{health.get('latency_ms', 'N/A')}ms`",
+            f"• <b>Statut</b> : <code>{status_text}</code> {status_emoji}",
+            f"• <b>Chain ID</b> : <code>{health['chain_id']}</code>",
+            f"• <b>Bloc Actuel</b> : <code>{health.get('latest_block', 'N/A')}</code>",
+            f"• <b>Latency</b> : <code>{health.get('latency_ms', 'N/A')}ms</code>",
         ]
         
         if not health["connected"] and "error" in health:
-            lines.append(f"• *Erreur* : `{health['error'][:100]}`")
+            lines.append(f"• <b>Erreur</b> : <code>{health['error'][:100]}</code>")
         
         lines.append("━━━━━━━━━━━━━━━━━━━━")
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="\n".join(lines),
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     except Exception as e:
         logger.error(f"Error in wallet health handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ *ERREUR SANTÉ*\n\nImpossible de vérifier l'état du manager : `{str(e)[:100]}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>ERREUR SANTÉ</b>\n\nImpossible de vérifier l'état du manager : <code>{str(e)[:100]}</code>",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -142,33 +142,33 @@ async def handle_wallet_help(update: Update, context: ContextTypes.DEFAULT_TYPE)
         help_text = formatter.format_help()
     except ImportError:
         help_text = """
-🏦 **Wallet Commands**
+🏦 <b>Wallet Commands</b>
 
-*User Wallet Management:*
-• `/wallet add <profile>` — Generate new ETH/POL wallet (default)
-• `/wallet import <profile> <private_key>` — Import existing wallet (import)
-• `/wallet use default` — Activate generated wallet
-• `/wallet use import` — Activate imported wallet
-• `/wallet set-proxy <address>` — Set Polymarket proxy wallet
-• `/wallet list` — List your wallets
-• `/wallet show` — Show your wallet addresses
-• `/wallet status` — Show all wallets + active
-• `/wallet delete` — Delete active wallet
+<b>User Wallet Management:</b>
+• <code>/wallet add &lt;profile&gt;</code> — Generate new ETH/POL wallet (default)
+• <code>/wallet import &lt;profile&gt; &lt;private_key&gt;</code> — Import existing wallet (import)
+• <code>/wallet use default</code> — Activate generated wallet
+• <code>/wallet use import</code> — Activate imported wallet
+• <code>/wallet set-proxy &lt;address&gt;</code> — Set Polymarket proxy wallet
+• <code>/wallet list</code> — List your wallets
+• <code>/wallet show</code> — Show your wallet addresses
+• <code>/wallet status</code> — Show all wallets + active
+• <code>/wallet delete</code> — Delete active wallet
 
-*Admin Commands:*
-• `/wallet balance <address>` — Check token balances
-• `/wallet health` — Check wallet manager health
+<b>Admin Commands:</b>
+• <code>/wallet balance &lt;address&gt;</code> — Check token balances
+• <code>/wallet health</code> — Check wallet manager health
 
-**Example:**
-`/wallet add antigravity`
-`/wallet import gemini 0xabc123...`
-`/wallet set-proxy 0xproxy...`
+<b>Example:</b>
+<code>/wallet add antigravity</code>
+<code>/wallet import gemini 0xabc123...</code>
+<code>/wallet set-proxy 0xproxy...</code>
 """
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=help_text,
-        parse_mode=ParseMode.MARKDOWN,
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -181,8 +181,8 @@ async def handle_wallet_add(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/wallet add <profile_name>`\nExample: `/wallet add antigravity`",
-                parse_mode=ParseMode.MARKDOWN,
+                text="Usage: <code>/wallet add &lt;profile_name&gt;</code>\nExample: <code>/wallet add antigravity</code>",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -192,8 +192,8 @@ async def handle_wallet_add(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if mgr.user_exists(chat_id, "default"):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="⚠️ You already have a default wallet. Use `/wallet delete` first to create a new one, or use `/wallet use import` to switch to your imported wallet.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="⚠️ You already have a default wallet. Use <code>/wallet delete</code> first to create a new one, or use <code>/wallet use import</code> to switch to your imported wallet.",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -203,24 +203,24 @@ async def handle_wallet_add(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
         proxy = _proxy_resolver(chat_id, mgr, "default", user_data["address"])
         
-        proxy_line = f"\n*Proxy Wallet:* `{proxy}`" if proxy else ""
+        proxy_line = f"\n<b>Proxy Wallet:</b> <code>{proxy}</code>" if proxy else ""
         next_steps = "" if proxy else (
-            "\n🔑 *Next Step:* Set your Polymarket proxy wallet:\n"
-            "   `/wallet set-proxy <proxy_address>`"
+            "\n🔑 <b>Next Step:</b> Set your Polymarket proxy wallet:\n"
+            "   <code>/wallet set-proxy &lt;proxy_address&gt;</code>"
         )
         
         msg = f"""
-✅ **Wallet Created Successfully**
+✅ <b>Wallet Created Successfully</b>
 
-*Profile:* `{profile_name}`
-*Address:* `{user_data['address']}`{proxy_line}{next_steps}
+<b>Profile:</b> <code>{profile_name}</code>
+<b>Address:</b> <code>{user_data['address']}</code>{proxy_line}{next_steps}
 
-Your wallet is encrypted and stored in `default{chat_id}.enc`
+Your wallet is encrypted and stored in <code>default{chat_id}.enc</code>
 """
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
@@ -228,7 +228,7 @@ Your wallet is encrypted and stored in `default{chat_id}.enc`
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -241,8 +241,8 @@ async def handle_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYP
         if len(args) < 2:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/wallet import <profile_name> <private_key>`\nExample: `/wallet import antigravity 0xabc123...`",
-                parse_mode=ParseMode.MARKDOWN,
+                text="Usage: <code>/wallet import &lt;profile_name&gt; &lt;private_key&gt;</code>\nExample: <code>/wallet import antigravity 0xabc123...</code>",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -253,7 +253,7 @@ async def handle_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="❌ Invalid private key format. Must be 0x-prefixed 64-char hex.",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -262,8 +262,8 @@ async def handle_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYP
         if mgr.user_exists(chat_id, "import"):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="⚠️ You already have an imported wallet. Use `/wallet delete` first to import a new one.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="⚠️ You already have an imported wallet. Use <code>/wallet delete</code> first to import a new one.",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -273,24 +273,24 @@ async def handle_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYP
         
         proxy = _proxy_resolver(chat_id, mgr, "import", user_data["address"])
         
-        proxy_line = f"\n*Proxy Wallet:* `{proxy}`" if proxy else ""
+        proxy_line = f"\n<b>Proxy Wallet:</b> <code>{proxy}</code>" if proxy else ""
         next_steps = "" if proxy else (
-            "\n🔑 *Next Step:* Set your Polymarket proxy wallet:\n"
-            "   `/wallet set-proxy <proxy_address>`"
+            "\n🔑 <b>Next Step:</b> Set your Polymarket proxy wallet:\n"
+            "   <code>/wallet set-proxy &lt;proxy_address&gt;</code>"
         )
         
         msg = f"""
-✅ **Wallet Imported Successfully**
+✅ <b>Wallet Imported Successfully</b>
 
-*Profile:* `{profile_name}`
-*Address:* `{user_data['address']}`{proxy_line}{next_steps}
+<b>Profile:</b> <code>{profile_name}</code>
+<b>Address:</b> <code>{user_data['address']}</code>{proxy_line}{next_steps}
 
 ⚠️ Store your private key securely! It cannot be recovered.
 """
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
@@ -298,7 +298,7 @@ async def handle_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -310,18 +310,18 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
         
         if not args:
             usage_text = (
-                "🎯 *Configure Polymarket Proxy Wallet*\n"
+                "🎯 <b>Configure Polymarket Proxy Wallet</b>\n"
                 "────────────────────────\n"
                 "Le proxy wallet (Gnosis Safe) est le contrat qui détient vos positions et vos fonds sur la plateforme Polymarket.\n"
                 "────────────────────────\n"
-                "💡 *Usage* : `/wallet set-proxy <adresse_proxy_safe>`\n\n"
+                "💡 <b>Usage</b> : <code>/wallet set-proxy &lt;adresse_proxy_safe&gt;</code>\n\n"
                 "Exemple :\n"
-                "`/wallet set-proxy 0x3915c544d673ed10959a45695cf643f8e63ec2b9`"
+                "<code>/wallet set-proxy 0x3915c544d673ed10959a45695cf643f8e63ec2b9</code>"
             )
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=usage_text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -329,10 +329,10 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
         
         if not proxy_wallet.startswith("0x") or len(proxy_wallet) != 42:
             error_text = (
-                "❌ *Address Format Invalid*\n"
+                "❌ <b>Address Format Invalid</b>\n"
                 "────────────────────────\n"
                 "L'adresse de votre Gnosis Safe Proxy doit être une adresse Ethereum valide :\n"
-                "- Commencer par `0x`\n"
+                "- Commencer par <code>0x</code>\n"
                 "- Faire exactement 42 caractères de long\n"
                 "────────────────────────\n"
                 "💡 Veuillez vérifier votre saisie et réessayer."
@@ -340,7 +340,7 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=error_text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -349,7 +349,7 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
         
         if not mgr.user_exists(chat_id, wallet_type):
             no_wallet_text = (
-                "❌ *No Active Wallet Found*\n"
+                "❌ <b>No Active Wallet Found</b>\n"
                 "────────────────────────\n"
                 "Vous devez d'abord importer ou initialiser un wallet utilisateur avant de lui associer un proxy.\n"
                 "────────────────────────\n"
@@ -358,23 +358,23 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=no_wallet_text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
         
         user_data = mgr.set_user_proxy(chat_id, proxy_wallet, wallet_type=wallet_type)
         
         success_text = (
-            "🎯 *Polymarket Gnosis Safe Proxy Wallet Set*\n"
+            "🎯 <b>Polymarket Gnosis Safe Proxy Wallet Set</b>\n"
             "────────────────────────\n"
             "Votre proxy wallet a été configuré avec succès et lié à votre profil actif.\n"
             "Le cockpit a été mis à jour et est prêt à interroger la blockchain Polygon.\n"
             "────────────────────────\n"
-            f"👤 *Active Profile* : `{user_data.get('profile_name', 'N/A')}`\n"
-            f"⚙️ *Wallet Type*    : `{wallet_type.capitalize()}`\n"
-            f"📌 *Proxy Address*  : `{proxy_wallet}`\n"
+            f"👤 <b>Active Profile</b> : <code>{user_data.get('profile_name', 'N/A')}</code>\n"
+            f"⚙️ <b>Wallet Type</b>    : <code>{wallet_type.capitalize()}</code>\n"
+            f"📌 <b>Proxy Address</b>  : <code>{proxy_wallet}</code>\n"
             "────────────────────────\n"
-            "💡 *Tip* : Cliquez sur le bouton ci-dessous pour retourner au cockpit et voir vos soldes de jetons pUSD mis à jour !"
+            "💡 <b>Tip</b> : Cliquez sur le bouton ci-dessous pour retourner au cockpit et voir vos soldes de jetons pUSD mis à jour !"
         )
         
         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
@@ -386,15 +386,15 @@ async def handle_wallet_set_proxy(update: Update, context: ContextTypes.DEFAULT_
             chat_id=update.effective_chat.id,
             text=success_text,
             reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
         logger.error(f"Error in wallet set-proxy handler: {e}")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"❌ *System Error*\n────────────────────────\n`{str(e)[:200]}`",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"❌ <b>System Error</b>\n────────────────────────\n<code>{str(e)[:200]}</code>",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -407,28 +407,28 @@ async def handle_wallet_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not mgr.user_exists(chat_id):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ You don't have a wallet yet. Use `/wallet add <profile>` to create one.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="❌ You don't have a wallet yet. Use <code>/wallet add &lt;profile&gt;</code> to create one.",
+                parse_mode=ParseMode.HTML,
             )
             return
         
         user_data = mgr.load_user(chat_id)
         
         proxy = user_data.get("proxy_wallet", "")
-        proxy_display = f"`{proxy}`" if proxy else "_Not set_"
+        proxy_display = f"<code>{proxy}</code>" if proxy else "<i>Not set</i>"
         
         msg = f"""
-👤 **Your Wallet**
+👤 <b>Your Wallet</b>
 
-*Profile:* `{user_data.get('profile_name', 'N/A')}`
-*ETH/POL Address:* `{user_data.get('address', 'N/A')}`
-*Proxy Wallet:* {proxy_display}
-*API Key:* `{user_data.get('clob_api_key', 'N/A')[:16]}...`
+<b>Profile:</b> <code>{user_data.get('profile_name', 'N/A')}</code>
+<b>ETH/POL Address:</b> <code>{user_data.get('address', 'N/A')}</code>
+<b>Proxy Wallet:</b> {proxy_display}
+<b>API Key:</b> <code>{user_data.get('clob_api_key', 'N/A')[:16]}...</code>
 """
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
@@ -436,7 +436,7 @@ async def handle_wallet_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -449,27 +449,27 @@ async def handle_wallet_show(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not mgr.user_exists(chat_id):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ You don't have a wallet yet. Use `/wallet add <profile>` to create one.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="❌ You don't have a wallet yet. Use <code>/wallet add &lt;profile&gt;</code> to create one.",
+                parse_mode=ParseMode.HTML,
             )
             return
         
         user_data = mgr.load_user(chat_id)
         
         proxy = user_data.get("proxy_wallet", "")
-        proxy_display = f"\n*Proxy:* `{proxy}`" if proxy else ""
+        proxy_display = f"\n<b>Proxy:</b> <code>{proxy}</code>" if proxy else ""
         
         msg = f"""
-🔐 **Your Addresses**
+🔐 <b>Your Addresses</b>
 
-*ETH/POL:* `{user_data.get('address', 'N/A')}`{proxy_display}
+<b>ETH/POL:</b> <code>{user_data.get('address', 'N/A')}</code>{proxy_display}
 
-Your private key is encrypted in `default{chat_id}.enc`
+Your private key is encrypted in <code>default{chat_id}.enc</code>
 """
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
@@ -477,7 +477,7 @@ Your private key is encrypted in `default{chat_id}.enc`
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -493,7 +493,7 @@ async def handle_wallet_delete(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="❌ You don't have a wallet to delete.",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -504,8 +504,8 @@ async def handle_wallet_delete(update: Update, context: ContextTypes.DEFAULT_TYP
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"🗑️ **Wallet Deleted**\n\nType: `{wallet_type}`\nAddress: `{address}`\nFile: `{wallet_type}{chat_id}.enc` removed.",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"🗑️ <b>Wallet Deleted</b>\n\nType: <code>{wallet_type}</code>\nAddress: <code>{address}</code>\nFile: <code>{wallet_type}{chat_id}.enc</code> removed.",
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
@@ -513,7 +513,7 @@ async def handle_wallet_delete(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -526,8 +526,8 @@ async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not args:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="Usage: `/wallet use default` or `/wallet use import`",
-                parse_mode=ParseMode.MARKDOWN,
+                text="Usage: <code>/wallet use default</code> or <code>/wallet use import</code>",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -535,8 +535,8 @@ async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if wallet_type not in ["default", "import"]:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="❌ Invalid wallet type. Use `default` or `import`.",
-                parse_mode=ParseMode.MARKDOWN,
+                text="❌ Invalid wallet type. Use <code>default</code> or <code>import</code>.",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -545,8 +545,8 @@ async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not mgr.user_exists(chat_id, wallet_type):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ Wallet type `{wallet_type}` not found. Create it first with `/wallet {'add' if wallet_type == 'default' else 'import'}`.",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ Wallet type <code>{wallet_type}</code> not found. Create it first with <code>/wallet {'add' if wallet_type == 'default' else 'import'}</code>.",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -557,14 +557,14 @@ async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             address = user_data.get("address", "")
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"✅ **Wallet Activated**\n\nType: `{wallet_type}`\nAddress: `{address}`",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"✅ <b>Wallet Activated</b>\n\nType: <code>{wallet_type}</code>\nAddress: <code>{address}</code>",
+                parse_mode=ParseMode.HTML,
             )
         else:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="❌ Failed to activate wallet.",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
         
     except Exception as e:
@@ -572,7 +572,7 @@ async def handle_wallet_use(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -592,7 +592,7 @@ async def handle_wallet_status(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
         except ImportError:
             wallets = mgr.list_all_user_wallets(chat_id)
@@ -600,20 +600,20 @@ async def handle_wallet_status(update: Update, context: ContextTypes.DEFAULT_TYP
             if not wallets:
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text="❌ No wallets found. Use `/wallet add` to create one.",
-                    parse_mode=ParseMode.MARKDOWN,
+                    text="❌ No wallets found. Use <code>/wallet add</code> to create one.",
+                    parse_mode=ParseMode.HTML,
                 )
                 return
             
-            lines = ["👤 *Your Wallets*", "────────────────────────"]
+            lines = ["👤 <b>Your Wallets</b>", "────────────────────────"]
             for w in wallets:
                 marker = "✅" if w.get("is_active") else "  "
-                lines.append(f"{marker} *{w['type'].upper()}*: `{w['address']}`")
+                lines.append(f"{marker} <b>{w['type'].upper()}</b>: <code>{w['address']}</code>")
             
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="\n".join(lines),
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
         
     except Exception as e:
@@ -621,7 +621,7 @@ async def handle_wallet_status(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -637,7 +637,7 @@ async def handle_wallet_backup(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="❌ No active wallet found.",
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -645,17 +645,17 @@ async def handle_wallet_backup(update: Update, context: ContextTypes.DEFAULT_TYP
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"🔐 *Wallet Backup Info*\n\n"
-                 f"*Type*: `{wallet_type}`\n"
-                 f"*Address*: `{user_data.get('address', 'N/A')}`\n"
-                 f"*Profile*: `{user_data.get('profile_name', 'N/A')}`\n\n"
-                 f"⚠️ *Warning*: Never share your private key!\n"
-                 f"Your encrypted wallet is stored in `data/{wallet_type}{chat_id}.enc`\n\n"
+            text=f"🔐 <b>Wallet Backup Info</b>\n\n"
+                 f"<b>Type</b>: <code>{wallet_type}</code>\n"
+                 f"<b>Address</b>: <code>{user_data.get('address', 'N/A')}</code>\n"
+                 f"<b>Profile</b>: <code>{user_data.get('profile_name', 'N/A')}</code>\n\n"
+                 f"⚠️ <b>Warning</b>: Never share your private key!\n"
+                 f"Your encrypted wallet is stored in <code>data/{wallet_type}{chat_id}.enc</code>\n\n"
                  f"To export your private key safely, use the CLI:\n"
-                 f"`python -c \"from utils.credential_manager import CredentialManager; "
+                 f"<code>python -c \"from utils.credential_manager import CredentialManager; "
                  f"mgr = CredentialManager(); "
-                 f"print(mgr.load_user('{chat_id}', '{wallet_type}')['private_key'])\"`",
-            parse_mode=ParseMode.MARKDOWN,
+                 f"print(mgr.load_user('{chat_id}', '{wallet_type}')['private_key'])\"</code>",
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
@@ -663,7 +663,7 @@ async def handle_wallet_backup(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -679,8 +679,8 @@ async def handle_wallet_swap(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not mgr.user_exists(chat_id, other_type):
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f"❌ No {other_type} wallet found. Create one first with `/wallet {'add' if other_type == 'default' else 'import'}`.",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ No {other_type} wallet found. Create one first with <code>/wallet {'add' if other_type == 'default' else 'import'}</code>.",
+                parse_mode=ParseMode.HTML,
             )
             return
         
@@ -689,12 +689,12 @@ async def handle_wallet_swap(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"🔄 **Wallet Swapped**\n\n"
-                 f"• From: `{current_type}`\n"
-                 f"• To: `{other_type}`\n"
-                 f"• Address: `{user_data.get('address', 'N/A')}`\n\n"
-                 f"Run `/wallet status` to verify.",
-            parse_mode=ParseMode.MARKDOWN,
+            text=f"🔄 <b>Wallet Swapped</b>\n\n"
+                 f"• From: <code>{current_type}</code>\n"
+                 f"• To: <code>{other_type}</code>\n"
+                 f"• Address: <code>{user_data.get('address', 'N/A')}</code>\n\n"
+                 f"Run <code>/wallet status</code> to verify.",
+            parse_mode=ParseMode.HTML,
         )
         
     except Exception as e:
@@ -702,5 +702,5 @@ async def handle_wallet_swap(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ Error: {str(e)[:200]}",
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
