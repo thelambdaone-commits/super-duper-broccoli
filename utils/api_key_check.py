@@ -7,9 +7,12 @@ Résout l'erreur: ModuleNotFoundError: No module named 'utils.api_key_check'
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from utils.secret_validation import normalize_private_key
+
+ENCRYPTED_WALLET_PATH = Path("data/polymarket.wallet.enc")
 
 logger = logging.getLogger("ApiKeyCheck")
 
@@ -67,6 +70,9 @@ class ApiKeyNotifier:
                 value = os.getenv(key, "https://clob.polymarket.com")
             if key == "CLOB_PRIVATE_KEY":
                 value = normalize_private_key(value) or ""
+                if not value and ENCRYPTED_WALLET_PATH.exists():
+                    ok.append(key)
+                    continue
             if not value or value.strip() == "":
                 missing.append(key)
                 if is_critical:

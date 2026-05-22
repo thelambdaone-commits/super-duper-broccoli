@@ -1,3 +1,4 @@
+from html import escape
 import asyncio
 import contextlib
 import json
@@ -48,30 +49,27 @@ def _is_private_chat_id(chat_id: int | None) -> bool:
     return chat_id is not None and chat_id > 0
 
 CMD_HELP = (
-    "```\n"
-    "┌─────────────────────────┐\n"
-    "│   🤖 SYSTEM MANUAL V2   │\n"
-    "└─────────────────────────┘\n"
-    "```\n"
-    "⚙️ *Contrôles Système :*\n"
-    "  • `/help` | `/h` ↳ Aide & Commandes\n"
-    "  • `/s` ↳ État de santé du système\n"
-    "  • `/m [MODE]` ↳ Mode d'exécution `[PAPER/PROD]`\n"
-    "  • `/ck` ↳ Diagnostic API & RPC endpoints\n\n"
-    "📈 *Gestion des Positions & Risques :*\n"
-    "  • `/b` ↳ Capital & Répartition des fonds\n"
-    "  • `/p` ↳ Positions de trading ouvertes\n"
-    "  • `/risk` ↳ Exposition totale du portefeuille\n"
-    "  • `/cb` ↳ État des disjoncteurs (Circuit Breaker)\n\n"
-    "🧠 *Intelligence & Régimes :*\n"
-    "  • `/r` ↳ Régime de marché en direct (HMM)\n"
-    "  • `/whales` ↳ Leaderboard des traders baleines\n"
-    "  • `/copy [start|stop|set]` ↳ Contrôle du copy trading\n\n"
-    "🔐 *Sécurité & Comptes :*\n"
-    "  • `/gen` ↳ Créer un nouveau portefeuille chiffré\n"
-    "  • `/import [PK]` ↳ Importer une clé privée Polygon\n\n"
-    "💬 *Signal:* `BUY BTC @ 0.50`\n"
-    "━━━━━━━━━━━━━━━━━━━━━━━━━"
+    "<b>🤖 SYSTEM MANUAL V2</b>\n"
+    "───────────────────\n"
+    "<b>⚙️ Contrôles Système :</b>\n"
+    "  • <code>/help</code> | <code>/h</code> → Aide & Commandes\n"
+    "  • <code>/s</code> → État de santé\n"
+    "  • <code>/m [MODE]</code> → Mode <code>[PAPER/PROD]</code>\n"
+    "  • <code>/ck</code> → Diagnostic API & RPC\n\n"
+    "<b>📈 Positions & Risques :</b>\n"
+    "  • <code>/b</code> → Capital & Répartition\n"
+    "  • <code>/p</code> → Positions ouvertes\n"
+    "  • <code>/risk</code> → Exposition portefeuille\n"
+    "  • <code>/cb</code> → Circuit Breaker\n\n"
+    "<b>🧠 Intelligence & Régimes :</b>\n"
+    "  • <code>/r</code> → Régime marché (HMM)\n"
+    "  • <code>/whales</code> → Leaderboard baleines\n"
+    "  • <code>/copy [start|stop|set]</code> → Copy trading\n\n"
+    "<b>🔐 Sécurité & Comptes :</b>\n"
+    "  • <code>/gen</code> → Nouveau wallet chiffré\n"
+    "  • <code>/import [PK]</code> → Importer clé privée\n\n"
+    "<b>💬 Signal :</b> <code>BUY BTC @ 0.50</code>\n"
+    "───────────────────"
 )
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
@@ -83,6 +81,9 @@ TELEGRAM_SEND_RETRIES = 3
 
 
 class TelegramListener:
+    def _html(self, value: Any) -> str:
+        from html import escape
+        return escape(str(value if value is not None else ""), quote=False)
     def __init__(
         self,
         bot_token: str,
@@ -280,7 +281,7 @@ class TelegramListener:
         text: str,
         update: Update,
         reply_markup=None,
-        parse_mode: Optional[str] = "Markdown",
+        parse_mode: Optional[str] = "HTML",
     ) -> bool:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
         if msg is None:
@@ -459,7 +460,7 @@ class TelegramListener:
         active_address = Account.from_key(mgr.get_or_generate_private_key()).address
         wallets = mgr.list_wallets()
 
-        lines = ["🦞 *LOBSTAR WALLET MANAGER*", "━━━━━━━━━━━━━━━━━━━━"]
+        lines = ["<b>🦞 LOBSTAR WALLET MANAGER</b>", "───────────────────"]
         buttons = []
         for wallet in wallets:
             address = wallet.get("address", "")
@@ -471,7 +472,7 @@ class TelegramListener:
                 if is_active
                 else f"Select {address[:6]}...{address[-4:]}"
             )
-            lines.append(f"{'🟢' if is_active else '⚪'} `{address}`")
+            lines.append(f"{'🟢' if is_active else '⚪'} <code>{address}</code>")
             buttons.append([InlineKeyboardButton(label, callback_data=f"wallet_select:{address}")])
 
         if not buttons:
@@ -482,7 +483,7 @@ class TelegramListener:
                 await update.callback_query.edit_message_text(
                     "\n".join(lines),
                     reply_markup=InlineKeyboardMarkup(buttons),
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.HTML,
                 )
                 return
             except Exception:
@@ -492,7 +493,7 @@ class TelegramListener:
             "\n".join(lines),
             update,
             reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
         )
 
     def _get_wallet_vault(self):
@@ -884,14 +885,14 @@ class TelegramListener:
             if self._scanner:
                 agg = self._scanner.get_aggregate_sentiment()
                 emoji = "📈" if agg["sentiment"] == "BULLISH" else "📉" if agg["sentiment"] == "BEARISH" else "⚖️"
-                sentiment_text = f"📊 {emoji} `{agg['sentiment']}` (`{agg['bullish_pct']:.1f}%` Bullish)"
+                sentiment_text = f"📊 {emoji} <code>{agg['sentiment']}</code> (<code>{agg['bullish_pct']:.1f}%</code> Bullish)"
 
             text = (
-                f"🧠 *VOLATILITY REGIME*\n"
-                f"📈 `{regime}`\n"
+                f"🧠 <b>VOLATILITY REGIME</b>\n"
+                f"📈 <code>{regime}</code>\n"
                 f"{sentiment_text}"
             )
-            await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
+            await self.reply_to(text, update, parse_mode=ParseMode.HTML)
         except Exception as e:
             await self.reply_to(f"Error: {e}", update)
 
@@ -1060,13 +1061,13 @@ class TelegramListener:
             engaged_str = f"{engaged:,.2f}"
 
             text = (
-                "💎 Portfolio\n"
-                "──────────────\n"
-                f"💰 Total: {total_str} USD\n"
-                f"💵 Cash: {available_str} USD\n"
-                f"🔒 Engagé: {engaged_str} USD\n\n"
-                f"📊 Risque: {pct:.0f}%\n"
-                f"[{bar}]"
+                "<b>💎 Portfolio</b>\n"
+                "───────────────────\n"
+                f"💰 Total: <b>{total_str} USD</b>\n"
+                f"💵 Cash: <b>{available_str} USD</b>\n"
+                f"🔒 Engagé: <b>{engaged_str} USD</b>\n\n"
+                f"📊 Risque: <code>{pct:.0f}%</code>\n"
+                f"<code>[{bar}]</code>"
             )
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             keyboard = [[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]]
@@ -1078,13 +1079,13 @@ class TelegramListener:
                     await query.edit_message_text(
                         text,
                         reply_markup=reply_markup,
-                        parse_mode=ParseMode.MARKDOWN,
+                        parse_mode=ParseMode.HTML,
                     )
                     return
                 except Exception as exc:
                     logger.debug("Failed to edit balance: %s", exc)
 
-            await self.reply_to(text, update, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+            await self.reply_to(text, update, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         except Exception as e:
             await self.reply_to(f"Error: {e}", update)
 
@@ -1102,36 +1103,33 @@ class TelegramListener:
                 await self.reply_to("🔍 Aucune position ouverte.", update)
                 return
             lines = [
-                "```\n"
-                "┌─────────────────────────┐\n"
-                f"│   💼 OPEN POSITIONS     │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                f"💼 *Positions Ouvertes ({len(positions)})*",
-                "────────────────────────"
+                "<b>💼 OPEN POSITIONS</b>",
+                "───────────────────",
+                f"💼 <b>Positions Ouvertes ({len(positions)})</b>",
+                "───────────────────"
             ]
             for p in positions[:10]:
-                ticker = p.get("ticker", "?")
-                side = p.get("side", "?").upper()
+                ticker = self._html(p.get("ticker", "?"))
+                side = self._html(p.get("side", "?").upper())
                 side_emoji = "🟢 BUY" if side == "BUY" else "🔴 SELL"
                 size = p.get("size", 0)
                 entry = p.get("entry_price", 0)
                 if mode in ("PAPER", "REPLAY"):
                     lines.append(
-                        f"  {side_emoji} `{size:.2f}` {ticker} @ `${entry:.3f}`"
+                        f"  {side_emoji} <code>{size:.2f}</code> {ticker} @ <code>${entry:.3f}</code>"
                     )
                 else:
                     cap = p.get("capital_engaged", 0)
                     lines.append(
-                        f"  {side_emoji} `{size:.2f}` {ticker} @ `${entry:.3f}` (`${cap:.2f}`)"
+                        f"  {side_emoji} <code>{size:.2f}</code> {ticker} @ <code>${entry:.3f}</code> (<code>${cap:.2f}</code>)"
                     )
             if len(positions) > 10:
                 lines.append(f"  ... and {len(positions) - 10} more")
-            lines.append("────────────────────────")
+            lines.append("───────────────────")
             await self.reply_to(
                 "\n".join(lines),
                 update,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
         except Exception as e:
             await self.reply_to(f"Error: {e}", update)
@@ -1175,11 +1173,11 @@ class TelegramListener:
             except Exception as exc:
                 logger.debug("Capital summary unavailable for portfolio command: %s", exc)
         text = (
-            f"📊 *Portfolio Summary*\n"
-            f"🎯 `{mode}` 💰 `${cap:.2f}` 💵 `${available:.2f}`\n"
-            f"📦 `{pos_count}` 🛡️ `{net_beta}` 📈 `{regime}`"
+            f"📊 <b>Portfolio Summary</b>\n"
+            f"🎯 <code>{mode}</code> 💰 <code>${cap:.2f}</code> 💵 <code>${available:.2f}</code>\n"
+            f"📦 <code>{pos_count}</code> 🛡️ <code>{net_beta}</code> 📈 <code>{regime}</code>"
         )
-        await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
+        await self.reply_to(text, update, parse_mode=ParseMode.HTML)
 
     async def _cmd_circuit(self, update: Update, _context) -> None:
         if not self._ledger:
@@ -1197,20 +1195,17 @@ class TelegramListener:
 
             status_emoji = "🟢 HEALTHY" if status == "HEALTHY" else "⚠️ WARNING" if status == "WARNING" else "🚨 BREACHED"
             text = (
-                "```\n"
-                "┌─────────────────────────┐\n"
-                "│  ⚡ CIRCUIT BREAKER OS  │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                f"🛡️ *Breaker Status* : `{status_emoji}`\n"
-                f"💰 *Total Capital* : `{total:.2f} $`\n"
-                f"📈 *Allocated Limit* : `{allocated_pct:.1f}%`\n"
-                f"🛑 *Hard Cap Limit* : `{hard_cap_pct:.2f} $`\n"
-                f"🔒 *Engaged Funds* : `{engaged:.2f} $` (`{ratio:.1f}%` du Cap)\n"
-                f"💵 *Available Funds* : `{available:.2f} $`\n"
-                "────────────────────────"
+                "<b>⚡ CIRCUIT BREAKER OS</b>\n"
+                "───────────────────\n"
+                f"🛡️ <b>Breaker Status</b> : <code>{status_emoji}</code>\n"
+                f"💰 <b>Total Capital</b> : <code>{total:.2f} $</code>\n"
+                f"📈 <b>Allocated Limit</b> : <code>{allocated_pct:.1f}%</code>\n"
+                f"🛑 <b>Hard Cap Limit</b> : <code>{hard_cap_pct:.2f} $</code>\n"
+                f"🔒 <b>Engaged Funds</b> : <code>{engaged:.2f} $</code> (<code>{ratio:.1f}%</code> du Cap)\n"
+                f"💵 <b>Available Funds</b> : <code>{available:.2f} $</code>\n"
+                "───────────────────"
             )
-            await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
+            await self.reply_to(text, update, parse_mode=ParseMode.HTML)
         except Exception as e:
             await self.reply_to(f"Error: {e}", update)
 
