@@ -118,8 +118,6 @@ class Btc15MinuteFusionStrategy:
         metadata = features.metadata
         spike = metadata.get("spike_score")
 
-        # Si le score n'est pas déjà présent, on essaie de le calculer à la volée
-        # si des données OHLCV sont fournies dans les métadonnées.
         if spike is None and "ohlcv" in metadata:
             try:
                 from utils.chart_pattern_detector import ChartPatternDetector
@@ -128,5 +126,7 @@ class Btc15MinuteFusionStrategy:
             except Exception:
                 spike = 0.0
 
-        spike = float(spike or metadata.get("momentum_1m", 0.0) or 0.0)
+        if spike is None:
+            spike = metadata.get("momentum_1m", 0.0)
+        spike = float(spike if spike is not None else 0.0)
         return max(-0.10, min(0.10, spike * 0.10))

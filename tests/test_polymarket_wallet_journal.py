@@ -1,4 +1,5 @@
 import json
+import os
 
 import pytest
 
@@ -8,7 +9,7 @@ from utils.polymarket_wallet_journal import PolymarketWalletJournal, WalletIdent
 def test_wallet_journal_builds_precise_snapshot(tmp_path) -> None:
     journal = PolymarketWalletJournal(tmp_path / "wallet.jsonl")
     identity = WalletIdentity(
-        chat_id="7413500821",
+        chat_id=os.environ.get("CHAT_ID", "123456789"),
         wallet_name="import",
         eoa_address="0xdc5585FC1cEDf10EECedB9D71f02f13b34cf614E",
         proxy_address="0xa005088ba69014581d6460db325627600887590b",

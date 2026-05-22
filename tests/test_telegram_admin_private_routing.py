@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -8,8 +9,8 @@ from telegram_scraper.telegram_listener import TelegramListener
 from utils.access_control import AccessControlManager
 
 
-ADMIN_CHAT_ID = 7413500821
-CHANNEL_CHAT_ID = -1003714224501
+ADMIN_CHAT_ID = int(os.environ.get("TELEGRAM_ADMIN_CHAT_IDS", "123456789").split(",")[0])
+CHANNEL_CHAT_ID = int(os.environ.get("CHAT_ID", "-987654321"))
 
 
 def _update(chat_id: int, user_id: int | None = None, chat_type: str = "private"):

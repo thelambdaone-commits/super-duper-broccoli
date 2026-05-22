@@ -845,6 +845,27 @@ class TelegramListener:
         except Exception as e:
             await self.reply_to(f"❌ *Import Failed:* {e}", update, parse_mode=ParseMode.MARKDOWN)
 
+    async def _get_btc_returns(self, n: int = 100) -> Any | None:
+        try:
+            import numpy as np
+            now = time.time()
+            rows = []
+            if self._store:
+                rows = self._store.get_microstructure_range(now - 86400, now, ticker="BTC")
+            if not rows:
+                rows = []
+                if self._store:
+                    rows = self._store.get_microstructure_range(0, now, ticker="BTC")
+            if len(rows) >= n:
+                prices = [r["mid_price"] for r in rows if r.get("mid_price", 0) > 0]
+                if len(prices) >= n:
+                    arr = np.array(prices[-n:], dtype=np.float64)
+                    rets = np.diff(arr) / arr[:-1]
+                    return rets[-n+1:] if len(rets) >= 2 else None
+            return None
+        except Exception:
+            return None
+
     async def _cmd_regime(self, update: Update, _context) -> None:
         if not self._hmm:
             await self.reply_to("HMM Filter not available.", update)
@@ -852,26 +873,23 @@ class TelegramListener:
         try:
             from user_data.strategies.hmm_filter import REGIME_LABELS
             import numpy as np
-            returns = np.random.randn(100) * 0.01
-            state = self._hmm.predict_regime(returns)
-            regime = REGIME_LABELS.get(state, "UNKNOWN")
+            returns = await self._get_btc_returns()
+            if returns is not None and len(returns) > 0:
+                state = self._hmm.predict_regime(returns)
+                regime = REGIME_LABELS.get(state, "UNKNOWN")
+            else:
+                regime = "WAITING_FOR_DATA"
 
             sentiment_text = ""
             if self._scanner:
                 agg = self._scanner.get_aggregate_sentiment()
                 emoji = "📈" if agg["sentiment"] == "BULLISH" else "📉" if agg["sentiment"] == "BEARISH" else "⚖️"
-                sentiment_text = f"\n📊 *Market Sentiment* : {emoji} `{agg['sentiment']}` (`{agg['bullish_pct']:.1f}%` Bullish)"
+                sentiment_text = f"📊 {emoji} `{agg['sentiment']}` (`{agg['bullish_pct']:.1f}%` Bullish)"
 
             text = (
-                "```\n"
-                "┌─────────────────────────┐\n"
-                "│  🧠 VOLATILITY REGIME   │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                f"📈 *HMM Regime* : `{regime}`\n"
-                f"{sentiment_text}\n"
-                "────────────────────────\n"
-                f"ℹ️ _Analyse temps réel basée sur le modèle HMM et l'agrégation des signaux de sentiment Polymarket._"
+                f"🧠 *VOLATILITY REGIME*\n"
+                f"📈 `{regime}`\n"
+                f"{sentiment_text}"
             )
             await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
         except Exception as e:
@@ -887,8 +905,6 @@ class TelegramListener:
             except Exception as exc:
                 logger.debug("Capital summary unavailable for status command: %s", exc)
         total = cap_summary.get("total_capital", "?")
-        available = cap_summary.get("available_capital", "?")
-        allocated = cap_summary.get("allocated_pct", "?")
         net_beta = "?"
         if self._risk:
             try:
@@ -899,10 +915,12 @@ class TelegramListener:
         if self._hmm:
             try:
                 from user_data.strategies.hmm_filter import REGIME_LABELS
-                import numpy as np
-                returns = np.random.randn(100) * 0.01
-                state = self._hmm.predict_regime(returns)
-                regime = REGIME_LABELS.get(state, "UNKNOWN")
+                returns = await self._get_btc_returns()
+                if returns is not None and len(returns) > 0:
+                    state = self._hmm.predict_regime(returns)
+                    regime = REGIME_LABELS.get(state, "UNKNOWN")
+                else:
+                    regime = "WAITING_FOR_DATA"
             except Exception as exc:
                 logger.debug("Regime unavailable for status command: %s", exc)
         from datetime import timezone
@@ -932,14 +950,12 @@ class TelegramListener:
             tick_bar = "█" * tick_bar_len + "░" * (10 - tick_bar_len)
 
             swarm_status = (
-                f"\n\n🐙 *RUFLO SWARM STATUS*\n"
-                "────────────────────────\n"
+                f"\n🐙 *RUFLO SWARM*\n"
                 f"• State: `{status['state']}`\n"
                 f"• Production Ready: `{status['production_ready']}`\n"
-                f"• Avg Brier Score: `{avg_brier_text}`\n"
-                f"• Ticks Requis: `{ticks}/{req}`\n"
-                f"• Progression PROD: `{pct_prog:.1f}%`\n"
-                f"  `{tick_bar}`\n"
+                f"• Avg Brier: `{avg_brier_text}` | Ticks: `{ticks}/{req}`\n"
+                f"• PROD: `{pct_prog:.1f}%`\n"
+                f"{tick_bar}\n"
             )
             if status['data_gaps']:
                 gaps = [k for k, v in status['data_gaps'].items() if v]
@@ -947,23 +963,15 @@ class TelegramListener:
                     swarm_status += f"• ⚠️ Gaps: `{', '.join(gaps)}`\n"
             if status.get('edge_override'):
                 swarm_status += f"• Edge Override: `{status['edge_override']:.1%}`\n"
-            swarm_status += "────────────────────────"
         except Exception as e:
-            swarm_status = f"\n\n🐙 *RUFLO SWARM* : Error (`{e}`)"
+            swarm_status = f"\n🐙 *RUFLO SWARM* : Error (`{e}`)"
 
         text = (
-            "```\n"
-            "┌─────────────────────────┐\n"
-            "│   🤖 QUANT COCKPIT V2   │\n"
-            "└─────────────────────────┘\n"
-            "```\n"
-            f"🟢 *Status* : `Active`\n"
-            f"⏰ *Time* : `{current_time}`\n"
-            f"⏱️ *Uptime* : `{uptime}` (Boot: `{start_str}`)\n"
-            f"🎯 *Mode* : `{mode}`\n"
-            f"💰 *Capital* : `{total_str}`\n"
-            f"🛡️ *Risk Exposure* : `{net_beta} Beta`\n"
-            f"📈 *HMM Regime* : `{regime}`"
+            f"🤖 *QUANT COCKPIT V2*\n"
+            f"🟢 `Active` ⏰ `{current_time}`\n"
+            f"⏱️ `{uptime}` 🎯 `{mode}`\n"
+            f"💰 `{total_str}` 🛡️ `{net_beta}`\n"
+            f"📈 `{regime}`"
             f"{swarm_status}"
         )
 
@@ -1052,13 +1060,13 @@ class TelegramListener:
             engaged_str = f"{engaged:,.2f}"
 
             text = (
-                "💎 *Portfolio*\n"
+                "💎 Portfolio\n"
                 "──────────────\n"
-                f"💰 Total: `{total_str} USD`\n"
-                f"💵 Cash: `{available_str} USD`\n"
-                f"🔒 Engagé: `{engaged_str} USD`\n\n"
-                f"📊 Risque: `{pct:.0f}%`\n"
-                f"`[{bar}]`"
+                f"💰 Total: {total_str} USD\n"
+                f"💵 Cash: {available_str} USD\n"
+                f"🔒 Engagé: {engaged_str} USD\n\n"
+                f"📊 Risque: {pct:.0f}%\n"
+                f"[{bar}]"
             )
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             keyboard = [[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]]
@@ -1138,11 +1146,13 @@ class TelegramListener:
                 logger.debug("Risk exposure unavailable for portfolio command: %s", exc)
         if self._hmm:
             try:
-                import numpy as np
                 from user_data.strategies.hmm_filter import REGIME_LABELS
-                returns = np.random.randn(100) * 0.01
-                state = self._hmm.predict_regime(returns)
-                regime = REGIME_LABELS.get(state, "UNKNOWN")
+                returns = await self._get_btc_returns()
+                if returns is not None and len(returns) > 0:
+                    state = self._hmm.predict_regime(returns)
+                    regime = REGIME_LABELS.get(state, "UNKNOWN")
+                else:
+                    regime = "WAITING_FOR_DATA"
             except Exception as exc:
                 logger.debug("Regime unavailable for portfolio command: %s", exc)
         mode = self._get_mode()
@@ -1165,37 +1175,11 @@ class TelegramListener:
             except Exception as exc:
                 logger.debug("Capital summary unavailable for portfolio command: %s", exc)
         text = (
-            f"*Portfolio Summary*\n"
-            f"Mode: {mode}\n"
-            f"Capital: ${cap:.2f} (${available:.2f} avail)\n"
-            f"Open Positions: {pos_count}\n"
-            f"Net Beta Exposure: {net_beta}\n"
-            f"Market Regime: {regime}"
+            f"📊 *Portfolio Summary*\n"
+            f"🎯 `{mode}` 💰 `${cap:.2f}` 💵 `${available:.2f}`\n"
+            f"📦 `{pos_count}` 🛡️ `{net_beta}` 📈 `{regime}`"
         )
         await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
-
-    async def _cmd_regime(self, update: Update, _context) -> None:
-        if not self._hmm:
-            await self.reply_to("HMM regime filter not available.", update)
-            return
-        try:
-            import numpy as np
-            from user_data.strategies.hmm_filter import REGIME_LABELS
-            returns = np.random.randn(100) * 0.01
-            state = self._hmm.predict_regime(returns)
-            label = REGIME_LABELS.get(state, "UNKNOWN")
-            di = self._hmm.compute_dissimilarity_index(returns)
-            allowed, reason = self._hmm.is_trading_allowed(returns)
-            text = (
-                f"*Market Regime*\n"
-                f"State: {label}\n"
-                f"Dissimilarity Index: {di:.4f}\n"
-                f"Trading Allowed: {'YES' if allowed else 'NO'}\n"
-                f"Reason: {reason}"
-            )
-            await self.reply_to(text, update, parse_mode=ParseMode.MARKDOWN)
-        except Exception as e:
-            await self.reply_to(f"Error: {e}", update)
 
     async def _cmd_circuit(self, update: Update, _context) -> None:
         if not self._ledger:
@@ -1541,6 +1525,11 @@ class TelegramListener:
                 await query.answer()
                 await self._cmd_start(update, context)
                 return
+            if query.data == "wallet_settings":
+                manager = self._get_wallet_manager()
+                text, reply_markup = manager.generer_settings_layout()
+                await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                return
             if query.data in {
                 "wallet_refresh",
                 "wallet_history",
@@ -1663,14 +1652,9 @@ class TelegramListener:
 
                         # Layout exactly matching user format
                         lines = [
-                            "```\n"
-                            "┌─────────────────────────┐\n"
-                            "│  📜 POLYMARKET HISTORY  │\n"
-                            "└─────────────────────────┘\n"
-                            "```\n"
-                            f"Page 1/1 - Trades {len(activity)}/{len(activity)}" if isinstance(activity, list) else "Page 1/1 - Trades 0/0",
-                            f"⭐ *Wallet {wallet_name.capitalize()}*",
-                            f"Adresse: `{target_address}`",
+                            f"📜 *POLYMARKET HISTORY*",
+                            f"⭐ Wallet: {wallet_name.capitalize()}",
+                            f"📬 `{target_address}`",
                             f"Volume total: `${volume_total:.2f}`",
                             f"Positions ouvertes: `{len(open_pos)}`" if isinstance(open_pos, list) else "Positions ouvertes: `0`",
                             f"Positions clôturées: `{len(closed_pos)}`" if isinstance(closed_pos, list) else "Positions clôturées: `0`",
@@ -2008,14 +1992,9 @@ class TelegramListener:
         elif query.data == "settings":
             mode = self._get_mode()
             msg = (
-                "```\n"
-                "┌─────────────────────────┐\n"
-                "│    ⚙️ SYSTEM SETTINGS   │\n"
-                "└─────────────────────────┘\n"
-                "```\n"
-                f"📂 *Mode actif* : `{mode}`\n\n"
-                "⚡ Pour changer de mode, utilisez la commande :\n"
-                "`/mode PAPER` ou `/mode PROD`"
+                f"⚙️ *SYSTEM SETTINGS*\n"
+                f"📂 Mode: `{mode}`\n\n"
+                f"`/mode PAPER` ou `/mode PROD`"
             )
             reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]])
             await safe_edit_callback(query, msg, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
