@@ -4,12 +4,6 @@ import getpass
 import logging
 import os
 import sys
-from pathlib import Path
-
-# Fix environment variable conflict if present
-if os.getenv("REAL", "false").lower() == "true" and os.getenv("PAPER", "false").lower() == "true":
-    if not sys.stdin.isatty():
-         os.environ["REAL"] = "false"
 
 from bootstrap.factories import build_access_control
 from bootstrap.helpers import _env_bool
@@ -19,7 +13,6 @@ from utils.exceptions import QuantFatal
 from utils.localization_sync import apply_backward_compatible_aliases
 from utils.logging_setup import setup_logging
 from bootstrap.security import telegram_single_instance_lock
-from utils.telegram_helpers import parse_private_chat_ids
 
 logger = logging.getLogger("Main")
 PROD_CONFIRMATION_TEXT = "CONFIRM"
@@ -85,7 +78,7 @@ def require_production_confirmation(mode: str):
         print("!!! WARNING: ENTERING PRODUCTION MODE (REAL CAPITAL) !!!")
         print("!" * 60 + "\n")
         confirm = input(f"Type '{PROD_CONFIRMATION_TEXT}' to proceed: ")
-        if confirm != "CONFIRM":
+        if confirm != PROD_CONFIRMATION_TEXT:
             print("Production mode aborted.")
             sys.exit(0)
         typed_secret = getpass.getpass("Enter PROD second-factor secret: ").strip()
@@ -145,12 +138,12 @@ def main_sync():
                 with telegram_single_instance_lock():
                     asyncio.run(run_bot())
     except QuantFatal as e:
-        logger.critical(f"FATAL: {e}")
+        logger.critical("FATAL: %s", e)
         sys.exit(1)
     except KeyboardInterrupt:
         logger.info("Shutdown requested by user.")
     except Exception as e:
-        logger.exception(f"Unhandled system error: {e}")
+        logger.exception("Unhandled system error: %s", e)
         sys.exit(1)
 
 if __name__ == "__main__":
