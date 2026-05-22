@@ -75,9 +75,9 @@ def test_format_unified_feed_report() -> None:
 
     text = format_unified_feed_report(markets_general, report)
 
-    assert "📡 LIVE MARKET FEED" in text
+    assert "LIVE MARKET FEED" in text
     assert "Will Aberdeen FC win on 2026-05-17?" in text
-    assert "███░░░░░░░ 33%" in text
+    assert "<code>███░░░░░░░</code> <code>33%</code>" in text
     assert "Lobstar Crypto Intelligence" in text
     assert "NEUTRE" in text or "BULLISH" in text or "BEARISH" in text
     assert "will-ethereum-dip-to-1500-by-december-31-2026" in text

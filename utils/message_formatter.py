@@ -235,34 +235,36 @@ def format_scan_report(result) -> str:
 def format_market_report(markets) -> str:
     if not markets:
         return "🔍 <b>Market Discovery</b>\nNo active contracts found."
-    parts = ["📡 <b>LIVE MARKET FEED</b>\n"]
+    parts = ["<b>📡 LIVE MARKET FEED</b>", "───────────────────"]
     for m in markets[:6]:
         try:
             pct = m.probability_pct
             bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
-            parts.append(f"• <b>{_html(m.question[:45])}</b>\n  <code>{bar}</code> <code>{pct:.0f}%</code> | <code>${m.yes_price:.3f}</code>\n")
+            parts.append(f"• <b>{_html(m.question[:45])}</b>\n  <code>{bar}</code> <code>{pct:.0f}%</code> | <code>${m.yes_price:.3f}</code>")
         except Exception:
-            parts.append(f"• {_html(m.question[:45])}\n")
+            parts.append(f"• {_html(m.question[:45])}")
+    parts.append("───────────────────")
     return "\n".join(parts)
 
 
 def format_winning_bets_alert(signals) -> str:
     if not signals:
         return ""
-    parts = ["🏆 <b>SIGNAL ALERT</b>"]
+    parts = ["<b>🏆 SIGNAL ALERT — ALPHA DETECTED</b>", "───────────────────"]
     for s in signals:
         parts.append(
-            f"\n🔹 <b>{_html(s.market_question[:55])}</b>"
-            f"\n   Side: <code>{_html(s.side)}</code> | Prob: <code>{s.current_prob:.0f}%</code>"
-            f"\n   Conf: <code>{s.confidence:.0%}</code> | Vol: <code>${s.volume:,.0f}</code>"
+            f"🔹 <b>{_html(s.market_question[:60])}</b>\n"
+            f"   Side: <b>{_html(s.side)}</b> | Prob: <code>{s.current_prob:.0f}%</code>\n"
+            f"   Conf: <code>{s.confidence:.0%}</code> | Vol: <code>${s.volume:,.0f}</code>"
         )
-    parts.append("\n⚡ <i>Execution via /p or direct signal</i>")
+    parts.append("───────────────────")
+    parts.append("⚡ <i>Execution via Institutional Cockpit /p</i>")
     return "\n".join(parts)
 
 
 def format_unified_feed_report(markets_general: list, intelligence_report) -> str:
     """Format combined general feed and crypto intelligence report."""
-    parts = ["📡 LIVE MARKET FEED\n"]
+    parts = ["<b>📡 LIVE MARKET FEED — TOP ALPHA</b>", "───────────────────"]
 
     def _days_to_resolution(market: Any) -> float | None:
         end_date = getattr(market, "end_date", "") or ""
@@ -292,23 +294,24 @@ def format_unified_feed_report(markets_general: list, intelligence_report) -> st
 
     for m in filtered_markets[:8]:
         try:
-            # Check if probability_pct or yes_price is present
             pct = getattr(m, 'probability_pct', None)
             if pct is None:
                 pct = getattr(m, 'yes_price', 0.0) * 100.0
 
             yes_price = getattr(m, 'yes_price', 0.0)
-            question = getattr(m, 'question', 'Unknown Market')
+            question = _html(getattr(m, 'question', 'Unknown Market'))
             days = _days_to_resolution(m)
-            horizon = f" | T- {days:.1f}j" if isinstance(days, (int, float)) else ""
+            horizon = f" | T- <code>{days:.1f}j</code>" if isinstance(days, (int, float)) else ""
 
             bar = "█" * int(pct / 10) + "░" * (10 - int(pct / 10))
-            parts.append(f"  • {question[:52]}\n    {bar} {pct:.0f}% | ${yes_price:.3f}{horizon}\n")
+            parts.append(f"• <b>{question[:55]}</b>\n  <code>{bar}</code> <code>{pct:.0f}%</code> | <code>${yes_price:.3f}</code>{horizon}")
         except Exception:
-            question = getattr(m, 'question', 'Unknown Market')
-            parts.append(f"  • {question[:50]}\n")
+            question = _html(getattr(m, 'question', 'Unknown Market'))
+            parts.append(f"• {question[:50]}")
+
+    parts.append("───────────────────")
 
     # Add a blank line and then the Lobstar Crypto Intelligence section
     from utils.crypto_market_intelligence import format_intelligence_report
-    parts.append("\n" + format_intelligence_report(intelligence_report))
+    parts.append(format_intelligence_report(intelligence_report))
     return "\n".join(parts)

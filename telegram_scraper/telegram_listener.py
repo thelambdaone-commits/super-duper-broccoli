@@ -1652,26 +1652,26 @@ class TelegramListener:
 
                         # Layout exactly matching user format
                         lines = [
-                            f"📜 *POLYMARKET HISTORY*",
-                            f"⭐ Wallet: {wallet_name.capitalize()}",
-                            f"📬 `{target_address}`",
-                            f"Volume total: `${volume_total:.2f}`",
-                            f"Positions ouvertes: `{len(open_pos)}`" if isinstance(open_pos, list) else "Positions ouvertes: `0`",
-                            f"Positions clôturées: `{len(closed_pos)}`" if isinstance(closed_pos, list) else "Positions clôturées: `0`",
-                            f"{pnl_emoji} *PnL réalisé estimé* : `{pnl_sign}${realized_pnl:.2f}`",
-                            f"{pnl_emoji} *Total estimé* : `{pnl_sign}${realized_pnl:.2f}`",
-                            "━━━━━━━━━━━━"
+                            "<b>📜 POLYMARKET HISTORY</b>",
+                            "───────────────────",
+                            f"⭐ <b>Wallet</b>: {self._html(wallet_name.capitalize())}",
+                            f"📬 <code>{self._html(target_address)}</code>",
+                            f"💵 <b>Volume Total</b>: <code>${volume_total:.2f}</code>",
+                            f"📦 <b>Open Positions</b>: <code>{len(open_pos) if isinstance(open_pos, list) else 0}</code>",
+                            f"✅ <b>Closed Positions</b>: <code>{len(closed_pos) if isinstance(closed_pos, list) else 0}</code>",
+                            f"{pnl_emoji} <b>PnL Réalisé</b>: <b>{pnl_sign}${realized_pnl:.2f}</b>",
+                            "───────────────────"
                         ]
 
                         if not activity or not isinstance(activity, list):
-                            lines.append("\nAucune transaction récente sur pUSD détectée.")
+                            lines.append("\n<i>Aucune transaction récente sur pUSD détectée.</i>")
                         else:
                             # Show up to 6 trades
                             for act in activity[:6]:
                                 try:
-                                    title = act.get("title", "Unknown Market")
-                                    side = str(act.get("side", "BUY")).upper()
-                                    outcome = act.get("outcome", "YES")
+                                    title = self._html(act.get("title", "Unknown Market"))
+                                    side = self._html(str(act.get("side", "BUY")).upper())
+                                    outcome = self._html(act.get("outcome", "YES"))
 
                                     size_val = act.get("size", 0.0)
                                     size = float(size_val) if size_val is not None else 0.0
@@ -1689,34 +1689,32 @@ class TelegramListener:
                                             pass
 
                                     lines.extend([
-                                        f"🎯 *{title}*",
-                                        f"• Side: `{side}`",
-                                        f"• Outcome: `{outcome}`",
-                                        f"• Size: `{size}`",
-                                        f"• Price: `{price}`",
+                                        f"🎯 <b>{title}</b>",
+                                        f"• <b>{side}</b> <code>{outcome}</code>",
+                                        f"• Size: <code>{size:.2f}</code>",
+                                        f"• Price: <code>${price:.3f}</code>",
                                     ])
                                     if date_str:
-                                        lines.append(f"• Date: `{date_str}`")
-                                    lines.append("")
+                                        lines.append(f"• Date: <code>{date_str}</code>")
+                                    lines.append("───────────────────")
                                 except Exception:
                                     pass
 
-                        lines.append("━━━━━━━━━━━━")
                         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
                         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
                     elif query.data == "wallet_orders":
                         orders_text = (
-                            "🎯 *Polymarket Cockpit*\n"
-                            "────────────────────────\n"
-                            "📋 *Active Orders*:\n"
+                            "<b>🎯 Polymarket Cockpit</b>\n"
+                            "───────────────────\n"
+                            "📋 <b>Active Orders</b>:\n"
                             "No active pending orders detected on-chain.\n"
-                            "────────────────────────"
+                            "───────────────────"
                         )
                         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
                         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text(orders_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                        await query.edit_message_text(orders_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
                     elif query.data == "wallet_positions":
                         import httpx
@@ -1730,9 +1728,9 @@ class TelegramListener:
                             logger.error("Failed to query open positions: %s", e)
 
                         lines = [
-                            "🎯 *Polymarket Cockpit*",
-                            "────────────────────────",
-                            "📊 *Open Positions*:"
+                            "<b>🎯 Polymarket Cockpit</b>",
+                            "───────────────────",
+                            "📊 <b>Open Positions</b>:"
                         ]
 
                         if not open_pos or not isinstance(open_pos, list):
@@ -1740,8 +1738,8 @@ class TelegramListener:
                         else:
                             for pos in open_pos[:10]:
                                 try:
-                                    title = pos.get("title", "Unknown Market")
-                                    outcome = pos.get("outcome", "YES")
+                                    title = self._html(pos.get("title", "Unknown Market"))
+                                    outcome = self._html(pos.get("outcome", "YES"))
 
                                     size_val = pos.get("size", 0.0)
                                     size = float(size_val) if size_val is not None else 0.0
@@ -1763,20 +1761,20 @@ class TelegramListener:
                                     pnl_sign = "+" if cash_pnl > 0 else ""
 
                                     lines.extend([
-                                        f"🎯 *{title}*",
-                                        f"• Outcome: `{outcome}`",
-                                        f"• Size: `{size:.2f} shares`",
-                                        f"• Entry Price: `${avg_price:.3f}`",
-                                        f"• Current Price: `${cur_price:.3f}`",
-                                        f"• Unrealized PnL: {pnl_emoji} `{pnl_sign}${cash_pnl:.2f}`",
-                                        "────────────────────────"
+                                        f"🎯 <b>{title}</b>",
+                                        f"• Outcome: <code>{outcome}</code>",
+                                        f"• Size: <code>{size:.2f}</code> shares",
+                                        f"• Entry: <code>${avg_price:.3f}</code>",
+                                        f"• Mark: <code>${cur_price:.3f}</code>",
+                                        f"• PnL: {pnl_emoji} <b>{pnl_sign}${cash_pnl:.2f}</b>",
+                                        "───────────────────"
                                     ])
                                 except Exception:
                                     pass
 
                         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
                         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
                     elif query.data == "wallet_pnl":
                         import httpx
@@ -1850,39 +1848,38 @@ class TelegramListener:
                         net_sign = "+" if net_capital_pnl is not None and net_capital_pnl > 0 else ""
 
                         lines = [
-                            "🎯 *Polymarket Cockpit*",
-                            "────────────────────────",
-                            "💰 *PnL Metrics (Real-Time)*:",
-                            f"• Wallet: `{wallet_name}`",
-                            f"• EOA: `{active_address}`",
-                            f"• Proxy: `{proxy_address or target_address}`",
-                            f"• USDC Direct: `{usdc_direct:.2f}`",
-                            f"• Polymarket pUSD: `{usdc_proxy:.2f}`",
-                            f"• Open Positions Value: `${open_current_value:.2f}`",
-                            f"• Total Capital: `${total_capital:.2f}`",
+                            "<b>🎯 Polymarket Cockpit</b>",
+                            "───────────────────",
+                            "💰 <b>PnL Metrics (Real-Time)</b>:",
+                            f"• Wallet: <code>{self._html(wallet_name)}</code>",
+                            f"• EOA: <code>{self._html(active_address)}</code>",
+                            f"• Proxy: <code>{self._html(proxy_address or target_address)}</code>",
+                            "",
+                            f"• USDC Direct: <code>{usdc_direct:.2f}</code>",
+                            f"• Polymarket pUSD: <code>{usdc_proxy:.2f}</code>",
+                            f"• Open Value: <code>${open_current_value:.2f}</code>",
+                            f"• Total Capital: <b>${total_capital:.2f}</b>",
+                            "───────────────────"
                         ]
                         if net_capital_pnl is not None:
                             lines.extend([
-                                f"• Reference Capital: `${reference_capital:.2f}`",
-                                f"• Net Capital PnL: {net_emoji} `{net_sign}${net_capital_pnl:.2f}`",
+                                f"• Capital Basis: <code>${reference_capital:.2f}</code>",
+                                f"• Net Gain: {net_emoji} <b>{net_sign}${net_capital_pnl:.2f}</b>",
+                                "───────────────────"
                             ])
                         else:
-                            lines.append("• Net Capital PnL: `N/A (reference missing)`")
+                            lines.append("• Net Gain: <code>N/A (reference missing)</code>")
+
                         lines.extend([
-                            f"• Total Closed Trades: `{total_trades}`",
-                            f"• Winning Trades: `🟢 {total_wins}`",
-                            f"• Losing Trades: `🔴 {total_losses}`",
-                            f"• Win Rate: `{win_rate:.1f}%`",
-                            f"• Closed Trading PnL: {closed_emoji} `{closed_sign}${total_realized_pnl:.2f}`",
-                            f"• Open Trading PnL: `${open_cash_pnl:.2f}`",
-                            "────────────────────────",
-                            "`Net Capital PnL = Total Capital - Reference Capital`",
-                            "`Closed Trading PnL = Polymarket closed-positions realizedPnl`",
+                            f"• Trades: <code>{total_trades}</code> (WR: <code>{win_rate:.1f}%</code>)",
+                            f"• Realized: {closed_emoji} <b>{closed_sign}${total_realized_pnl:.2f}</b>",
+                            f"• Floating: <b>{'+' if open_cash_pnl > 0 else ''}${open_cash_pnl:.2f}</b>",
+                            "───────────────────"
                         ])
 
                         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
                         reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
                 return
 
         # Handle specific prefix queries first
