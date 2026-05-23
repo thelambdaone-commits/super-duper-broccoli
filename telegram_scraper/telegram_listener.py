@@ -899,23 +899,27 @@ class TelegramListener:
         except Exception as e:
             await self.reply_to(f"<b>❌ Import Failed:</b> {e}", update)
 
-    async def _get_btc_returns(self, n: int = 100) -> Any | None:
+    async def _get_btc_returns(self, n: int = 10) -> Any | None:
         try:
             import numpy as np
             now = time.time()
             rows = []
             if self._store:
+                # Try last 24h first
                 rows = self._store.get_microstructure_range(now - 86400, now, ticker="BTC")
             if not rows:
                 rows = []
                 if self._store:
+                    # Fallback to all data
                     rows = self._store.get_microstructure_range(0, now, ticker="BTC")
+            
+            # Lowered requirement to 10 for initial status reporting
             if len(rows) >= n:
                 prices = [r["mid_price"] for r in rows if r.get("mid_price", 0) > 0]
                 if len(prices) >= n:
                     arr = np.array(prices[-n:], dtype=np.float64)
                     rets = np.diff(arr) / arr[:-1]
-                    return rets[-n+1:] if len(rets) >= 2 else None
+                    return rets if len(rets) >= 2 else None
             return None
         except Exception:
             return None
@@ -980,8 +984,6 @@ class TelegramListener:
         from datetime import timezone
         now = datetime.now(timezone.utc)
         current_time = now.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-        start_str = self._start_time.strftime("%Y-%m-%d %H:%M:%S UTC") if self._start_time else "N/A"
 
         if isinstance(total, (int, float)):
             total_str = f"${total:,.2f}"
@@ -1097,6 +1099,15 @@ class TelegramListener:
         if not self._ledger:
             await self.reply_to("Ledger not available.", update)
             return
+            
+        # Sync real capital before showing balance
+        try:
+            from core.container import ServiceContainer
+            container = ServiceContainer.get_instance()
+            await container.sync_real_capital()
+        except Exception as exc:
+            logger.debug("Real-time capital sync failed for balance command: %s", exc)
+
         try:
             cap = self._ledger.get_capital_summary()
             if not cap:
@@ -2205,6 +2216,11 @@ class TelegramListener:
                     with contextlib.suppress(Exception):
                         await self.application.shutdown()
                 self.application = None
+
+    async def stop(self) -> None:
+        self._running = False
+        self._ready.clear()
+None
 
     async def stop(self) -> None:
         self._running = False

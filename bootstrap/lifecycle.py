@@ -316,7 +316,6 @@ class BotLifecycle:
                                 for pos in due:
                                     asyncio.create_task(_execute_exit(pos))
                 async def _execute_exit(pos: dict):
-                    reason = pos.get("exit_reason", "unknown")
                     ticker = pos.get("ticker", "")
                     pos_id = pos.get("position_id", "")
                     entry = float(pos.get("entry_price", 0.0))
@@ -459,4 +458,6 @@ class BotLifecycle:
     async def stop(self) -> None:
         logger.info("Stopping BotLifecycle...")
         # Add cleanup logic if needed
+        pass
+eded
         pass

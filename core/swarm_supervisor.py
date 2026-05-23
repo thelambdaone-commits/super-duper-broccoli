@@ -59,8 +59,8 @@ class TriggerReason(Enum):
     PAPER_TICKS_INSUFFICIENT = "PAPER_TICKS_INSUFFICIENT"
 
 
-TELEMETRY_DIR = Path("data/swarm_telemetry")
-TELEMETRY_DIR.mkdir(parents=True, exist_ok=True)
+TELEMETRY_DIR = Path("data")
+# TELEMETRY_DIR.mkdir(parents=True, exist_ok=True)
 SWARM_STATE_PATH = TELEMETRY_DIR / "swarm_state.json"
 
 
@@ -165,6 +165,12 @@ class RufloSwarmSupervisor:
 
     @property
     def is_production_ready(self) -> bool:
+        """
+        True if the system is already in PROD or if it has fulfilled all PAPER requirements.
+        """
+        if self._mode == ExecutionMode.PROD:
+            return True
+            
         return (
             self._mode == ExecutionMode.PAPER
             and self._paper_ticks >= self.PAPER_TICKS_REQUIRED

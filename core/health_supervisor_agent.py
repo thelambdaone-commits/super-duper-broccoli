@@ -22,7 +22,7 @@ class HealthSupervisorConfig:
     staleness_threshold_seconds: float = 30.0
     memory_warning_mb: float = 1024.0
     memory_critical_mb: float = 1536.0
-    wallet_reconciliation_interval_seconds: float = 3600.0
+    wallet_reconciliation_interval_seconds: float = 300.0
     maintenance_interval_seconds: float = 86400.0
     check_interval_seconds: float = 5.0
     wallet_drift_tolerance_usd: float = 1.0
