@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import logging
 import os
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from core.autonomous_mode_controller import AutonomousModeController
+from core.signal_executor import _minimum_polymarket_notional
 from core.strategy_lifecycle_manager import StrategyLifecycleManager, StrategyPhase
 from core.strategy_selector import StrategySelectionConfig, StrategySelector
 from core.trade_objective import estimate_trade_objective
@@ -435,6 +437,21 @@ class AutonomousTradingLoop:
 
     async def _open_real_position(self, signal: StrategySignal, size: float, sizing: Mapping[str, Any]) -> AutonomousAction:
         logger.info(f"🚀 [REAL TRADE] Attempting to open position for {signal.ticker} ({signal.side} @ {signal.price:.4f}) size={size:.4f}")
+        minimum_notional = _minimum_polymarket_notional(self.executor or self.order_manager)
+        if signal.price <= 0:
+            return AutonomousAction("open", "REJECTED", signal.strategy_id, signal.ticker, reason="invalid price")
+        if size * signal.price < minimum_notional:
+            available_capital = float((self.ledger.get_capital_summary() or {}).get("available_capital", 0.0) or 0.0)
+            if available_capital >= minimum_notional:
+                size = max(size, math.ceil(minimum_notional / signal.price))
+        if size * signal.price < minimum_notional:
+            return AutonomousAction(
+                "open",
+                "REJECTED",
+                signal.strategy_id,
+                signal.ticker,
+                reason=f"live notional {size * signal.price:.2f} < Polymarket minimum {minimum_notional:.2f}",
+            )
         validation = self.ledger.validate_and_reserve(signal.ticker, signal.side, signal.price, size)
         if not validation.get("authorized"):
             return AutonomousAction("open", "REJECTED", signal.strategy_id, signal.ticker, reason=str(validation.get("reason", "risk rejected")))
@@ -506,6 +523,27 @@ class AutonomousTradingLoop:
         return AutonomousAction("open", "OPENED", signal.strategy_id, signal.ticker, position_id=position_id, reason=signal.reason)
 
     def _compute_sizing(self, signal: StrategySignal) -> dict[str, Any]:
+        mode = self.ledger.get_execution_mode().upper()
+        if self.risk_engine and mode in {"PROD", "SHADOW"}:
+            sized = self.risk_engine.compute_position_size(
+                ticker=signal.ticker,
+                side=signal.side,
+                price=signal.price,
+                confidence=signal.confidence,
+                win_prob=signal.confidence,
+                regime_label=str(signal.metadata.get("hmm_regime", "")),
+            )
+            selector_capital = max(0.0, float(signal.suggested_capital or 0.0))
+            live_capital = max(0.0, float(sized.get("capital_at_risk", 0.0) or 0.0))
+            bounded_capital = min(selector_capital, live_capital) if selector_capital > 0.0 and live_capital > 0.0 else max(selector_capital, live_capital)
+            if bounded_capital > 0.0 and signal.price > 0.0:
+                sized = {
+                    **sized,
+                    "size": bounded_capital / signal.price,
+                    "capital_at_risk": bounded_capital,
+                    "reason": "live risk engine bounded by selector capital",
+                }
+            return sized
         if signal.suggested_capital > 0 and signal.price > 0:
             return {
                 "size": signal.suggested_capital / signal.price,

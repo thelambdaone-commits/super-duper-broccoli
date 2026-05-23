@@ -9,6 +9,29 @@ from user_data.strategies.base_strategy import StrategySignal
 from user_data.strategies.polymarket_strategy_factory import MeanReversionStrategy
 
 
+class _StubRiskEngine:
+    def __init__(self, size: float, capital_at_risk: float) -> None:
+        self.size = size
+        self.capital_at_risk = capital_at_risk
+
+    def compute_position_size(self, **_: object) -> dict[str, float | str]:
+        return {
+            "size": self.size,
+            "capital_at_risk": self.capital_at_risk,
+            "reason": "stubbed",
+        }
+
+
+class _StubExecutor:
+    async def execute(self, ticker: str, side: str, price: float, size: float) -> dict[str, float | str]:
+        return {
+            "status": "FILLED",
+            "filled_size": size,
+            "price": price,
+            "order_id": f"oid-{ticker}-{side}",
+        }
+
+
 @pytest.fixture
 def ledger(tmp_path):
     return Ledger(db_path=str(tmp_path / "autonomous.db"))
@@ -209,3 +232,73 @@ async def test_autonomous_loop_rejects_trade_when_fees_destroy_expected_profit(l
     assert action.status == "REJECTED"
     assert "net expected profit" in action.reason
     assert ledger.get_paper_positions("OPEN") == []
+
+
+@pytest.mark.asyncio
+async def test_live_autonomous_loop_uses_risk_engine_capital_and_respects_minimum_notional(ledger, lifecycle):
+    ledger.set_execution_mode("PROD")
+    ledger.conn.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) VALUES (16.739693, 16.739693, 90)"
+    )
+    ledger.conn.commit()
+    loop = AutonomousTradingLoop(
+        ledger=ledger,
+        lifecycle=lifecycle,
+        risk_engine=_StubRiskEngine(size=12.0, capital_at_risk=6.0),
+        executor=_StubExecutor(),
+        config=AutonomousTradingConfig(allow_real_execution=True),
+    )
+
+    action = await loop.open_position(
+        StrategySignal(
+            strategy_id="live_cap",
+            market_id="m1",
+            ticker="MKT1",
+            side="BUY",
+            price=0.50,
+            confidence=0.90,
+            edge=0.50,
+            reason="live bounded sizing",
+            suggested_capital=2.0,
+            metadata={"spread": 0.0},
+        )
+    )
+
+    assert action.status == "OPENED"
+    positions = ledger.get_open_positions()
+    assert len(positions) == 1
+    assert positions[0]["notional_usd"] == pytest.approx(5.0)
+
+
+@pytest.mark.asyncio
+async def test_live_autonomous_loop_rejects_sub_minimum_notional_before_executor(ledger, lifecycle):
+    ledger.set_execution_mode("PROD")
+    ledger.conn.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) VALUES (4.0, 4.0, 90)"
+    )
+    ledger.conn.commit()
+    loop = AutonomousTradingLoop(
+        ledger=ledger,
+        lifecycle=lifecycle,
+        risk_engine=_StubRiskEngine(size=2.0, capital_at_risk=1.0),
+        executor=_StubExecutor(),
+        config=AutonomousTradingConfig(allow_real_execution=True),
+    )
+
+    action = await loop.open_position(
+        StrategySignal(
+            strategy_id="live_reject",
+            market_id="m1",
+            ticker="MKT1",
+            side="BUY",
+            price=0.50,
+            confidence=0.90,
+            edge=0.50,
+            reason="must be rejected under min notional",
+            metadata={"spread": 0.0},
+        )
+    )
+
+    assert action.status == "REJECTED"
+    assert "Polymarket minimum" in action.reason
+    assert ledger.get_open_positions() == []

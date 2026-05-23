@@ -82,7 +82,8 @@ def _compute_technicals(df: pd.DataFrame) -> pd.DataFrame:
     order_imbalance = np.full(n, 0.5, dtype=np.float64)
     if volume.max() > 0:
         vol_ma = pd.Series(volume).rolling(20).mean().values
-        order_imbalance = np.where(vol_ma > 1e-10, volume / vol_ma, 0.5)
+        valid_mask = np.isfinite(vol_ma) & (vol_ma > 1e-10)
+        np.divide(volume, vol_ma, out=order_imbalance, where=valid_mask)
         order_imbalance = np.clip(order_imbalance, 0.0, 1.0)
 
     result = df.copy()

@@ -2235,7 +2235,10 @@ class TelegramListener:
         elif query.data == "crypto_menu":
             await query.answer()
             try:
-                text, reply_markup = await self.ui_router.render_crypto_menu()
+                router = self.ui_router or getattr(self, "command_router", None)
+                if router is None or not hasattr(router, "render_crypto_menu"):
+                    raise AttributeError("render_crypto_menu unavailable")
+                text, reply_markup = await router.render_crypto_menu()
                 await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except Exception as exc:
                 logger.exception("Crypto menu callback failed")
