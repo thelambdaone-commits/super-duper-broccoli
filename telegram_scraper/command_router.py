@@ -3,7 +3,7 @@ import os
 import json
 import asyncio
 from datetime import datetime, timezone
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.constants import ParseMode
 
@@ -231,6 +231,57 @@ class CommandRouter:
         self.market_reader = market_reader
         self.access_control = getattr(listener, 'access_control', None)
 
+    def _get_btc_launch_service(self):
+        from core.services.btc_launch_service import BTCDirectionLaunchService
+
+        service = getattr(self.listener, "_btc_launch_service", None)
+        if service is None:
+            service = BTCDirectionLaunchService()
+            setattr(self.listener, "_btc_launch_service", service)
+        return service
+
+    def _btc_launch_markup(self, interval: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📈 Paper Up", callback_data=f"btc_paper:{interval}:up"),
+                InlineKeyboardButton("📉 Paper Down", callback_data=f"btc_paper:{interval}:down"),
+            ],
+            [
+                InlineKeyboardButton("📡 Track Live", callback_data=f"btc_track:{interval}"),
+                InlineKeyboardButton("🔄 Refresh", callback_data=f"btc_launch:{interval}"),
+                InlineKeyboardButton("🛑 Cancel Instant", callback_data=f"btc_cancel:{interval}"),
+            ],
+            [
+                InlineKeyboardButton("SL 3c", callback_data=f"btc_sl:{interval}:0.03"),
+                InlineKeyboardButton("SL 5c", callback_data=f"btc_sl:{interval}:0.05"),
+                InlineKeyboardButton("SL 10c", callback_data=f"btc_sl:{interval}:0.10"),
+            ],
+            [InlineKeyboardButton("🧭 Crypto Menu", callback_data="crypto_menu")],
+        ])
+
+    def _format_btc_launch_text(self, result) -> str:
+        age_seconds = max(0, int(datetime.now(timezone.utc).timestamp() - float(result.generated_at)))
+        strongest_label = "UP" if result.strongest_direction == "up" else "DOWN"
+        return (
+            f"🧠 <b>BTC {result.interval.upper()} Direction Launch</b>\n"
+            "───────────────────\n"
+            f"• Strongest Bias: <b>{strongest_label}</b>\n"
+            f"• Prob Up: <code>{result.prob_up * 100:.2f}%</code>\n"
+            f"• Prob Down: <code>{result.prob_down * 100:.2f}%</code>\n"
+            f"• Edge retenu: <b>{result.strongest_probability * 100:.2f}%</b>\n"
+            f"• Best Variant: <code>{result.best_variant}</code>\n"
+            f"• Val Acc: <code>{result.best_val_accuracy * 100:.2f}%</code>\n"
+            f"• Dataset: <code>{result.train_samples}</code> train / <code>{result.val_samples}</code> val\n"
+            f"• Cache Age: <code>{age_seconds}s</code>\n"
+            "───────────────────\n"
+            "Actions: paper trade directionnel, refresh du training, ou annulation instant du paper BTC."
+        )
+
+    async def render_btc_launch(self, interval: str, *, force_refresh: bool = False):
+        service = self._get_btc_launch_service()
+        result = await asyncio.to_thread(service.get_or_launch, interval, "up", force_refresh)
+        return self._format_btc_launch_text(result), self._btc_launch_markup(interval)
+
 
 
     def register_all(self):
@@ -313,6 +364,10 @@ class CommandRouter:
             return
 
         asset, horizon = match.group(1).upper(), match.group(2)
+        if asset == "BTC" and horizon in {"5", "15"}:
+            await self._cmd_btc_launch(update, context, "5m" if horizon == "5" else "15m")
+            return
+
         chat_id = getattr(update.effective_message, "chat_id", None)
         logger.info("Crypto horizon command received: asset=%s horizon=%s chat_id=%s", asset, horizon, chat_id)
         try:
@@ -349,6 +404,17 @@ class CommandRouter:
         except Exception as e:
             logger.exception("Crypto horizon sentiment failed")
             await self.listener.reply_to(f"Erreur sentiment {asset} {horizon}: {e}", update)
+
+    async def _cmd_btc_launch(self, update: Update, context: ContextTypes.DEFAULT_TYPE, interval: str) -> None:
+        if not await self.listener._check_auth(update):
+            return
+        try:
+            text, reply_markup = await self.render_btc_launch(interval)
+        except Exception as exc:
+            logger.exception("BTC launch failed for %s", interval)
+            await self.listener.reply_to(f"❌ BTC launch {interval} impossible: {exc}", update)
+            return
+        await self.listener.reply_to(text, update, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
     async def _cmd_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_auth(update): return
@@ -439,7 +505,6 @@ class CommandRouter:
             await self._cmd_crypto_markets(update, context)
             return
 
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         assets = [("BTC", "btc"), ("ETH", "eth"), ("SOL", "sol"), ("XRP", "xrp"), ("DOGE", "doge"), ("BNB", "bnb")]
         horizons = [("5m", "5"), ("15m", "15"), ("1h", "1h"), ("4h", "4h"), ("1d", "1d")]
 
@@ -463,15 +528,23 @@ class CommandRouter:
                 for asset_label, asset_key in assets
             ]
             horizon_rows.append(row)
-        reply_markup = InlineKeyboardMarkup(asset_rows + horizon_rows)
+        quick_launch_rows = [
+            [
+                InlineKeyboardButton("🧠 BTC 5m", callback_data="btc_launch:5m"),
+                InlineKeyboardButton("🧠 BTC 15m", callback_data="btc_launch:15m"),
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(quick_launch_rows + asset_rows + horizon_rows)
 
         text = (
             "🧭 <b>CENTRE CRYPTO LOBSTAR</b>\n"
             "───────────────────\n"
             "Choisis un actif ou un horizon pour ouvrir le bon écran.\n\n"
+            "• Les boutons BTC 5m / 15m lancent l'entraînement directionnel avec cache.\n"
             "• Les boutons d'actif montrent les marchés actifs.\n"
             "• Les boutons d'horizon ouvrent le sentiment détaillé.\n"
-            "• Les alias <code>/btc5</code>, <code>/eth1h</code>, etc. restent disponibles.\n"
+            "• <code>/btc5</code> et <code>/btc15</code> ouvrent maintenant l'écran de launch BTC avec boutons paper/cancel.\n"
+            "• Les autres alias <code>/eth1h</code>, <code>/sol5</code>, etc. restent disponibles.\n"
             "───────────────────"
         )
         await self.listener.reply_to(text, update, parse_mode=ParseMode.HTML, reply_markup=reply_markup)

@@ -7,9 +7,10 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from utils.polymarket_crawler.traders import LeaderboardTrader, TraderScraper
+if TYPE_CHECKING:
+    from utils.polymarket_crawler.traders import LeaderboardTrader, TraderScraper
 
 logger = logging.getLogger("WalletFlowService")
 DEFAULT_CACHE_PATH = Path(__file__).resolve().parents[1] / "data" / "wallet_flow_scores.json"
@@ -34,7 +35,7 @@ class WalletFlowService:
 
     def __init__(
         self,
-        scraper: TraderScraper | None = None,
+        scraper: "TraderScraper" | None = None,
         *,
         cache_path: str | os.PathLike[str] = DEFAULT_CACHE_PATH,
         refresh_ttl_seconds: float = 1800.0,
@@ -42,7 +43,11 @@ class WalletFlowService:
         trade_limit: int = 80,
         category: str = "OVERALL",
     ) -> None:
-        self.scraper = scraper or TraderScraper()
+        if scraper is None:
+            from utils.polymarket_crawler.traders import TraderScraper
+
+            scraper = TraderScraper()
+        self.scraper = scraper
         self.cache_path = Path(cache_path)
         self.refresh_ttl_seconds = float(refresh_ttl_seconds)
         self.leaderboard_limit = int(leaderboard_limit)
@@ -164,7 +169,7 @@ class WalletFlowService:
         return self.get_all_scores()
 
     @staticmethod
-    def _wallet_weight(trader: LeaderboardTrader) -> float:
+    def _wallet_weight(trader: "LeaderboardTrader") -> float:
         pnl = max(0.0, float(trader.pnl or 0.0))
         volume = max(0.0, float(trader.volume or 0.0))
         if pnl <= 0 and volume <= 0:

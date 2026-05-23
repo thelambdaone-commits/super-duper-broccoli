@@ -115,3 +115,43 @@ async def test_lobstar_command_router_approve_high_value_trades():
     core._check_admin_auth.assert_awaited_once()
     assert core._approved_until == 300
     message.reply_text.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_lobstar_command_router_launch_btc5up(monkeypatch):
+    core = MockCore()
+    router = LobstarCommandRouter(platform_core=core)
+
+    class _Service:
+        def launch(self, timeframe: str, direction: str):
+            class _Result:
+                interval = timeframe
+                requested_direction = direction
+                strongest_direction = "up"
+                strongest_probability = 0.73
+                prob_up = 0.73
+                prob_down = 0.27
+                best_variant = "balanced"
+                best_val_accuracy = 0.66
+                train_samples = 180
+                val_samples = 45
+            return _Result()
+
+    core.btc_launch_service = _Service()
+
+    update = MagicMock(spec=Update)
+    message = AsyncMock(spec=Message)
+    message.text = "/launchbtc5up"
+    update.message = message
+    update.effective_message = message
+
+    context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
+
+    await router.route_telegram_command(update, context)
+
+    message.reply_text.assert_called_once()
+    args, kwargs = message.reply_text.call_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert "BTC LAUNCH 5M" in text
+    assert "73.00%" in text
+    assert "UP" in text

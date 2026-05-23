@@ -11,6 +11,8 @@ from config.constants import EXECUTION_MODES
 from utils.config_loader import get_trading_config
 from utils.exceptions import QuantFatal
 
+from ledger.schema import initialize_database as _init_schema
+
 logger = logging.getLogger("Ledger")
 
 DEFAULT_DATA_DIR = os.getenv("DATA_PATH", "data")
@@ -44,79 +46,8 @@ class Ledger:
         return self._conn
 
     def _initialize_database(self) -> None:
-        if not os.path.exists(self.schema_path):
-            raise QuantFatal(f"Schema not found: {self.schema_path}")
-        with open(self.schema_path) as f:
-            self._conn.executescript(f.read())
-        self._conn.commit()
-        self._migrate_schema()
-
-        # Upgrade existing databases with new columns safely
-        for col, col_type in [
-            ("exit_price", "REAL"),
-            ("pnl", "REAL"),
-            ("is_win", "INTEGER"),
-            ("tenant_wallet", "TEXT"),
-            ("stop_loss_pct", "REAL DEFAULT 0.0"),
-            ("take_profit_pct", "REAL DEFAULT 0.0"),
-        ]:
-            try:
-                self._conn.execute(f"ALTER TABLE paper_positions ADD COLUMN {col} {col_type}")
-            except sqlite3.OperationalError:
-                pass
-
-        for col, col_type in [
-            ("tenant_wallet", "TEXT"),
-            ("is_win", "INTEGER"),
-            ("signal_source", "TEXT DEFAULT ''"),
-        ]:
-            try:
-                self._conn.execute(f"ALTER TABLE positions ADD COLUMN {col} {col_type}")
-            except sqlite3.OperationalError:
-                pass
-
-        self._migrate_performance_metrics()
-        self._seed_performance_metrics_modes()
-        self._ensure_execution_columns()
-        self._conn.commit()
-        logger.info("Ledger schema initialized")
-
-    def _migrate_performance_metrics(self) -> None:
-        try:
-            cursor = self._conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='performance_metrics'"
-            )
-            row = cursor.fetchone()
-            if row and 'CHECK' in row[0].upper():
-                logger.info("Migrating performance_metrics table to multi-mode schema")
-                self._conn.execute("DROP TABLE performance_metrics")
-                with open(self.schema_path) as f:
-                    self._conn.executescript(f.read())
-        except Exception as e:
-            logger.warning(f"performance_metrics migration skipped: {e}")
-
-    def _seed_performance_metrics_modes(self) -> None:
-        for mode in ('PAPER', 'SHADOW', 'PROD'):
-            try:
-                self._conn.execute(
-                    "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES (?)",
-                    (mode,),
-                )
-            except Exception:
-                pass
-
-    def _ensure_execution_columns(self) -> None:
-        for table in ("positions", "transactions"):
-            for col, col_type in [
-                ("requested_qty", "REAL"),
-                ("filled_qty", "REAL"),
-                ("execution_price", "REAL"),
-                ("notional_usd", "REAL"),
-            ]:
-                try:
-                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type} DEFAULT 0.0")
-                except sqlite3.OperationalError:
-                    pass
+        _init_schema(self._conn, self.schema_path)
+        self._ensure_execution_config_columns()
 
     @contextmanager
     def _transaction(self):
@@ -355,7 +286,7 @@ class Ledger:
             cursor.execute("SELECT * FROM positions WHERE status = 'OPEN'")
             return [dict(row) for row in cursor.fetchall()]
 
-    def _ensure_execution_columns(self) -> None:
+    def _ensure_execution_config_columns(self) -> None:
         for col, col_type in [
             ("is_manual_override", "INTEGER DEFAULT 0"),
         ]:
@@ -673,16 +604,6 @@ class Ledger:
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
-    def _migrate_schema(self) -> None:
-        with self._lock:
-            cursor = self.conn.cursor()
-            for col in ("stop_loss_pct", "take_profit_pct", "exit_price", "pnl", "closed_at"):
-                try:
-                    cursor.execute(f"ALTER TABLE positions ADD COLUMN {col} REAL")
-                except sqlite3.OperationalError:
-                    pass
-            self.conn.commit()
-
     @staticmethod
     def _resolve_position_table(position_id: str) -> str:
         return "paper_positions" if str(position_id).startswith("paper-") else "positions"
@@ -697,6 +618,19 @@ class Ledger:
             )
             self.conn.commit()
 
+    def set_position_stop_loss_cents(self, position_id: str, stop_loss_cents: float = 0.0) -> None:
+        with self._lock:
+            cursor = self.conn.cursor()
+            table = self._resolve_position_table(position_id)
+            try:
+                cursor.execute(
+                    f"UPDATE {table} SET stop_loss_cents = ? WHERE position_id = ?",
+                    (float(stop_loss_cents), position_id),
+                )
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass
+
     def get_positions_due_for_exit(self, current_prices: dict[str, float]) -> list[dict]:
         positions = self.get_open_positions() + self.get_paper_positions("OPEN")
         due: list[dict] = []
@@ -708,13 +642,18 @@ class Ledger:
             entry = float(pos.get("entry_price", 0.0))
             side = pos.get("side", "BUY")
             sl = float(pos.get("stop_loss_pct", 0.0) or 0.0)
+            sl_cents = float(pos.get("stop_loss_cents", 0.0) or 0.0)
             tp = float(pos.get("take_profit_pct", 0.0) or 0.0)
             if entry <= 0:
                 continue
             ret = (price - entry) / entry
+            adverse_move = entry - price
             if side in ("SELL", "NO", "SHORT"):
                 ret = -ret
-            if sl > 0 and ret <= -sl:
+                adverse_move = price - entry
+            if sl_cents > 0 and adverse_move >= sl_cents:
+                due.append({**pos, "exit_reason": "stop_loss_cents", "exit_price": price})
+            elif sl > 0 and ret <= -sl:
                 due.append({**pos, "exit_reason": "stop_loss", "exit_price": price})
             elif tp > 0 and ret >= tp:
                 due.append({**pos, "exit_reason": "take_profit", "exit_price": price})
@@ -725,6 +664,7 @@ class Ledger:
         position_id: str,
         exit_price: Optional[float] = None,
         pnl: Optional[float] = None,
+        exit_reason: Optional[str] = None,
     ) -> None:
         with self._lock:
             cursor = self.conn.cursor()
@@ -750,6 +690,8 @@ class Ledger:
                     (position_id,),
                 )
             self.conn.commit()
+        if exit_reason:
+            logger.info("Position %s closed with reason: %s", position_id, exit_reason)
 
     def get_global_drawdown(self) -> float:
         """

@@ -1,7 +1,9 @@
 import os
+import sqlite3
 import pytest
 from concurrent.futures import ThreadPoolExecutor
-from ledger.ledger_db import Ledger
+from ledger.ledger_db import Ledger, SCHEMA_PATH
+from ledger.schema import initialize_database
 from utils.exceptions import QuantFatal
 
 @pytest.fixture
@@ -175,3 +177,94 @@ def test_prod_mode_record_order_consumes_fee_buffer(temp_ledger):
 
     summary = temp_ledger.get_capital_summary()
     assert summary["available_capital"] == pytest.approx(9490.0)
+
+
+def test_initialize_database_migrates_exchange_order_id(tmp_path):
+    db_path = tmp_path / "legacy_ledger.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE positions (
+            position_id TEXT PRIMARY KEY,
+            ticker TEXT NOT NULL,
+            side TEXT NOT NULL,
+            entry_price REAL NOT NULL,
+            size REAL NOT NULL,
+            capital_engaged REAL NOT NULL,
+            status TEXT DEFAULT 'OPEN',
+            opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE transactions (
+            tx_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            position_id TEXT,
+            ticker TEXT NOT NULL,
+            side TEXT NOT NULL,
+            price REAL NOT NULL,
+            size REAL NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.commit()
+
+    initialize_database(conn, SCHEMA_PATH)
+
+    position_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(positions)").fetchall()
+    }
+    transaction_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(transactions)").fetchall()
+    }
+
+    assert "exchange_order_id" in position_cols
+    assert "exchange_order_id" in transaction_cols
+
+
+def test_close_position_accepts_exit_reason(temp_ledger):
+    cursor = temp_ledger.conn.cursor()
+    cursor.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) "
+        "VALUES (10000.0, 10000.0, 10.0)"
+    )
+    temp_ledger.conn.commit()
+
+    temp_ledger.record_order(
+        "pos-close-reason",
+        "SOL",
+        "BUY",
+        0.5,
+        10,
+        requested_qty=10,
+        filled_qty=10,
+        execution_price=0.5,
+        notional_usd=5.0,
+    )
+
+    temp_ledger.close_position(
+        "pos-close-reason",
+        exit_price=0.6,
+        pnl=1.0,
+        exit_reason="CLOSED_WHILE_OFFLINE",
+    )
+
+    row = temp_ledger.conn.execute(
+        "SELECT status, exit_price, pnl FROM positions WHERE position_id = ?",
+        ("pos-close-reason",),
+    ).fetchone()
+    assert row["status"] == "CLOSED"
+    assert row["exit_price"] == pytest.approx(0.6)
+    assert row["pnl"] == pytest.approx(1.0)
+
+
+def test_stop_loss_cents_triggers_paper_exit(temp_ledger):
+    order = temp_ledger.record_paper_order(ticker="BTC_5m", side="UP", price=0.70, size=10.0)
+    temp_ledger.set_position_stop_loss_cents(order["position_id"], 0.05)
+
+    due = temp_ledger.get_positions_due_for_exit({"BTC_5m": 0.64})
+
+    assert len(due) == 1
+    assert due[0]["exit_reason"] == "stop_loss_cents"

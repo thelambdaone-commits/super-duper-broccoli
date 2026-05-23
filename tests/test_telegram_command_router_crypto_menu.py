@@ -34,3 +34,26 @@ async def test_crypto_menu_horizon_buttons_cover_each_asset() -> None:
     assert "crypto_horizon:sol:4h" in callback_data
     assert "crypto_horizon:xrp:1d" in callback_data
     assert "crypto_horizon:bnb:15" in callback_data
+    assert "btc_launch:5m" in callback_data
+    assert "btc_launch:15m" in callback_data
+
+
+@pytest.mark.asyncio
+async def test_btc5_routes_to_btc_launch_buttons() -> None:
+    listener = SimpleNamespace(
+        application=MagicMock(),
+        reply_to=AsyncMock(),
+        _check_auth=AsyncMock(return_value=True),
+    )
+    router = CommandRouter(listener)
+    router.render_btc_launch = AsyncMock(
+        return_value=("BTC 5M READY", MagicMock(inline_keyboard=[[SimpleNamespace(callback_data="btc_paper:5m:up")]]))
+    )
+    update = MagicMock()
+    update.effective_message = SimpleNamespace(text="/btc5")
+    context = SimpleNamespace(args=[])
+
+    await router._cmd_crypto_horizon(update, context)
+
+    router.render_btc_launch.assert_awaited_once_with("5m")
+    listener.reply_to.assert_awaited_once()

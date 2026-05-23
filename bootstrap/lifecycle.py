@@ -17,7 +17,6 @@ from bootstrap.validators import dry_run_report
 from core.health_monitor import LobstarHealthMonitor
 from core.health_supervisor_agent import HealthSupervisorAgent, HealthSupervisorConfig
 from agents.health_monitor_agent import HealthMonitorAgent, HealthMonitorConfig
-from monitoring.polymarket_monitor import PolymarketMonitor
 from core.orchestrator import LobstarOrchestrator
 from core.mlops_feedback_loop import LobstarMLOpsEngine
 from core.quantum_runner import LobstarQuantumRunner
@@ -25,12 +24,29 @@ from utils.api_key_notifier import get_api_key_notifier
 from utils.config_loader import get_health_config, validate_required as validate_config_required
 from utils.data_archiver import DataArchiver
 from utils.clob_feed_utils import extract_live_clob_token_ids
-from scrapers.clob_listener import CLOBListener
-from scrapers.user_clob_listener import UserCLOBListener
-from py_clob_client import ApiCreds
 from utils.vault_handler import VaultHandler
 from core.container import ServiceContainer
 from utils.crypto_market_intelligence import CryptoMarketIntelligence
+
+try:
+    from monitoring.polymarket_monitor import PolymarketMonitor
+except ModuleNotFoundError:
+    PolymarketMonitor = None
+
+try:
+    from scrapers.clob_listener import CLOBListener
+except ModuleNotFoundError:
+    CLOBListener = None
+
+try:
+    from scrapers.user_clob_listener import UserCLOBListener
+except ModuleNotFoundError:
+    UserCLOBListener = None
+
+try:
+    from py_clob_client import ApiCreds
+except ModuleNotFoundError:
+    ApiCreds = None
 
 logger = logging.getLogger("Lifecycle")
 
@@ -182,7 +198,7 @@ class BotLifecycle:
         crypto_intelligence = CryptoMarketIntelligence()
         cognitive_brain = context.cognitive_brain
         broadcaster = build_broadcaster(notifier, training_pipeline, market_scanner)
-        from core.autonomic_healer import LobstarAutonomicHealer
+        from core.healing.autonomic_healer import LobstarAutonomicHealer
         autonomic_healer = LobstarAutonomicHealer(log_file_path="logs/pm2-out.log")
         mlops_engine = LobstarMLOpsEngine()
         runner = LobstarQuantumRunner()
@@ -252,10 +268,11 @@ class BotLifecycle:
             f"🚀 <b>Status</b> : <code>RUNNING</code>\n"
             f"📡 <b>Mode</b> : <code>{self.execution_mode}</code>\n"
             f"💻 <b>System</b> : CPU <code>{cpu_usage}%</code> | RAM <code>{ram_usage}%</code> \n\n"
-            f"{get_api_key_notifier().format_telegram_alert(api_check)}\n\n"
-            f"🔗 <i>Tapez /help pour explorer les fonctions.</i>"
+            f"{get_api_key_notifier().format_telegram_alert(api_check)}"
         )
-        if chat_id and listener:
+        _private_admin_ids = sorted(c for c in getattr(listener, 'admin_chat_ids', set()) if c > 0)
+        _dashboard_target = _private_admin_ids[0] if _private_admin_ids else (chat_id if chat_id and chat_id > 0 else None)
+        if _dashboard_target:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
             reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("📖 Manuel", callback_data="help_menu"), InlineKeyboardButton("📊 Statut", callback_data="help_page_3")]])
@@ -266,10 +283,12 @@ class BotLifecycle:
                     return
                 await listener.send_message(
                     dashboard_msg,
-                    chat_id=chat_id,
+                    chat_id=_dashboard_target,
                     parse_mode="HTML",
                     reply_markup=reply_markup,
                 )
+        else:
+            _send_dashboard_when_ready = None
         from utils.market_data_reader import MarketDataReader
         market_reader = MarketDataReader(polymarket_client=market_scanner.client)
         order_manager = None
@@ -370,7 +389,28 @@ class BotLifecycle:
         if onchain_monitor_enabled and ws_url:
             target_wallet = secrets.get("TARGET_WALLET", "")
             polymarket_monitor = PolymarketMonitor(on_signal=orchestrator.on_signal, target_wallet=target_wallet or None, ws_url=ws_url, rpc_url=polygon_rpc)
-        health_supervisor = HealthSupervisorAgent(feature_store=store, ledger=ledger, wallet_manager=__import__("core.wallet_manager", fromlist=["PolymarketWalletManager"]).PolymarketWalletManager(vault_handler=container.vault, polygon_rpc_url=polygon_rpc), data_archiver=DataArchiver(db_path=os.path.join(os.getenv("DATA_PATH", "data"), "feature_store.duckdb")), broadcaster=orchestrator.broadcaster, secrets=secrets, config=HealthSupervisorConfig(staleness_threshold_seconds=float(get_health_config("polymarket_staleness_seconds", 60.0, env_key="MAX_POLYMARKET_STALENESS_SECONDS")), memory_warning_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), memory_critical_mb=float(get_health_config("memory_critical_mb", 1536)), wallet_reconciliation_interval_seconds=3600.0, maintenance_interval_seconds=86400.0, check_interval_seconds=5.0, wallet_drift_tolerance_usd=float(get_health_config("wallet_drift_tolerance_usdc", 0.01, env_key="MAX_WALLET_DRIFT_USDC")), disk_usage_warning_bytes=5_000_000_000, disk_usage_critical_bytes=8_000_000_000))
+        health_supervisor = HealthSupervisorAgent(
+            feature_store=store,
+            ledger=ledger,
+            wallet_manager=__import__("core.wallet_manager", fromlist=["PolymarketWalletManager"]).PolymarketWalletManager(vault_handler=container.vault, polygon_rpc_url=polygon_rpc),
+            data_archiver=DataArchiver(
+                db_path=os.path.join(os.getenv("DATA_PATH", "data"), "feature_store.duckdb"),
+                feature_store=store
+            ),
+            broadcaster=orchestrator.broadcaster,
+            secrets=secrets,
+            config=HealthSupervisorConfig(
+                staleness_threshold_seconds=float(get_health_config("polymarket_staleness_seconds", 60.0, env_key="MAX_POLYMARKET_STALENESS_SECONDS")),
+                memory_warning_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")),
+                memory_critical_mb=float(get_health_config("memory_critical_mb", 1536)),
+                wallet_reconciliation_interval_seconds=300.0,
+                maintenance_interval_seconds=86400.0,
+                check_interval_seconds=5.0,
+                wallet_drift_tolerance_usd=float(get_health_config("wallet_drift_tolerance_usdc", 0.01, env_key="MAX_WALLET_DRIFT_USDC")),
+                disk_usage_warning_bytes=5_000_000_000,
+                disk_usage_critical_bytes=8_000_000_000
+            )
+        )
         health_sidecar = HealthMonitorAgent(config=HealthMonitorConfig(heartbeat_interval_seconds=30.0, duckdb_prune_interval_seconds=86400.0, memory_check_interval_seconds=60.0, max_memory_rss_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), enable_ledger_reconciliation=_env_bool("HEALTH_SIDE_CAR_ENABLE_LEDGER_RECONCILIATION", True), enable_feature_store_maintenance=_env_bool("HEALTH_SIDE_CAR_ENABLE_FEATURE_STORE_MAINTENANCE", True)), feature_store=store, ledger=ledger, broadcaster=orchestrator.broadcaster)
         user_ws_coro = None
 
@@ -404,7 +444,7 @@ class BotLifecycle:
                 logger.debug(f"Redis mode listener error: {e}")
 
         redis_task = asyncio.create_task(redis_mode_listener())
-        dashboard_task = asyncio.create_task(_send_dashboard_when_ready()) if chat_id and listener else None
+        dashboard_task = asyncio.create_task(_send_dashboard_when_ready()) if listener and _dashboard_target else None
 
         # --- Aulekator: Exchange Price Service ---
         from utils.exchange_price_service import ExchangePriceService
@@ -434,7 +474,19 @@ class BotLifecycle:
                 user_ws_coro = user_listener.run()
             except Exception as e:
                 logger.error(f"User CLOB listener initialization failed: {e}")
-        extra_tasks = [redis_task, price_task]
+        from utils.data_ingestion import BinanceWSListener
+        binance_listener = BinanceWSListener(store=store, tickers=["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+        
+        # Start binance listener in a background task
+        async def run_binance():
+            try:
+                await binance_listener._run()
+            except Exception as e:
+                logger.error(f"Binance WS Listener failed: {e}")
+
+        binance_task = asyncio.create_task(run_binance())
+        
+        extra_tasks = [redis_task, price_task, binance_task]
         if dashboard_task:
             extra_tasks.append(dashboard_task)
         await run_services_loop(listener=listener, clob_feed_coro=live_clob_feed_coro, user_ws_coro=user_ws_coro, polymarket_monitor=polymarket_monitor, health_supervisor=health_supervisor, health_sidecar=health_sidecar, runner=runner, orchestrator=orchestrator, health_monitor=health_monitor, scan_coro=market_scan_loop.run(), retrain_coro=model_drift_loop.run(), runner_coro=runner.start(), mode=mode, extra_tasks=extra_tasks)
@@ -458,6 +510,4 @@ class BotLifecycle:
     async def stop(self) -> None:
         logger.info("Stopping BotLifecycle...")
         # Add cleanup logic if needed
-        pass
-eded
         pass

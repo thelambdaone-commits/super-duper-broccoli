@@ -2,19 +2,41 @@ import asyncio
 import logging
 import time
 import json
-import uvicorn
-from fastapi import FastAPI, Response, status
+
+try:
+    import uvicorn
+except ModuleNotFoundError:
+    uvicorn = None
+
+try:
+    from fastapi import FastAPI, Response, status
+except ModuleNotFoundError:
+    FastAPI = None
+    Response = None
+
+    class _Status:
+        HTTP_503_SERVICE_UNAVAILABLE = 503
+
+    status = _Status()
+
+    class _FallbackResponse:
+        def __init__(self, content: str, media_type: str, status_code: int) -> None:
+            self.content = content
+            self.media_type = media_type
+            self.status_code = status_code
+            self.body = content.encode("utf-8")
 
 logger = logging.getLogger("HealthMonitor")
 
-app = FastAPI(title="LOBSTAR Diagnostic Health Check Probe")
+if FastAPI is not None:
+    app = FastAPI(title="LOBSTAR Diagnostic Health Check Probe")
+else:
+    app = None
 
 _orchestrator = None
 _runner = None
 
 
-@app.get("/health")
-@app.get("/liveness")
 def get_liveness():
     global _orchestrator, _runner
 
@@ -36,12 +58,23 @@ def get_liveness():
     }
 
     if status_dict["status"] == "DOWN":
-        return Response(
+        if Response is not None:
+            return Response(
+                content=json.dumps(status_dict),
+                media_type="application/json",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        return _FallbackResponse(
             content=json.dumps(status_dict),
             media_type="application/json",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
     return status_dict
+
+
+if app is not None:
+    app.get("/health")(get_liveness)
+    app.get("/liveness")(get_liveness)
 
 
 class LobstarHealthMonitor:
@@ -53,6 +86,9 @@ class LobstarHealthMonitor:
         self._server_task = None
 
     def start(self) -> None:
+        if uvicorn is None or app is None:
+            logger.warning("Health monitor disabled: web health dependencies are not installed.")
+            return
         global _orchestrator, _runner
         _orchestrator = self.orchestrator
         _runner = self.runner

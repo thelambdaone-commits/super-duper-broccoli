@@ -126,6 +126,20 @@ class TelegramListener:
         self._high_value_trade_approval_until: float = 0.0
         self._high_value_trade_approved_by: Optional[int] = None
         self._ready = asyncio.Event()
+        self._btc_tracking_task: Optional[asyncio.Task] = None
+
+    def _get_btc_launch_service(self):
+        from core.services.btc_launch_service import BTCDirectionLaunchService
+
+        router = getattr(self, "command_router", None)
+        if router is not None and hasattr(router, "_get_btc_launch_service"):
+            return router._get_btc_launch_service()
+
+        service = getattr(self, "_btc_launch_service", None)
+        if service is None:
+            service = BTCDirectionLaunchService()
+            setattr(self, "_btc_launch_service", service)
+        return service
 
     def attach_components(
         self,
@@ -177,6 +191,56 @@ class TelegramListener:
         self._risk = risk
         self._hmm = hmm
         self._store = store
+
+    async def _augment_btc_tracking_text(self, interval: str, base_text: str) -> str:
+        if not self._ledger:
+            return base_text
+        service = self._get_btc_launch_service()
+        result = await asyncio.to_thread(service.get_or_launch, interval, "up", False)
+        open_positions = [p for p in self._ledger.get_paper_positions(status="OPEN") if p.get("ticker") == f"BTC_{interval}"]
+        closed = 0
+        for pos in open_positions:
+            entry = float(pos.get("entry_price", 0.0) or 0.0)
+            size = float(pos.get("size", 0.0) or 0.0)
+            direction = str(pos.get("side", "BUY")).upper()
+            live_price = float(result.prob_down if direction in {"DOWN", "SELL", "NO", "SHORT"} else result.prob_up)
+            stop_loss_cents = float(pos.get("stop_loss_cents", 0.0) or 0.0)
+            adverse_move = (entry - live_price) if direction not in {"DOWN", "SELL", "NO", "SHORT"} else (live_price - entry)
+            if stop_loss_cents > 0 and adverse_move >= stop_loss_cents:
+                pnl = (live_price - entry) * size
+                if direction in {"DOWN", "SELL", "NO", "SHORT"}:
+                    pnl = (entry - live_price) * size
+                self._ledger.close_paper_position(pos["position_id"], exit_price=live_price, pnl=pnl, is_win=pnl > 0)
+                closed += 1
+
+        refreshed_positions = [p for p in self._ledger.get_paper_positions(status="OPEN") if p.get("ticker") == f"BTC_{interval}"]
+        tracking_lines = [
+            "",
+            "<b>Live Tracking</b>",
+            f"• Open paper positions: <code>{len(refreshed_positions)}</code>",
+            f"• Auto-closed this refresh: <code>{closed}</code>",
+            f"• Live Up Proxy: <code>{result.prob_up:.4f}</code>",
+            f"• Live Down Proxy: <code>{result.prob_down:.4f}</code>",
+        ]
+        if refreshed_positions:
+            position = refreshed_positions[0]
+            tracking_lines.append(
+                f"• Active SL cents: <code>{float(position.get('stop_loss_cents', 0.0) or 0.0):.2f}</code>"
+            )
+        return base_text + "\n" + "\n".join(tracking_lines)
+
+    async def _btc_tracking_loop(self) -> None:
+        while self._running:
+            try:
+                if self._ledger:
+                    for interval in ("5m", "15m"):
+                        await self._augment_btc_tracking_text(interval, "")
+                await asyncio.sleep(20)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("BTC tracking loop iteration failed: %s", exc)
+                await asyncio.sleep(20)
 
     def _fmt_uptime(self) -> str:
         if not self._start_time:
@@ -905,15 +969,17 @@ class TelegramListener:
             now = time.time()
             rows = []
             if self._store:
-                # Try last 24h first
-                rows = self._store.get_microstructure_range(now - 86400, now, ticker="BTC")
-            if not rows:
-                rows = []
-                if self._store:
-                    # Fallback to all data
+                # Try Binance ticker first (standard for macro)
+                rows = self._store.get_microstructure_range(now - 86400, now, ticker="BTCUSDT")
+                if not rows:
+                    rows = self._store.get_microstructure_range(now - 86400, now, ticker="BTC")
+                
+                # Fallback to older data if last 24h is empty
+                if not rows:
+                    rows = self._store.get_microstructure_range(0, now, ticker="BTCUSDT")
+                if not rows:
                     rows = self._store.get_microstructure_range(0, now, ticker="BTC")
             
-            # Lowered requirement to 10 for initial status reporting
             if len(rows) >= n:
                 prices = [r["mid_price"] for r in rows if r.get("mid_price", 0) > 0]
                 if len(prices) >= n:
@@ -2005,6 +2071,124 @@ class TelegramListener:
                 await self.command_router._cmd_crypto_horizon(update, context)
             return
 
+        elif query.data.startswith("btc_launch:"):
+            interval = query.data.split(":", 1)[1]
+            await query.answer(f"Training BTC {interval}...")
+            try:
+                text, reply_markup = await self.command_router.render_btc_launch(interval, force_refresh=True)
+                text = await self._augment_btc_tracking_text(interval, text)
+                await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            except Exception as exc:
+                logger.exception("BTC launch callback failed")
+                await safe_edit_callback(query, f"❌ BTC launch {interval} impossible: {exc}", parse_mode=ParseMode.HTML)
+            return
+
+        elif query.data.startswith("btc_track:"):
+            interval = query.data.split(":", 1)[1]
+            await query.answer(f"Tracking BTC {interval}...")
+            try:
+                text, reply_markup = await self.command_router.render_btc_launch(interval, force_refresh=True)
+                text = await self._augment_btc_tracking_text(interval, text)
+                await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            except Exception as exc:
+                logger.exception("BTC track callback failed")
+                await safe_edit_callback(query, f"❌ BTC track {interval} impossible: {exc}", parse_mode=ParseMode.HTML)
+            return
+
+        elif query.data.startswith("btc_paper:"):
+            parts = query.data.split(":")
+            if len(parts) == 3:
+                interval, direction = parts[1], parts[2].lower()
+                if not self._ledger:
+                    await query.answer("Ledger indisponible.", show_alert=True)
+                    return
+                try:
+                    service = self._get_btc_launch_service()
+                    result = await asyncio.to_thread(service.get_or_launch, interval, direction, False)
+                    price = max(0.01, float(result.prob_up if direction == "up" else result.prob_down))
+                    notional_usd = 10.0
+                    size = notional_usd / price
+                    order = self._ledger.record_paper_order(
+                        ticker=f"BTC_{interval}",
+                        side=direction.upper(),
+                        price=price,
+                        size=size,
+                        requested_qty=size,
+                        filled_qty=size,
+                        execution_price=price,
+                        notional_usd=notional_usd,
+                        confidence=float(result.strongest_probability),
+                        signal_source=f"telegram_btc_launch_{interval}",
+                    )
+                    if order.get("error"):
+                        await query.answer("Paper trade rejected.", show_alert=True)
+                        return
+                    self._ledger.set_position_stop_loss_cents(order["position_id"], 0.05)
+                    await query.answer(f"Paper {direction.upper()} BTC {interval} placé.")
+                    await query.message.reply_text(
+                        (
+                            f"🧾 <b>PAPER BTC {interval.upper()}</b>\n"
+                            "───────────────────\n"
+                            f"• Side: <b>{direction.upper()}</b>\n"
+                            f"• Price proxy: <code>{price:.4f}</code>\n"
+                            f"• Notional: <code>${notional_usd:.2f}</code>\n"
+                            f"• Position: <code>{order.get('position_id')}</code>\n"
+                            "• Stop Loss: <code>0.05</code> ($0.05 / 5c)\n"
+                            "• Live tracking: utilise le bouton <b>Track Live</b>"
+                        ),
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception as exc:
+                    logger.exception("BTC paper callback failed")
+                    await query.answer(f"Paper trade failed: {exc}", show_alert=True)
+            else:
+                await query.answer()
+            return
+
+        elif query.data.startswith("btc_sl:"):
+            parts = query.data.split(":")
+            if len(parts) == 3:
+                interval = parts[1]
+                stop_loss_cents = float(parts[2])
+                if not self._ledger:
+                    await query.answer("Ledger indisponible.", show_alert=True)
+                    return
+                ticker = f"BTC_{interval}"
+                positions = [p for p in self._ledger.get_paper_positions(status="OPEN") if p.get("ticker") == ticker]
+                for pos in positions:
+                    self._ledger.set_position_stop_loss_cents(pos["position_id"], stop_loss_cents)
+                await query.answer(
+                    f"SL {stop_loss_cents:.2f} appliqué à {len(positions)} position(s)." if positions else "Aucune position BTC ouverte."
+                )
+            else:
+                await query.answer()
+            return
+
+        elif query.data.startswith("btc_cancel:"):
+            interval = query.data.split(":", 1)[1]
+            if not self._ledger:
+                await query.answer("Ledger indisponible.", show_alert=True)
+                return
+            open_positions = self._ledger.get_paper_positions(status="OPEN")
+            ticker = f"BTC_{interval}"
+            to_close = [pos for pos in open_positions if pos.get("ticker") == ticker]
+            for pos in to_close:
+                self._ledger.close_paper_position(pos["position_id"])
+            await query.answer(
+                f"{len(to_close)} paper trade(s) BTC {interval} annulé(s)." if to_close else f"Aucun paper BTC {interval} ouvert."
+            )
+            if to_close:
+                await query.message.reply_text(
+                    (
+                        f"🛑 <b>BTC {interval.upper()} Paper Cancel</b>\n"
+                        "───────────────────\n"
+                        f"• Closed positions: <code>{len(to_close)}</code>\n"
+                        f"• Ticker: <code>{ticker}</code>"
+                    ),
+                    parse_mode=ParseMode.HTML,
+                )
+            return
+
         elif query.data == "crypto_menu":
             await query.answer()
             await self.command_router._cmd_crypto(update, context)
@@ -2185,6 +2369,7 @@ class TelegramListener:
                 polling_started = True
                 self._ready.set()
                 worker = asyncio.create_task(self._lobstar_worker())
+                self._btc_tracking_task = asyncio.create_task(self._btc_tracking_loop())
 
                 logger.info(f"TELEGRAM BOT: Listening to {target}")
                 consecutive_errors = 0
@@ -2206,6 +2391,11 @@ class TelegramListener:
                     worker.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await worker
+                if self._btc_tracking_task:
+                    self._btc_tracking_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await self._btc_tracking_task
+                    self._btc_tracking_task = None
                 if polling_started:
                     with contextlib.suppress(Exception):
                         await self.application.updater.stop()
@@ -2216,11 +2406,6 @@ class TelegramListener:
                     with contextlib.suppress(Exception):
                         await self.application.shutdown()
                 self.application = None
-
-    async def stop(self) -> None:
-        self._running = False
-        self._ready.clear()
-None
 
     async def stop(self) -> None:
         self._running = False

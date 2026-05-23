@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Dict, Any, Callable, Coroutine
@@ -59,6 +60,15 @@ class LobstarCommandRouter:
             await self.command_mapping[trigger](update, context)
             return
 
+        launch_match = None
+        import re
+        launch_match = re.fullmatch(r"launchbtc(5|15)(up|down)", trigger)
+        if launch_match:
+            timeframe = "5m" if launch_match.group(1) == "5" else "15m"
+            direction = launch_match.group(2)
+            await self.launch_btc_direction(update, context, timeframe=timeframe, direction=direction)
+            return
+
         # 2. Traitement dynamique de la syntaxe Crypto Flash (/btc, /sol5, /sol1h...)
         # Extraction du ticker alphabétique et de la granularité numérique/temporelle
         crypto_match = "".join([c for c in trigger if c.isalpha()])
@@ -74,6 +84,48 @@ class LobstarCommandRouter:
                     timeframe = time_match
 
             await self.process_crypto_intelligence(update, context, ticker=crypto_match, timeframe=timeframe)
+
+    async def launch_btc_direction(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        timeframe: str,
+        direction: str,
+    ) -> None:
+        from core.services.btc_launch_service import BTCDirectionLaunchService
+
+        service = getattr(self.core, "btc_launch_service", None)
+        if service is None:
+            service = BTCDirectionLaunchService()
+            setattr(self.core, "btc_launch_service", service)
+
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+        try:
+            if hasattr(service, "get_or_launch"):
+                result = await asyncio.to_thread(service.get_or_launch, timeframe, direction, False)
+            else:
+                result = await asyncio.to_thread(service.launch, timeframe, direction)
+            requested_ok = result.requested_direction == result.strongest_direction
+            text = (
+                f"<b>🚀 BTC LAUNCH {timeframe.upper()}</b>\n"
+                "───────────────────\n"
+                f"• Requested: <code>{result.requested_direction.upper()}</code>\n"
+                f"• Strongest: <b>{result.strongest_direction.upper()}</b>\n"
+                f"• Prob Up: <code>{result.prob_up * 100:.2f}%</code>\n"
+                f"• Prob Down: <code>{result.prob_down * 100:.2f}%</code>\n"
+                f"• Best Edge: <b>{result.strongest_probability * 100:.2f}%</b>\n"
+                f"• Best Variant: <code>{result.best_variant}</code>\n"
+                f"• Val Acc: <code>{result.best_val_accuracy * 100:.2f}%</code>\n"
+                f"• Samples: <code>{result.train_samples}</code> train / <code>{result.val_samples}</code> val\n"
+                f"• Cache Age: <code>{max(0, int(time.time() - getattr(result, 'generated_at', time.time())))}s</code>\n"
+                "───────────────────\n"
+                f"{'✅ Command aligns with strongest direction' if requested_ok else '⚠️ Strongest direction differs from requested side'}"
+            )
+        except Exception as exc:
+            logger.exception("BTC launch command failed")
+            text = f"❌ BTC launch failed for {timeframe} {direction}: {exc}"
+        await msg.reply_text(text, parse_mode="HTML")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 🎮 CATEGORY 1: COCKPIT LIVE & PM2 DIAGNOSTICS

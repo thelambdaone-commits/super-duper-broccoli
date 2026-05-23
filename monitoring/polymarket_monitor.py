@@ -6,7 +6,10 @@ import os
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
-import websockets
+try:
+    import websockets
+except ModuleNotFoundError:
+    websockets = None
 from eth_abi.codec import ABICodec
 from eth_abi.registry import registry
 
@@ -39,6 +42,8 @@ class PolymarketMonitor:
         rpc_url: Optional[str] = None,
         match_signature: str = MATCH_ORDERS_SIGNATURE,
     ) -> None:
+        if websockets is None:
+            raise ImportError("websockets is required for PolymarketMonitor. Install it with: pip install websockets")
         if not WEB3_AVAILABLE:
             raise ImportError("web3 is required for PolymarketMonitor. Install it with: pip install web3")
         
