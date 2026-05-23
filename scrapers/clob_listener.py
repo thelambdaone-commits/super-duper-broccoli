@@ -103,6 +103,18 @@ class CLOBListener:
     def persist_snapshot(self, snapshot: dict[str, Any]) -> None:
         if not self.store:
             return
+        
+        # 0. Resolve ticker for institutional analytics
+        ticker = snapshot.get("token_id", "UNKNOWN")
+        market_slug = str(snapshot.get("market", "")).lower()
+        if "bitcoin" in market_slug or "btc-" in market_slug:
+            ticker = "BTC"
+        elif "ethereum" in market_slug or "eth-" in market_slug:
+            ticker = "ETH"
+        elif "solana" in market_slug or "sol-" in market_slug:
+            ticker = "SOL"
+
+        # 1. Record individual features for standard lookups
         self.store.record_feature(
             snapshot["token_id"],
             "mid_price",
@@ -121,6 +133,19 @@ class CLOBListener:
             snapshot["order_imbalance"],
             timestamp=snapshot["timestamp"],
         )
+
+        # 2. Record full microstructure for institutional analytics (Gaps: microfish fix)
+        self.store.record_microstructure(
+            ticker=ticker,
+            bid_volume=snapshot["bid_depth_3"],
+            ask_volume=snapshot["ask_depth_3"],
+            spread=snapshot["spread_bps"],
+            mid_price=snapshot["mid_price"],
+            order_imbalance=snapshot["order_imbalance"],
+            raw_json=snapshot
+        )
+
+        # 3. Record raw web event for backtesting/audits
         self.store.record_web_event(
             source="polymarket_clob_ws",
             event_type="orderbook_snapshot",

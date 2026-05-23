@@ -22,11 +22,12 @@ from telegram.ext import (
 )
 from telegram_scraper.command_router import CommandRouter
 from core.command_router import LobstarCommandRouter
-from utils.telegram_helpers import split_telegram_message, parse_private_chat_ids
+from utils.telegram_helpers import split_telegram_message
 
 from config.constants import EXECUTION_MODES
-from utils.rpc_provider import get_all_configured_chains, get_rpc_url, resolve_rpc_with_fallback
+from utils.rpc_provider import get_rpc_url, resolve_rpc_with_fallback
 from utils.signal_parser import SignalParser
+from utils.vault_handler import VaultHandler
 
 logger = logging.getLogger("TelegramListener")
 
@@ -287,6 +288,20 @@ class TelegramListener:
             logger.warning("reply_to failed: update has no effective message")
             return False
         try:
+            private_target = self._command_reply_chat_id(update)
+            if private_target is not None:
+                for chunk in split_telegram_message(text):
+                    kwargs: dict[str, Any] = {"chat_id": private_target, "text": chunk}
+                    if reply_markup is not None:
+                        kwargs["reply_markup"] = reply_markup
+                        reply_markup = None
+                    if parse_mode is not None:
+                        kwargs["parse_mode"] = parse_mode
+                    await self._telegram_call_with_retry(
+                        self.application.bot.send_message,
+                        **kwargs,
+                    )
+                return True
             for index, chunk in enumerate(split_telegram_message(text)):
                 kwargs = {}
                 if reply_markup is not None and index == 0:
@@ -298,6 +313,25 @@ class TelegramListener:
         except Exception as e:
             logger.warning(f"reply_to failed: {e}")
             return False
+
+    def _command_reply_chat_id(self, update: Update) -> int | None:
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
+        if msg is None or getattr(msg, "chat", None) is None:
+            return None
+        if getattr(msg.chat, "type", None) == "private":
+            return None
+        text = getattr(msg, "text", None) or ""
+        if not text.startswith("/"):
+            return None
+        if _is_private_chat_id(self.chat_id):
+            return self.chat_id
+        private_admin_ids = sorted(chat_id for chat_id in self.admin_chat_ids if _is_private_chat_id(chat_id))
+        if private_admin_ids:
+            return private_admin_ids[0]
+        user_id = _effective_user_id(update)
+        if _is_private_chat_id(user_id):
+            return user_id
+        return None
 
     async def _check_auth(self, update: Update) -> bool:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None) or getattr(update, "channel_post", None)
@@ -649,12 +683,32 @@ class TelegramListener:
                 public_address=address,
                 private_key=private_key,
             )
-            soldes = await manager.recuperer_soldes_on_chain(address)
+
+            # Resolve proxy from Gamma API immediately
+            proxy_address = ""
+            try:
+                import httpx
+                r = httpx.get(f"https://gamma-api.polymarket.com/public-profile?address={address}", timeout=5.0)
+                if r.status_code == 200:
+                    resolved = r.json().get("proxyWallet", "")
+                    if resolved:
+                        proxy_address = resolved
+                        # Store in vault if possible
+                        try:
+                            self._get_wallet_vault().set_user_proxy(msg.chat_id, resolved)
+                        except Exception:
+                            # Fallback: update the session dict directly if method missing
+                            VaultHandler._session_wallets[str(msg.chat_id)]["proxy_wallet"] = resolved
+            except Exception as e:
+                logger.debug("Immediate proxy resolution failed: %s", e)
+
+            soldes = await manager.recuperer_soldes_on_chain(address, proxy_address=proxy_address)
             text, reply_markup = manager.generer_layout_telegram(
                 wallet_name="session",
                 wallet_address=address,
                 soldes=soldes,
                 total_connections=self._get_wallet_vault().compter_wallets_session(),
+                proxy_address=proxy_address,
             )
             await context.bot.send_message(
                 chat_id=msg.chat_id,

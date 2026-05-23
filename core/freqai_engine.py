@@ -68,7 +68,7 @@ class FreqAIEngine:
             logger.debug("Unable to resolve market filters for %s: %s", token_id, exc)
         return filters
 
-    def _normalize_and_validate(self, ticker: str, price: float, size: float) -> tuple[int, float]:
+    def normalize_and_validate(self, ticker: str, price: float, size: float) -> tuple[int, float]:
         market_filters = self._get_market_filters(ticker)
         min_notional = float(market_filters.get("min_notional", self.POLYMARKET_MIN_NOTIONAL) or self.POLYMARKET_MIN_NOTIONAL)
         min_order_size = float(market_filters.get("min_order_size", 1.0) or 1.0)

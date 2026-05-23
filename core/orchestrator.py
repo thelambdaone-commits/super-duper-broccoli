@@ -150,11 +150,15 @@ class LobstarOrchestrator:
         # -------------------------------------------------------------------
 
         if self._swarm:
+            # 1. Publish event for distributed agents
             asyncio.create_task(self._swarm.publish_event("SIGNAL_RECEIVED", {
                 "source": signal.get("source", "unknown"),
                 "ticker": signal.get("ticker", "N/A"),
                 "timestamp": time.time()
             }))
+            
+            # 2. Record paper tick for production readiness tracking
+            asyncio.create_task(self._swarm.record_paper_tick(signal))
 
         # ─── Fast Path for On-chain Copy Trading ─────────────────────────────
         if signal.get("source") == "polymarket_onchain" and self.copy_trading_agent:
@@ -374,9 +378,10 @@ class LobstarOrchestrator:
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def _execute_signal_with_cognitive_brain(self, signal: dict) -> dict | None:
-        # 0. Enrich with Social Sentiment (Free Ingestion via snscrape)
+        # Keep social scraping off the hot path by default; blocking subprocess/network
+        # work here materially slows execution and can starve fast signal handling.
         ticker = signal.get("ticker")
-        if ticker:
+        if ticker and self._env_bool("ENABLE_INLINE_SOCIAL_ENRICHMENT"):
             try:
                 from scrapers.social_scraper import social_scraper
                 social_context = await social_scraper.get_crypto_sentiment_context(ticker)

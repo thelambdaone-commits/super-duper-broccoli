@@ -440,9 +440,37 @@ class PolymarketOrderManager:
 
         if side.upper() == "BUY":
             required_usdc = cost_est["total_cost"]
-            # TODO: Get actual USDC balance from wallet
-            # For now, just return estimate
-            return True, f"Need ${required_usdc:.2f} USDC"
+            
+            # Attempt to get actual USDC balance
+            address = None
+            if self._clob_client:
+                try:
+                    address = self._clob_client.get_address()
+                except Exception:
+                    pass
+            
+            if not address and self._private_key:
+                try:
+                    from eth_account import Account
+                    address = Account.from_key(self._private_key).address
+                except Exception:
+                    pass
+
+            if not address:
+                return True, f"Could not verify balance (no address). Need ${required_usdc:.2f} USDC"
+
+            try:
+                # Use WalletManager to get USDC balance
+                balance_info = self.wallet_manager.get_token_balance(address, "USDC")
+                if balance_info:
+                    current_balance = balance_info.formatted_balance
+                    if current_balance < required_usdc:
+                        return False, f"Insufficient balance: ${current_balance:.2f} < ${required_usdc:.2f} USDC"
+                    return True, f"Balance OK: ${current_balance:.2f} USDC"
+            except Exception as e:
+                logger.warning(f"Failed to check live balance: {e}")
+
+            return True, f"Estimated requirement: ${required_usdc:.2f} USDC (Live check failed)"
 
         return True, "Ready to place bet"
 

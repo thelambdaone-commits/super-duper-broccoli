@@ -20,8 +20,8 @@ except ImportError:  # pragma: no cover - exercised only when tqdm is absent
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.training_pipeline import TrainingPipeline
+from config.runtime_architecture import DEFAULT_RUNTIME_ARCHITECTURE
 from utils.feature_store import FEATURE_STORE_PATH, FeatureStore
-from utils.vault_handler import VaultHandler
 import httpx
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -297,9 +297,19 @@ def main(
     allow_synthetic_live: bool = False,
     tickers: Optional[list[str]] = None,
     continuous: bool = False,
+    notify_telegram: bool = False,
 ) -> None:
     tickers = tickers or DEFAULT_TICKERS
     store = FeatureStore(db_path=db_path) if db_path else FeatureStore()
+    logger.info(
+        "Runtime architecture policy: storage=%s/%s/%s/%s models=%s notify_telegram=%s",
+        DEFAULT_RUNTIME_ARCHITECTURE.storage.operational_db,
+        DEFAULT_RUNTIME_ARCHITECTURE.storage.hot_counter_store,
+        DEFAULT_RUNTIME_ARCHITECTURE.storage.analytical_store,
+        DEFAULT_RUNTIME_ARCHITECTURE.storage.archival_tick_store,
+        ",".join(DEFAULT_RUNTIME_ARCHITECTURE.models.pnl_prediction_stack),
+        notify_telegram,
+    )
 
     if dry_run:
         logger.info("[DRY RUN] FeatureStore OK. Would generate data and train.")
@@ -335,6 +345,7 @@ def main(
         min_train_samples=50,
         validation_split=0.2,
     )
+    best: dict | None = None
 
     all_runs: list[dict] = []
     progress = Progress(total=len(tickers) * len(HYPERPARAM_GRID))
@@ -404,31 +415,39 @@ def main(
             all_runs.extend(runs)
             save_tracking(runs)
 
-    # Telegram Notification
-    try:
-        vault = VaultHandler()
-        secrets = vault.fetch_quantum_secrets()
-        bot_token = secrets.get("TELEGRAM_BOT_TOKEN")
-        chat_id = os.getenv("CHAT_ID")
+    if notify_telegram:
+        try:
+            from utils.vault_handler import VaultHandler
 
-        if bot_token and chat_id:
-            msg = (
-                f"🎯 *Training Complete*\n\n"
-                f"Tickers: `{', '.join(tickers)}`\n"
-                f"Total Runs: `{len(all_runs)}`\n"
-                f"Best Model: `{best.get('ticker')} (wf_acc: {best.get('wf_mean_accuracy', 0):.4f})`\n"
-                f"Models Dir: `{pipeline.model_dir}`"
-            )
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            payload = {
-                "chat_id": chat_id,
-                "text": msg,
-                "parse_mode": "HTML"
-            }
-            httpx.post(url, json=payload, timeout=10.0)
-            logger.info("Telegram notification sent")
-    except Exception as te:
-        logger.warning(f"Could not send Telegram notification: {te}")
+            secrets = VaultHandler().fetch_quantum_secrets()
+            bot_token = secrets.get("TELEGRAM_BOT_TOKEN")
+            chat_id = os.getenv("CHAT_ID")
+
+            if bot_token and chat_id:
+                best_label = (
+                    f"{best.get('ticker')} (wf_acc: {best.get('wf_mean_accuracy', 0):.4f})"
+                    if best is not None
+                    else "N/A"
+                )
+                msg = (
+                    f"🎯 *Training Complete*\n\n"
+                    f"Tickers: `{', '.join(tickers)}`\n"
+                    f"Total Runs: `{len(all_runs)}`\n"
+                    f"Best Model: `{best_label}`\n"
+                    f"Models Dir: `{pipeline.model_dir}`"
+                )
+                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                payload = {
+                    "chat_id": chat_id,
+                    "text": msg,
+                    "parse_mode": "HTML"
+                }
+                httpx.post(url, json=payload, timeout=10.0)
+                logger.info("Telegram notification sent")
+        except Exception as te:
+            logger.warning(f"Could not send Telegram notification: {te}")
+    else:
+        logger.info("Offline-safe training mode enabled: no secret-backed notifications.")
 
 
 if __name__ == "__main__":
@@ -455,6 +474,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Also train on continuous market tickers (BTCUSDT, ETHUSDT, SPY, QQQ)",
     )
+    parser.add_argument(
+        "--notify-telegram",
+        action="store_true",
+        help="Opt-in secret-backed Telegram notification after training.",
+    )
     args = parser.parse_args()
     main(
         dry_run=args.dry_run,
@@ -462,4 +486,5 @@ if __name__ == "__main__":
         allow_synthetic_live=args.allow_synthetic_live,
         tickers=args.tickers,
         continuous=args.continuous,
+        notify_telegram=args.notify_telegram,
     )

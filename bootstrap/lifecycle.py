@@ -28,16 +28,11 @@ from utils.clob_feed_utils import extract_live_clob_token_ids
 from scrapers.clob_listener import CLOBListener
 from scrapers.user_clob_listener import UserCLOBListener
 from py_clob_client import ApiCreds
-from utils.message_formatter import format_market_report, format_winning_bets_alert
-from utils.notifier import TelegramNotifier
-from utils.snapshot_manager import get_snapshot_manager
-from utils.telegram_helpers import parse_private_chat_ids
-from bootstrap.security import telegram_single_instance_lock
-from utils.exceptions import QuantFatal
-from utils.market_scanner import MarketScanner
-from utils.crypto_market_intelligence import CryptoMarketIntelligence, format_intelligence_report
+from utils.vault_handler import VaultHandler
 from core.container import ServiceContainer
+from utils.crypto_market_intelligence import CryptoMarketIntelligence
 
+logger = logging.getLogger("Lifecycle")
 
 async def run_services_loop(
     listener: Any,
@@ -252,13 +247,13 @@ class BotLifecycle:
             cpu_usage = 0.0
             ram_usage = 0.0
         dashboard_msg = (
-            f"🦞 *LOBSTAR COMMAND CENTER — ONLINE*\n"
+            f"🦞 <b>LOBSTAR COMMAND CENTER — ONLINE</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🚀 *Status*: `RUNNING`\n"
-            f"📡 *Mode*: `{self.execution_mode}`\n"
-            f"💻 *System*: CPU `{cpu_usage}%` | RAM `{ram_usage}%` \n\n"
+            f"🚀 <b>Status</b> : <code>RUNNING</code>\n"
+            f"📡 <b>Mode</b> : <code>{self.execution_mode}</code>\n"
+            f"💻 <b>System</b> : CPU <code>{cpu_usage}%</code> | RAM <code>{ram_usage}%</code> \n\n"
             f"{get_api_key_notifier().format_telegram_alert(api_check)}\n\n"
-            f"🔗 _Tapez /help pour explorer les fonctions._"
+            f"🔗 <i>Tapez /help pour explorer les fonctions.</i>"
         )
         if chat_id and listener:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -285,6 +280,11 @@ class BotLifecycle:
             pass
         if listener:
             listener.attach_components(ledger=ledger, risk=risk, hmm=hmm, store=store, executor=passive_executor, scanner=market_scanner, copy_agent=copy_trading_agent, market_reader=market_reader, order_manager=order_manager)
+            try:
+                from utils.pmxt_adapter_service import PMXTAdapterService
+                listener._pmxt_service = PMXTAdapterService()
+            except Exception as exc:
+                logger.warning("PMXT adapter service unavailable: %s", exc)
         clob_listener = None
         live_clob_feed_coro = None
         try:
@@ -303,6 +303,9 @@ class BotLifecycle:
                 clob_listener = CLOBListener(token_ids=live_token_ids, store=store)
                 async def _persist_live_snapshot(snapshot: dict[str, Any]) -> None:
                     snapshot_mgr.capture(category="SYSTEM", component="CLOB_ORDERBOOK", data=snapshot, tags=["live", "clob", snapshot.get("token_id", "unknown")])
+                    swarm = getattr(orchestrator, "_swarm", None)
+                    if swarm is not None:
+                        await swarm.record_market_tick(snapshot)
                     if ledger:
                         ticker = snapshot.get("token_id")
                         mid_price = snapshot.get("mid_price")
@@ -340,13 +343,35 @@ class BotLifecycle:
         runner.register_job("Model_Health_And_Drift", model_drift_loop.run, interval_sec=14400.0)
         runner.register_job("HMM_Training", hmm_training_loop.run, interval_sec=21600.0)
         runner.register_job("SLTP_Monitoring", sltp_monitoring_loop.run, interval_sec=10.0)
+        if listener and getattr(listener, "_pmxt_service", None):
+            async def pmxt_monitored_job():
+                try:
+                    result = await listener._pmxt_service.run_cycle()
+                    if result.get("status") == "FAILED":
+                        reason = result.get("reason", "Unknown error")
+                        logger.error(f"🚨 [PMXT ADAPTER FAILURE] {reason}")
+                        if orchestrator and orchestrator.broadcaster:
+                            await orchestrator.broadcaster.diffuser_message_au_canal(
+                                f"🚨 <b>PMXT ADAPTER FAILURE</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"Reason: <code>{reason}</code>\n"
+                                f"<i>Archival chain may be broken. Check polars/pyarrow installation.</i>"
+                            )
+                except Exception as e:
+                    logger.error(f"PMXT job error: {e}")
+
+            runner.register_job(
+                "PMXT_Auto_Cycle",
+                pmxt_monitored_job,
+                interval_sec=float(os.getenv("PMXT_ADAPTER_INTERVAL_SECONDS", "1800")),
+            )
         ws_url = secrets.get("WS_URL", "")
         polymarket_monitor = None
         onchain_monitor_enabled = _env_bool("POLYMARKET_ONCHAIN_MONITOR_ENABLED", False)
         if onchain_monitor_enabled and ws_url:
             target_wallet = secrets.get("TARGET_WALLET", "")
             polymarket_monitor = PolymarketMonitor(on_signal=orchestrator.on_signal, target_wallet=target_wallet or None, ws_url=ws_url, rpc_url=polygon_rpc)
-        health_supervisor = HealthSupervisorAgent(feature_store=store, ledger=ledger, wallet_manager=__import__("core.wallet_manager", fromlist=["PolymarketWalletManager"]).PolymarketWalletManager(vault_handler=container.vault, polygon_rpc_url=polygon_rpc), data_archiver=DataArchiver(db_path=os.path.join(os.getenv("DATA_PATH", "user_data/data"), "feature_store.duckdb")), broadcaster=orchestrator.broadcaster, secrets=secrets, config=HealthSupervisorConfig(staleness_threshold_seconds=float(get_health_config("polymarket_staleness_seconds", 60.0, env_key="MAX_POLYMARKET_STALENESS_SECONDS")), memory_warning_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), memory_critical_mb=float(get_health_config("memory_critical_mb", 1536)), wallet_reconciliation_interval_seconds=3600.0, maintenance_interval_seconds=86400.0, check_interval_seconds=5.0, wallet_drift_tolerance_usd=float(get_health_config("wallet_drift_tolerance_usdc", 0.01, env_key="MAX_WALLET_DRIFT_USDC")), disk_usage_warning_bytes=5_000_000_000, disk_usage_critical_bytes=8_000_000_000))
+        health_supervisor = HealthSupervisorAgent(feature_store=store, ledger=ledger, wallet_manager=__import__("core.wallet_manager", fromlist=["PolymarketWalletManager"]).PolymarketWalletManager(vault_handler=container.vault, polygon_rpc_url=polygon_rpc), data_archiver=DataArchiver(db_path=os.path.join(os.getenv("DATA_PATH", "data"), "feature_store.duckdb")), broadcaster=orchestrator.broadcaster, secrets=secrets, config=HealthSupervisorConfig(staleness_threshold_seconds=float(get_health_config("polymarket_staleness_seconds", 60.0, env_key="MAX_POLYMARKET_STALENESS_SECONDS")), memory_warning_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), memory_critical_mb=float(get_health_config("memory_critical_mb", 1536)), wallet_reconciliation_interval_seconds=3600.0, maintenance_interval_seconds=86400.0, check_interval_seconds=5.0, wallet_drift_tolerance_usd=float(get_health_config("wallet_drift_tolerance_usdc", 0.01, env_key="MAX_WALLET_DRIFT_USDC")), disk_usage_warning_bytes=5_000_000_000, disk_usage_critical_bytes=8_000_000_000))
         health_sidecar = HealthMonitorAgent(config=HealthMonitorConfig(heartbeat_interval_seconds=30.0, duckdb_prune_interval_seconds=86400.0, memory_check_interval_seconds=60.0, max_memory_rss_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), enable_ledger_reconciliation=_env_bool("HEALTH_SIDE_CAR_ENABLE_LEDGER_RECONCILIATION", True), enable_feature_store_maintenance=_env_bool("HEALTH_SIDE_CAR_ENABLE_FEATURE_STORE_MAINTENANCE", True)), feature_store=store, ledger=ledger, broadcaster=orchestrator.broadcaster)
         user_ws_coro = None
 

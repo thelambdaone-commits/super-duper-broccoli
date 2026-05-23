@@ -47,9 +47,13 @@ def _setup_autonomous_trading(
         )
 
         async def run_autonomous_cycle():
-            # In a real scenario, we might want to fetch latest markets from scanner
-            # for now we rely on the loop's internal logic.
-            await loop.run_once([])
+            features = []
+            if scanner and hasattr(scanner, "get_strategy_features"):
+                try:
+                    features = scanner.get_strategy_features() or []
+                except Exception as exc:
+                    logger.warning("Autonomous strategy feature extraction failed: %s", exc)
+            await loop.run_once(features)
 
         runner.register_job("Autonomous_Trading_Loop", run_autonomous_cycle, interval_sec=15.0)
         logger.info("✅ [SCHEDULER] Autonomous Trading Loop registered (15s interval)")
@@ -76,6 +80,29 @@ def _setup_quantum_runner(
     orchestrator: Any = None,
 ) -> None:
     runtime_secrets = runtime_secrets or {}
+
+    # Setup Swarm Supervisor (Aulekator Integration)
+    try:
+        from core.swarm_supervisor import initialize_swarm_supervisor
+        mode = ledger.get_execution_mode() if ledger else "PAPER"
+        
+        # We store a reference to prevent GC and allow for future status checks
+        def _on_swarm_init_done(task: asyncio.Task) -> None:
+            try:
+                task.result()
+                logger.info("🐝 [SCHEDULER] Swarm Supervisor initialization completed successfully.")
+            except Exception as exc:
+                logger.error(f"❌ [SCHEDULER] Swarm Supervisor initialization failed: {exc}")
+
+        init_task = asyncio.create_task(initialize_swarm_supervisor(mode=mode))
+        init_task.add_done_callback(_on_swarm_init_done)
+        
+        # Keep a strong reference for visibility and to avoid premature cleanup.
+        runner._swarm_init_task = init_task
+
+        logger.info(f"🐝 [SCHEDULER] Swarm Supervisor initialization task started (Mode: {mode})")
+    except Exception as e:
+        logger.warning(f"Failed to trigger Swarm Supervisor initialization: {e}")
 
     # Setup Autonomous Trading Loop
     _setup_autonomous_trading(

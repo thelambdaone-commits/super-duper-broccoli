@@ -453,8 +453,17 @@ class CommandRouter:
         if row:
             asset_rows.append(row)
 
-        horizon_row = [InlineKeyboardButton(label, callback_data=f"crypto_horizon:btc:{key}") for label, key in horizons]
-        reply_markup = InlineKeyboardMarkup(asset_rows + [horizon_row])
+        horizon_rows = []
+        for label, key in horizons:
+            row = [
+                InlineKeyboardButton(
+                    f"{asset_label} {label}",
+                    callback_data=f"crypto_horizon:{asset_key}:{key}",
+                )
+                for asset_label, asset_key in assets
+            ]
+            horizon_rows.append(row)
+        reply_markup = InlineKeyboardMarkup(asset_rows + horizon_rows)
 
         text = (
             "🧭 <b>CENTRE CRYPTO LOBSTAR</b>\n"
@@ -752,10 +761,10 @@ class CommandRouter:
             from utils.regime_utils import get_regime_label
             label = get_regime_label(self.listener._hmm, "SOL")
             msg = (
-                "📊 *STATUT DES MODÈLES ML*\n"
+                "📊 <b>STATUT DES MODÈLES ML</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *Régime Actuel* : `{label}`\n"
-                f"• *Autorisation Trading* : {'✅ AUTORISÉ' if self.listener._hmm.is_trading_allowed(None)[0] else '❌ BLOQUÉ'}\n"
+                f"• <b>Régime Actuel</b> : <code>{label}</code>\n"
+                f"• <b>Autorisation Trading</b> : {'✅ AUTORISÉ' if self.listener._hmm.is_trading_allowed(None)[0] else '❌ BLOQUÉ'}\n"
                 "━━━━━━━━━━━━━━━━━━━━"
             )
             await self.listener.reply_to(msg, update)
@@ -764,13 +773,13 @@ class CommandRouter:
                 await self.listener.reply_to("❌ Feature Store non attaché.", update)
                 return
             stats = self.listener._store.get_stats()
-            msg = "📈 *MÉTRIQUES FEATURE STORE*\n━━━━━━━━━━━━━━━━━━━━\n"
+            msg = "📈 <b>MÉTRIQUES FEATURE STORE</b>\n━━━━━━━━━━━━━━━━━━━━\n"
             for k, v in stats.items():
-                msg += f"• {k} : `{v}`\n"
+                msg += f"• {k} : <code>{v}</code>\n"
             msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"❓ Subcommand Model inconnue: `{sub}`", update)
+            await self.listener.reply_to(f"❓ Subcommand Model inconnue: <code>{sub}</code>", update)
 
     async def _cmd_risk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -784,24 +793,24 @@ class CommandRouter:
         if sub == "status":
             cap = self.listener._ledger.get_capital_summary()
             msg = (
-                "🛡️ *SÉCURITÉ & CAPITAL*\n"
+                "🛡️ <b>SÉCURITÉ &amp; CAPITAL</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *Total Portfolio* : `${cap.get('total_capital', 0):,.2f}`\n"
-                f"• *Disponible* : `${cap.get('available_capital', 0):,.2f}`\n"
-                f"• *Allocation* : `{cap.get('allocated_pct', 0)}%` du max\n"
+                f"• <b>Total Portfolio</b> : <code>${cap.get('total_capital', 0):,.2f}</code>\n"
+                f"• <b>Disponible</b> : <code>${cap.get('available_capital', 0):,.2f}</code>\n"
+                f"• <b>Allocation</b> : <code>{cap.get('allocated_pct', 0)}%</code> du max\n"
                 "━━━━━━━━━━━━━━━━━━━━"
             )
             await self.listener.reply_to(msg, update)
         elif sub in ("kill", "freeze"):
             from mcp_agents.mcp_server import emergency_circuit_breaker
             res = emergency_circuit_breaker("ENGAGE")
-            await self.listener.reply_to("🛑 *URGENCE ENGAGÉE*\n\nLe coupe-circuit a été activé. Le trading est suspendu.", update)
+            await self.listener.reply_to("🛑 <b>URGENCE ENGAGÉE</b>\n\nLe coupe-circuit a été activé. Le trading est suspendu.", update)
         elif sub in ("resume", "unfreeze"):
             from mcp_agents.mcp_server import emergency_circuit_breaker
             res = emergency_circuit_breaker("DISENGAGE")
-            await self.listener.reply_to("✅ *SÉCURITÉ LEVÉE*\n\nLe bot est de nouveau prêt pour l'exécution.", update)
+            await self.listener.reply_to("✅ <b>SÉCURITÉ LEVÉE</b>\n\nLe bot est de nouveau prêt pour l'exécution.", update)
         else:
-            await self.listener.reply_to(f"❓ Subcommand Risk inconnue: `{sub}`", update)
+            await self.listener.reply_to(f"❓ Subcommand Risk inconnue: <code>{sub}</code>", update)
 
     async def _cmd_clob(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -813,18 +822,18 @@ class CommandRouter:
             res = get_arbitrage_opportunities()
             count = res.get("opportunity_count", 0)
             msg = (
-                "⚖️ *CLOB ARBITRAGE SCANNER*\n"
+                "⚖️ <b>CLOB ARBITRAGE SCANNER</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *Opportunités détectées* : `{count}`\n"
+                f"• <b>Opportunités détectées</b> : <code>{count}</code>\n"
             )
             if count > 0:
-                msg += "\n*TOP 5 OPPORTUNITIES*:\n"
+                msg += "\n<b>TOP 5 OPPORTUNITIES</b>:\n"
                 for opp in res.get("opportunities", [])[:5]:
-                    msg += f"• {opp.get('type')} : `{opp.get('market_id')[:10]}...` (Conf: `{opp.get('confidence'):.2f}`)\n"
+                    msg += f"• {opp.get('type')} : <code>{opp.get('market_id')[:10]}...</code> (Conf: <code>{opp.get('confidence'):.2f}</code>)\n"
             msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"❓ Subcommand CLOB inconnue: `{sub}`", update)
+            await self.listener.reply_to(f"❓ Subcommand CLOB inconnue: <code>{sub}</code>", update)
 
     async def _cmd_whales(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -836,13 +845,13 @@ class CommandRouter:
 
         if sub == "leaderboard":
             cat = args[1].upper() if len(args) > 1 else "OVERALL"
-            msg_wait = await self.listener.reply_to(f"🔍 *SCAN DES BALEINES* (`{cat}`)...", update)
+            msg_wait = await self.listener.reply_to(f"🔍 <b>SCAN DES BALEINES</b> (<code>{cat}</code>)...", update)
             results = discover_top_traders(categories=[cat], limit=5)
             traders = results.get(cat, [])
             report = fmt_expert_leaderboard(traders, cat, 5)
             
             msg = (
-                f"🐋 *TOP TRADERS : {cat}*\n"
+                f"🐋 <b>TOP TRADERS : {cat}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{report}\n"
                 f"━━━━━━━━━━━━━━━━━━━━"
@@ -850,33 +859,33 @@ class CommandRouter:
             await self.listener.reply_to(msg, update)
         elif sub == "analyze":
             if len(args) < 2:
-                await self.listener.reply_to("💡 Usage: `/whales analyze <adresse>`", update)
+                await self.listener.reply_to("💡 Usage: <code>/whales analyze &lt;adresse&gt;</code>", update)
                 return
             wallet = args[1]
-            await self.listener.reply_to(f"🧪 *ANALYSE DE PORTEFEUILLE* : `{wallet[:10]}...`", update)
+            await self.listener.reply_to(f"🧪 <b>ANALYSE DE PORTEFEUILLE</b> : <code>{wallet[:10]}...</code>", update)
             from utils.polymarket_crawler.traders import TraderScraper
             scraper = TraderScraper()
             positions = scraper.fetch_closed_positions(wallet)
             total_pnl = sum(p.realized_pnl for p in positions)
             
             msg = (
-                f"🐋 *WHALE ANALYSIS : {wallet[:10]}...*\n"
+                f"🐋 <b>WHALE ANALYSIS : {wallet[:10]}...</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *Positions Clôturées* : `{len(positions)}`\n"
-                f"• *PnL Total Réalisé* : `${total_pnl:,.2f}`\n\n"
-                f"*Dernières Victoires* :\n"
+                f"• <b>Positions Clôturées</b> : <code>{len(positions)}</code>\n"
+                f"• <b>PnL Total Réalisé</b> : <code>${total_pnl:,.2f}</code>\n\n"
+                f"<b>Dernières Victoires</b> :\n"
             )
             for p in positions[:5]:
                 msg += f"• {p.title[:30]}... | `${p.realized_pnl:,.0f}`\n"
             msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"❓ Subcommand Whales inconnue: `{sub}`", update)
+            await self.listener.reply_to(f"❓ Subcommand Whales inconnue: <code>{sub}</code>", update)
 
     async def _cmd_trade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
         if not self.listener._ledger:
-            await self.listener.reply_to("❌ *ERREUR LEDGER*\n\nLe grand livre (ledger) n'est pas initialisé.", update)
+            await self.listener.reply_to("❌ <b>ERREUR LEDGER</b>\n\nLe grand livre (ledger) n'est pas initialisé.", update)
             return
 
         args = context.args
@@ -886,11 +895,11 @@ class CommandRouter:
             mode = self.listener._ledger.get_execution_mode()
             metrics = self.listener._executor.get_metrics() if self.listener._executor else {}
             msg = (
-                "🎯 *TRADING ENGINE STATUS*\n"
+                "🎯 <b>TRADING ENGINE STATUS</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *Mode Actuel* : `{mode}`\n"
-                f"• *Fill Rate* : `{metrics.get('fill_rate_pct', 0)}%`\n"
-                f"• *File d'attente* : `{metrics.get('queue_depth', 0)} ordres`\n"
+                f"• <b>Mode Actuel</b> : <code>{mode}</code>\n"
+                f"• <b>Fill Rate</b> : <code>{metrics.get('fill_rate_pct', 0)}%</code>\n"
+                f"• <b>File d'attente</b> : <code>{metrics.get('queue_depth', 0)} ordres</code>\n"
                 "━━━━━━━━━━━━━━━━━━━━"
             )
             await self.listener.reply_to(msg, update)
@@ -898,32 +907,32 @@ class CommandRouter:
             if len(args) > 1 and args[1] == "on":
                 new_mode = sub.upper()
                 if new_mode == "PROD":
-                    await self.listener.reply_to("⚠️ *SÉCURITÉ PROD*\n\nLe passage en mode `PROD` nécessite une confirmation manuelle via le fichier de configuration pour des raisons de sécurité.", update)
+                    await self.listener.reply_to("⚠️ <b>SÉCURITÉ PROD</b>\n\nLe passage en mode <code>PROD</code> nécessite une confirmation manuelle via le fichier de configuration pour des raisons de sécurité.", update)
                     return
                 self.listener._ledger.set_execution_mode(new_mode)
-                await self.listener.reply_to(f"🔄 *CHANGEMENT DE MODE*\n\nLe moteur d'exécution est maintenant en mode : `{new_mode}`", update)
+                await self.listener.reply_to(f"🔄 <b>CHANGEMENT DE MODE</b>\n\nLe moteur d'exécution est maintenant en mode : <code>{new_mode}</code>", update)
             else:
-                await self.listener.reply_to(f"💡 Usage: `/trade {sub} on` pour confirmer.", update)
+                await self.listener.reply_to(f"💡 Usage: <code>/trade {sub} on</code> pour confirmer.", update)
         elif sub == "pnl":
             perf = self.listener._ledger.get_performance_summary(mode=self.listener._ledger.get_execution_mode())
             if perf and perf.get("total_trades", 0) > 0:
                 wr = perf["win_rate"] * 100
                 msg = (
-                    "💰 *RAPPORT DE PERFORMANCE*\n"
+                    "💰 <b>RAPPORT DE PERFORMANCE</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• *Net PnL* : `${perf['total_net_pnl']:,.2f}`\n"
-                    f"• *Win Rate* : `{wr:.1f}%`\n"
-                    f"• *Total Trades* : `{perf['total_trades']}`\n"
-                    f"• *Profit Factor* : `{perf['profit_factor']:.2f}`\n"
-                    f"• *Gain Moyen* : `${perf['avg_win']:.2f}`\n"
-                    f"• *Perte Moyenne* : `${perf['avg_loss']:.2f}`\n"
+                    f"• <b>Net PnL</b> : <code>${perf['total_net_pnl']:,.2f}</code>\n"
+                    f"• <b>Win Rate</b> : <code>{wr:.1f}%</code>\n"
+                    f"• <b>Total Trades</b> : <code>{perf['total_trades']}</code>\n"
+                    f"• <b>Profit Factor</b> : <code>{perf['profit_factor']:.2f}</code>\n"
+                    f"• <b>Gain Moyen</b> : <code>${perf['avg_win']:.2f}</code>\n"
+                    f"• <b>Perte Moyenne</b> : <code>${perf['avg_loss']:.2f}</code>\n"
                     "━━━━━━━━━━━━━━━━━━━━"
                 )
             else:
-                msg = "💰 *PnL REPORT*\n\nAucun trade clôturé détecté pour le mode actuel."
+                msg = "💰 <b>PnL REPORT</b>\n\nAucun trade clôturé détecté pour le mode actuel."
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"❓ Subcommand inconnue: `{sub}`", update)
+            await self.listener.reply_to(f"❓ Subcommand inconnue: <code>{sub}</code>", update)
 
     async def _cmd_mcp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -933,24 +942,24 @@ class CommandRouter:
         if sub == "status":
             from mcp_agents.mcp_server import mcp
             msg = (
-                "🔌 *MCP AGENT STATUS*\n"
+                "🔌 <b>MCP AGENT STATUS</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *Serveur* : `quant-agentic-mcp`\n"
-                f"• *Transport* : `stdio` (v2 Standard)\n"
-                f"• *Outils* : `{len(mcp.list_tools())}` actifs\n"
+                f"• <b>Serveur</b> : <code>quant-agentic-mcp</code>\n"
+                f"• <b>Transport</b> : <code>stdio</code> (v2 Standard)\n"
+                f"• <b>Outils</b> : <code>{len(mcp.list_tools())}</code> actifs\n"
                 "━━━━━━━━━━━━━━━━━━━━"
             )
             await self.listener.reply_to(msg, update)
         elif sub == "tools":
             from mcp_agents.mcp_server import mcp
             tools = mcp.list_tools()
-            msg = "🛠️ *OUTILS MCP DISPONIBLES*\n━━━━━━━━━━━━━━━━━━━━\n"
+            msg = "🛠️ <b>OUTILS MCP DISPONIBLES</b>\n━━━━━━━━━━━━━━━━━━━━\n"
             for t in tools:
-                msg += f"• `{t.name}` : {t.description[:50]}...\n"
+                msg += f"• <code>{t.name}</code> : {t.description[:50]}...\n"
             msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         else:
-            await self.listener.reply_to(f"❓ Subcommand MCP inconnue: `{sub}`", update)
+            await self.listener.reply_to(f"❓ Subcommand MCP inconnue: <code>{sub}</code>", update)
 
     async def _cmd_dev(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -962,16 +971,16 @@ class CommandRouter:
             cpu = psutil.cpu_percent()
             mem = psutil.virtual_memory().percent
             msg = (
-                "⚙️ *SYSTEM METRICS*\n"
+                "⚙️ <b>SYSTEM METRICS</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• *CPU Usage* : `{cpu}%`\n"
-                f"• *RAM Usage* : `{mem}%`\n"
-                f"• *Uptime* : `{self.listener._fmt_uptime() if hasattr(self.listener, '_fmt_uptime') else 'Active'}`\n"
+                f"• <b>CPU Usage</b> : <code>{cpu}%</code>\n"
+                f"• <b>RAM Usage</b> : <code>{mem}%</code>\n"
+                f"• <b>Uptime</b> : <code>{self.listener._fmt_uptime() if hasattr(self.listener, '_fmt_uptime') else 'Active'}</code>\n"
             )
             if self.listener._executor:
                 metrics = self.listener._executor.get_metrics()
-                msg += f"• *Slippage (Sim)* : `${metrics.get('simulated_slippage_usd', 0):,.2f}`\n"
-                msg += f"• *Spread (Sim)* : `${metrics.get('simulated_spread_usd', 0):,.2f}`\n"
+                msg += f"• <b>Slippage (Sim)</b> : <code>${metrics.get('simulated_slippage_usd', 0):,.2f}</code>\n"
+                msg += f"• <b>Spread (Sim)</b> : <code>${metrics.get('simulated_spread_usd', 0):,.2f}</code>\n"
             msg += "━━━━━━━━━━━━━━━━━━━━"
             await self.listener.reply_to(msg, update)
         elif sub == "logs":
@@ -983,20 +992,54 @@ class CommandRouter:
                 
                 with open(log_file, "r") as f:
                     lines = f.readlines()[-15:]
-                msg = "📜 *DERNIÈRES LOGS SYSTEM*\n━━━━━━━━━━━━━━━━━━━━\n```\n" + "".join(lines) + "\n```"
+                msg = "📜 <b>DERNIÈRES LOGS SYSTEM</b>\n━━━━━━━━━━━━━━━━━━━━\n<pre>" + "".join(lines) + "</pre>"
                 await self.listener.reply_to(msg, update)
             except Exception as e:
-                await self.listener.reply_to(f"❌ Échec lecture logs: {e}", update)
+                await self.listener.reply_to(f"❌ Échec lecture logs: <code>{e}</code>", update)
         elif sub == "cleanup":
             from utils.data_archiver import DataArchiver
             archiver = DataArchiver()
             res = archiver.run_maintenance_cycle()
-            msg = "🧹 *Maintenance Cycle Complete*\n\n"
-            msg += f"• Tables Archived: `{len(res['microstructure'].get('tables_exported', []))}`\n"
-            msg += f"• Log Files: `{res['logs'].get('files_compressed', 0)}` compressed\n"
+            msg = "🧹 <b>Maintenance Cycle Complete</b>\n\n"
+            msg += f"• Tables Archived: <code>{len(res['microstructure'].get('tables_exported', []))}</code>\n"
+            msg += f"• Log Files: <code>{res['logs'].get('files_compressed', 0)}</code> compressed\n"
             await self.listener.reply_to(msg, update)
+        elif sub == "pmxt":
+            service = getattr(self.listener, "_pmxt_service", None)
+            if not service:
+                await self.listener.reply_to("❌ PMXT adapter service unavailable.", update)
+                return
+            action = args[1] if len(args) > 1 else "status"
+            if action == "status":
+                await self.listener.reply_to(service.format_status_html(), update)
+            elif action == "run":
+                result = await service.run_cycle(force=True)
+                msg = (
+                    "🗃️ <b>PMXT MANUAL RUN</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>Status</b> : <code>{result.get('status')}</code>\n"
+                    f"• <b>Processed</b> : <code>{result.get('processed_count', 0)}</code>\n"
+                    f"• <b>Skipped</b> : <code>{result.get('skipped_count', 0)}</code>\n"
+                    "━━━━━━━━━━━━━━━━━━━━"
+                )
+                await self.listener.reply_to(msg, update)
+            elif action == "download":
+                if len(args) < 3:
+                    await self.listener.reply_to("Usage: <code>/dev pmxt download 2026-04-15T17</code>", update)
+                    return
+                result = await service.download_and_convert(args[2])
+                msg = (
+                    "🗃️ <b>PMXT DOWNLOAD+CONVERT</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>Status</b> : <code>{result.get('status')}</code>\n"
+                    f"• <b>Rows Out</b> : <code>{result.get('stats', {}).get('rows_out', 0)}</code>\n"
+                    "━━━━━━━━━━━━━━━━━━━━"
+                )
+                await self.listener.reply_to(msg, update)
+            else:
+                await self.listener.reply_to(f"Unknown PMXT action: <code>{action}</code>", update)
         else:
-            await self.listener.reply_to(f"Unknown dev subcommand: {sub}", update)
+            await self.listener.reply_to(f"Unknown dev subcommand: <code>{sub}</code>", update)
 
     async def _cmd_audit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
@@ -1008,11 +1051,11 @@ class CommandRouter:
 
         snap = sm.get_latest(cat)
         if not snap:
-            await self.listener.reply_to(f"No snapshots found for category: `{cat}`", update)
+            await self.listener.reply_to(f"No snapshots found for category: <code>{cat}</code>", update)
             return
 
-        msg = f"🔍 *Snapshot Audit: {cat}*\n\n"
-        msg += f"```json\n{json.dumps(snap, indent=2)[:3000]}\n```"
+        msg = f"🔍 <b>Snapshot Audit: {cat}</b>\n\n"
+        msg += f"<pre>{json.dumps(snap, indent=2)[:3000]}</pre>"
         await self.listener.reply_to(msg, update)
 
     async def _cmd_freeze(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

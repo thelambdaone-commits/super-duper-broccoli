@@ -71,3 +71,31 @@ async def test_channel_chat_is_not_authorized_for_interactive_commands() -> None
 
     assert await listener._check_auth(_update(CHANNEL_CHAT_ID, None, chat_type="channel")) is False
     listener.reply_to.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_channel_command_reply_is_redirected_to_admin_private_chat() -> None:
+    listener = TelegramListener(
+        bot_token="token",
+        on_signal=lambda signal: None,
+        chat_id=ADMIN_CHAT_ID,
+        private_chat_ids={ADMIN_CHAT_ID},
+        admin_chat_ids={ADMIN_CHAT_ID},
+        access_control=AccessControlManager([ADMIN_CHAT_ID]),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+    listener.application = SimpleNamespace(bot=bot)
+
+    channel_update = _update(CHANNEL_CHAT_ID, ADMIN_CHAT_ID, chat_type="channel")
+    channel_update.effective_message.text = "/status"
+    channel_update.message.reply_text = AsyncMock()
+
+    sent = await listener.reply_to("STATUS", channel_update)
+
+    assert sent is True
+    channel_update.message.reply_text.assert_not_called()
+    bot.send_message.assert_awaited_once_with(
+        chat_id=ADMIN_CHAT_ID,
+        text="STATUS",
+        parse_mode="HTML",
+    )

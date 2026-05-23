@@ -8,6 +8,7 @@ from core.training_pipeline import TrainingPipeline
 from utils.model_validator import ModelValidator
 from utils.snapshot_manager import get_snapshot_manager
 from utils.market_scanner import MarketScanner
+from utils.wallet_flow_service import WalletFlowService
 from ai.agents.self_improvement_agent import SelfImprovementAgent
 
 
@@ -28,7 +29,8 @@ def build_runtime_services(container: ServiceContainer, execution_mode: str) -> 
         min_train_samples=50,
         validation_split=0.2,
     )
-    market_scanner = MarketScanner()
+    wallet_flow_service = WalletFlowService()
+    market_scanner = MarketScanner(wallet_flow_service=wallet_flow_service)
     snapshot_mgr = get_snapshot_manager()
     model_validator = ModelValidator(snapshot_manager=snapshot_mgr)
     self_improver = SelfImprovementAgent()
@@ -43,6 +45,7 @@ def build_runtime_services(container: ServiceContainer, execution_mode: str) -> 
         "secrets": secrets,
         "circuit_breaker": circuit_breaker,
         "market_scanner": market_scanner,
+        "wallet_flow_service": wallet_flow_service,
         "training_pipeline": training_pipeline,
         "snapshot_mgr": snapshot_mgr,
         "model_validator": model_validator,

@@ -332,10 +332,10 @@ class LobstarAutonomicHealer:
             erreur_id_esc = esc_func(erreur_id)
 
             message = (
-                f"• *Incident* : `{erreur_id_esc}`\n"
-                f"• *Severity* : `CRITICAL`\n"
-                f"• *Action* : `{action_esc}`\n"
-                f"• *Details* : `{details_esc}`"
+                f"• <b>Incident</b> : <code>{erreur_id_esc}</code>\n"
+                f"• <b>Severity</b> : <code>CRITICAL</code>\n"
+                f"• <b>Action</b> : <code>{action_esc}</code>\n"
+                f"• <b>Details</b> : <code>{details_esc}</code>"
             )
 
             # Utiliser la méthode diffuser_alerte_risque_au_canal

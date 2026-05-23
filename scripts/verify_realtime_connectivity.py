@@ -3,6 +3,13 @@ import os
 import sys
 import time
 import asyncio
+import json
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import requests
 
 from utils.rss_aggregator import RSSAggregator
@@ -25,7 +32,7 @@ def _secrets() -> dict[str, str]:
 
 async def test_rpc_solana():
     secrets = _secrets()
-    url = secrets.get("SOL_RPC_URL") or secrets.get("WS_URL")
+    url = secrets.get("SOL_RPC_URL") or secrets.get("STAKING_SOL_RPC_URL")
     if not url:
         return {"status": "SKIPPED", "msg": "SOL_RPC_URL not configured."}
 
@@ -86,6 +93,23 @@ async def test_websocket_polygon():
         async with websockets.connect(url, open_timeout=5.0) as ws:
             dt = (time.perf_counter() - t0) * 1000
             return {"status": "SUCCESS", "latency": f"{dt:.1f}ms", "msg": "Connection handshake completed."}
+    except Exception as e:
+        return {"status": "FAILED", "msg": str(e)}
+
+async def test_polymarket_clob_ws():
+    secrets = _secrets()
+    url = secrets.get("POLYMARKET_CLOB_WS_URL") or "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    token_id = secrets.get("POLYMARKET_TEST_TOKEN_ID")
+
+    import websockets
+    t0 = time.perf_counter()
+    try:
+        async with websockets.connect(url, open_timeout=5.0, ping_interval=15.0) as ws:
+            if token_id:
+                await ws.send(json.dumps({"type": "market", "assets_ids": [token_id]}))
+            dt = (time.perf_counter() - t0) * 1000
+            detail = f"subscribed to token {token_id}" if token_id else "handshake completed"
+            return {"status": "SUCCESS", "latency": f"{dt:.1f}ms", "msg": detail}
     except Exception as e:
         return {"status": "FAILED", "msg": str(e)}
 
@@ -250,6 +274,11 @@ async def run_diagnostics():
     print(f" • [CLOB] Testing Polymarket REST Gateway... ", end="", flush=True)
     results["Polymarket"] = await test_polymarket_clob()
     _print_status(results["Polymarket"])
+
+    # 8. Polymarket CLOB WebSocket
+    print(f" • [CLOB] Testing Polymarket WebSocket... ", end="", flush=True)
+    results["Polymarket WS"] = await test_polymarket_clob_ws()
+    _print_status(results["Polymarket WS"])
 
     print("\n" + "═" * 70)
     print(" SUMMARY REPORT:")

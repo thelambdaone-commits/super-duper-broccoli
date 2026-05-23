@@ -86,7 +86,8 @@ class WalletManager:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
             if not self.w3.is_connected():
                 logger.warning(f"Web3 not connected to {self.rpc_url}. Retrying...")
-                self.rpc_url = resolve_rpc_with_fallback("polygon", force_fallback=True)
+                # Try to resolve again (without unsupported keyword)
+                self.rpc_url = resolve_rpc_with_fallback("polygon")
                 self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
         except Exception as e:
             logger.error(f"Failed to initialize Web3: {e}")

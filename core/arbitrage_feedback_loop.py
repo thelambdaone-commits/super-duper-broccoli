@@ -279,19 +279,19 @@ class LobstarArbitrageEngine:
         stats = self.get_arbitrage_stats()
 
         lines = [
-            "🎰 *ARBITRAGE FEEDBACK LOOP REPORT*",
+            "🎰 <b>ARBITRAGE FEEDBACK LOOP REPORT</b>",
             "───────────────────────────────",
             "",
-            f"📊 *Opportunités:* `{stats['total_opportunities']}`",
-            f"✅ *Succès:* `{stats['successes']}` | ❌ *Échecs:* `{stats['total_opportunities'] - stats['successes']}`",
-            f"📈 *Taux Succès:* `{stats['success_rate']*100:.1f}%`",
+            f"📊 <b>Opportunités :</b> <code>{stats['total_opportunities']}</code>",
+            f"✅ <b>Succès :</b> <code>{stats['successes']}</code> | ❌ <b>Échecs :</b> <code>{stats['total_opportunities'] - stats['successes']}</code>",
+            f"📈 <b>Taux Succès :</b> <code>{stats['success_rate']*100:.1f}%</code>",
             "",
-            f"💰 *Profit Total:* `${stats['total_profit']:.4f}`",
-            f"💵 *Friction Totale:* `${stats['total_friction']:.4f}`",
-            f"⏱️ *Latence Moyenne:* `{stats['avg_latency_ms']:.1f}ms`",
+            f"💰 <b>Profit Total :</b> <code>${stats['total_profit']:.4f}</code>",
+            f"💵 <b>Friction Totale :</b> <code>${stats['total_friction']:.4f}</code>",
+            f"⏱️ <b>Latence Moyenne :</b> <code>{stats['avg_latency_ms']:.1f}ms</code>",
             "",
-            f"⚠️ *Legger Failures:* `{stats['legger_failures']}`",
-            f"🎯 *Seuil Actuel:* `{stats['current_threshold']*100:.2f}%`",
+            f"⚠️ <b>Legger Failures :</b> <code>{stats['legger_failures']}</code>",
+            f"🎯 <b>Seuil Actuel :</b> <code>{stats['current_threshold']*100:.2f}%</code>",
         ]
 
         return "\n".join(lines)

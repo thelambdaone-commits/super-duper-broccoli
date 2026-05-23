@@ -112,13 +112,6 @@ def compute_advanced_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
     return result.astype(np.float32)
 
 
-def compute_sentiment_features(
-    result: dict[str, float],
-    analyzer: Any,
-) -> np.ndarray:
-    return analyzer.to_feature_vector(result)
-
-
 def compute_order_imbalance(
     bid_volumes: np.ndarray, ask_volumes: np.ndarray
 ) -> np.ndarray:

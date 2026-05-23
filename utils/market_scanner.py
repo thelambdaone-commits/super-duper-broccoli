@@ -7,9 +7,12 @@ from typing import Any, Optional
 
 from utils.crypto_market_intelligence import CryptoMarketIntelligence, DEFAULT_CRYPTO_KEYWORDS
 from utils.market_watchlist import get_polymarket_watchlist
-from utils.polymarket_client import Market, PolymarketClient
+from utils.polymarket_client import PolymarketClient, Market
+from utils.wallet_flow_service import WalletFlowService
+from utils.feature_store import FeatureStore
 
 logger = logging.getLogger("MarketScanner")
+
 
 SCAN_INTERVAL_SECONDS = 300
 TOP_MARKETS_LIMIT = 100
@@ -51,11 +54,17 @@ class ScanResult:
 
 
 class MarketScanner:
-    def __init__(self, client: Optional[PolymarketClient] = None) -> None:
+    def __init__(
+        self,
+        client: Optional[PolymarketClient] = None,
+        wallet_flow_service: Optional[WalletFlowService] = None,
+    ) -> None:
         self.client = client or PolymarketClient()
+        self.wallet_flow_service = wallet_flow_service
         self._last_scan: Optional[ScanResult] = None
         self._known_markets: dict[str, float] = {}
         self._sentiment_cache: dict[str, str] = {}
+        self._wallet_flow_scores: dict[str, float] = {}
 
     def close(self) -> None:
         self.client.close()
@@ -102,6 +111,8 @@ class MarketScanner:
         result = ScanResult(
             timestamp=datetime.now(timezone.utc).isoformat()
         )
+
+        self._refresh_wallet_flow_scores()
 
         try:
             markets = self.client.list_markets(limit=TOP_MARKETS_LIMIT, sort_by="volume")
@@ -259,6 +270,78 @@ class MarketScanner:
                 prices[slug] = prob / 100.0
 
         return prices
+
+    def get_strategy_features(self) -> list[dict[str, Any]]:
+        """
+        Convert the latest scan snapshot into lightweight strategy feature rows.
+
+        The autonomous strategy loop needs feature-shaped market inputs, while the
+        scanner naturally produces ranked market signals. This adapter gives the
+        loop a usable, current market view instead of running with an empty list.
+        """
+        if not self._last_scan or not self._last_scan.total_markets_scanned:
+            return []
+
+        rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        all_signals = (
+            self._last_scan.winning_bets
+            + self._last_scan.trending_markets
+            + self._last_scan.competitive_markets
+            + self._last_scan.arbitrage_opportunities
+        )
+
+        for sig in all_signals:
+            market_id = sig.market_slug or sig.ticker
+            if not market_id or market_id in seen:
+                continue
+            seen.add(market_id)
+
+            price = max(0.0001, min(0.9999, float(sig.price)))
+            implied_probability = max(0.0001, min(0.9999, float(sig.current_prob) / 100.0))
+            spread = max(0.01, min(0.08, float(sig.fee_rate_bps or 0) / 10000.0 or 0.02))
+            side_sign = 1.0 if sig.side.upper() == "BUY" else -1.0
+            sentiment_score = side_sign * max(0.05, min(1.0, float(sig.confidence)))
+
+            rows.append(
+                {
+                    "market_id": market_id,
+                    "ticker": sig.ticker,
+                    "price": price,
+                    "timestamp": datetime.now(timezone.utc).timestamp(),
+                    "bid_price": max(0.0001, price - (spread / 2.0)),
+                    "ask_price": min(0.9999, price + (spread / 2.0)),
+                    "bid_volume": max(25.0, float(sig.volume) / 2.0),
+                    "ask_volume": max(25.0, float(sig.volume) / 2.0),
+                    "spread": spread,
+                    "order_imbalance": 0.25 * side_sign,
+                    "ml_probability": implied_probability,
+                    "hmm_regime": sig.sentiment,
+                    "sentiment_score": sentiment_score,
+                    "semantic_confidence": max(0.0, min(1.0, float(sig.confidence))),
+                    "external_price": implied_probability,
+                    "metadata": {
+                        "market_question": sig.market_question,
+                        "market_slug": sig.market_slug,
+                        "scanner_reason": sig.reason,
+                        "scanner_volume": float(sig.volume),
+                        "current_prob_pct": float(sig.current_prob),
+                        "known_wallet_flow_score": self._wallet_flow_scores.get(market_id.lower(), 0.0),
+                        "source": "market_scanner",
+                    },
+                }
+            )
+
+        return rows
+
+    def _refresh_wallet_flow_scores(self) -> None:
+        if not self.wallet_flow_service:
+            return
+        try:
+            scores = self.wallet_flow_service.refresh_scores()
+            self._wallet_flow_scores = {slug.lower(): flow.score for slug, flow in scores.items()}
+        except Exception as exc:
+            logger.warning("Wallet flow score refresh failed: %s", exc)
 
     def record_features(self, store: FeatureStore):
         """Records current market state into the FeatureStore for training."""

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import random
 import re
@@ -11,6 +12,8 @@ from typing import Any, Protocol
 from openai import AsyncOpenAI
 
 from utils.vault_handler import VaultHandler
+
+logger = logging.getLogger("LLMCouncil")
 
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")

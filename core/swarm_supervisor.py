@@ -14,6 +14,7 @@ Gère:
 
 import asyncio
 import contextlib
+import csv
 import json
 import logging
 import os
@@ -60,6 +61,7 @@ class TriggerReason(Enum):
 
 TELEMETRY_DIR = Path("data/swarm_telemetry")
 TELEMETRY_DIR.mkdir(parents=True, exist_ok=True)
+SWARM_STATE_PATH = TELEMETRY_DIR / "swarm_state.json"
 
 
 class RufloSwarmSupervisor:
@@ -122,6 +124,7 @@ class RufloSwarmSupervisor:
         self._win_rates: list = []
         self._paper_ticks: int = 0
         self._last_retrain_time: float = time.time()
+        self._last_market_tick_signature: dict[str, tuple[float, float, float]] = {}
 
         # Data gap tracking
         self._data_gaps: Dict[str, bool] = {
@@ -142,6 +145,7 @@ class RufloSwarmSupervisor:
         # Loop de surveillance
         self._monitoring_task: Optional[asyncio.Task] = None
         self._running = False
+        self._load_persisted_state()
 
     @property
     def mode(self) -> str:
@@ -248,11 +252,87 @@ class RufloSwarmSupervisor:
             return
 
         self._paper_ticks += 1
+        self._persist_state()
         logger.info(f"📝 Paper tick recorded: {self._paper_ticks}/{self.PAPER_TICKS_REQUIRED}")
 
         if self._paper_ticks >= self.PAPER_TICKS_REQUIRED:
             if self.is_production_ready:
                 await self._transition_to_prod()
+
+    async def record_market_tick(self, snapshot: Dict[str, Any]) -> bool:
+        """
+        Record a paper tick from a market-data event when it changes the book
+        meaningfully enough to count toward PAPER readiness.
+        """
+        if self._mode != ExecutionMode.PAPER:
+            return False
+
+        token_id = str(snapshot.get("token_id") or snapshot.get("asset_id") or "")
+        if not token_id:
+            return False
+
+        best_bid = float(snapshot.get("best_bid", 0.0) or 0.0)
+        best_ask = float(snapshot.get("best_ask", 0.0) or 0.0)
+        mid_price = float(snapshot.get("mid_price", 0.0) or 0.0)
+        signature = (round(best_bid, 6), round(best_ask, 6), round(mid_price, 6))
+        previous = self._last_market_tick_signature.get(token_id)
+        if previous == signature:
+            return False
+
+        self._last_market_tick_signature[token_id] = signature
+        await self.record_paper_tick(
+            {
+                "source": "market_ws",
+                "token_id": token_id,
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "mid_price": mid_price,
+            }
+        )
+        return True
+
+    def warm_start_from_replay(
+        self,
+        replay_path: str | os.PathLike[str],
+        *,
+        max_ticks: int | None = None,
+    ) -> int:
+        """
+        Preload paper ticks from a CSV or JSONL replay source.
+        """
+        path = Path(replay_path)
+        if not path.exists():
+            return 0
+        added = 0
+        target = max_ticks if max_ticks is not None else self.PAPER_TICKS_REQUIRED
+        try:
+            if path.suffix.lower() == ".jsonl":
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        if added >= target:
+                            break
+                        if not line.strip():
+                            continue
+                        payload = json.loads(line)
+                        if self._register_replay_tick(payload):
+                            added += 1
+            else:
+                with path.open("r", encoding="utf-8", newline="") as handle:
+                    reader = csv.DictReader(handle)
+                    for row in reader:
+                        if added >= target:
+                            break
+                        if self._register_replay_tick(row):
+                            added += 1
+        except Exception as exc:
+            logger.warning("Warm-start replay import failed: %s", exc)
+            return 0
+
+        if added:
+            self._paper_ticks += added
+            self._persist_state()
+            logger.info("♻️ Warm-started %s paper ticks from replay %s", added, path)
+        return added
 
     def check_data_gaps(self) -> Dict[str, Any]:
         """
@@ -385,6 +465,7 @@ class RufloSwarmSupervisor:
         self._mode = ExecutionMode.PROD
         self._state = SwarmState.HEALTHY
         self._trigger_reason = TriggerReason.NONE
+        self._persist_state()
 
         logger.info("🚀 TRANSITION TO PRODUCTION MODE")
 
@@ -402,6 +483,7 @@ class RufloSwarmSupervisor:
         old_mode = self._mode
         self._mode = ExecutionMode.PAPER
         self._paper_ticks = 0
+        self._persist_state()
 
         logger.info("📝 Transitioning to PAPER mode")
 
@@ -412,12 +494,54 @@ class RufloSwarmSupervisor:
         """Démarre le loop de surveillance continue."""
         self._state = SwarmState.HEALTHY
         self._running = True
+        self._persist_state()
         self._monitoring_task = asyncio.create_task(self._monitoring_loop())
 
         if self._redis:
             self._redis_pubsub_task = asyncio.create_task(self._redis_pubsub_listener())
 
         logger.info("✅ Swarm supervisor monitoring started")
+
+    def _register_replay_tick(self, payload: Dict[str, Any]) -> bool:
+        token_id = str(payload.get("token_id") or payload.get("asset_id") or payload.get("market") or "")
+        if not token_id:
+            return False
+        best_bid = float(payload.get("best_bid", payload.get("bid_price", 0.0)) or 0.0)
+        best_ask = float(payload.get("best_ask", payload.get("ask_price", 0.0)) or 0.0)
+        mid_price = float(payload.get("mid_price", payload.get("price", 0.0)) or 0.0)
+        signature = (round(best_bid, 6), round(best_ask, 6), round(mid_price, 6))
+        previous = self._last_market_tick_signature.get(token_id)
+        if previous == signature:
+            return False
+        self._last_market_tick_signature[token_id] = signature
+        return True
+
+    def _load_persisted_state(self) -> None:
+        try:
+            if not SWARM_STATE_PATH.exists():
+                return
+            payload = json.loads(SWARM_STATE_PATH.read_text(encoding="utf-8"))
+            self._paper_ticks = int(payload.get("paper_ticks", 0) or 0)
+            mode = payload.get("mode")
+            state = payload.get("state")
+            if mode in {item.value for item in ExecutionMode}:
+                self._mode = ExecutionMode(mode)
+            if state in {item.value for item in SwarmState}:
+                self._state = SwarmState(state)
+        except Exception as exc:
+            logger.warning("Failed to load persisted swarm state: %s", exc)
+
+    def _persist_state(self) -> None:
+        try:
+            payload = {
+                "paper_ticks": self._paper_ticks,
+                "mode": self._mode.value,
+                "state": self._state.value,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            SWARM_STATE_PATH.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to persist swarm state: %s", exc)
 
     async def _redis_pubsub_listener(self) -> None:
         """Listen to Redis Pub/Sub and inject into local event bus/shared memory."""
@@ -638,9 +762,17 @@ async def initialize_swarm_supervisor(
     """
     supervisor = get_swarm_supervisor(mode=mode)
 
+    replay_path = os.getenv("SWARM_WARMSTART_REPLAY_PATH", "").strip()
+    if replay_path:
+        warm_limit = int(os.getenv("SWARM_WARMSTART_MAX_TICKS", str(supervisor.PAPER_TICKS_REQUIRED)))
+        supervisor.warm_start_from_replay(replay_path, max_ticks=warm_limit)
+
     if retrain_agent:
         supervisor.register_agent("retrain", retrain_agent)
 
-    await supervisor.start_monitoring()
+    if not supervisor._running:
+        await supervisor.start_monitoring()
+    else:
+        logger.debug("Swarm supervisor already monitoring.")
 
     return supervisor

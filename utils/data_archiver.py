@@ -15,7 +15,7 @@ LOG_DIR = os.path.join(
 )
 FEATURE_STORE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
-    "user_data", "data", "feature_store.duckdb"
+    "data", "feature_store.duckdb"
 )
 
 

@@ -241,7 +241,11 @@ class TransferManager:
 
             # Sign and send transaction
             signed_tx = self.w3.eth.account.sign_transaction(tx_dict, self._private_key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            raw_tx = getattr(signed_tx, "rawTransaction", getattr(signed_tx, "raw_transaction", None))
+            if raw_tx is None:
+                raise ValueError("Could not extract raw transaction from signed transaction object")
+                
+            tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
 
             logger.info(f"Transaction sent: {tx_hash.hex()}")
 

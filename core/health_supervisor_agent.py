@@ -137,7 +137,7 @@ class HealthSupervisorAgent:
         latest_ts = self._latest_stream_timestamp()
 
         if latest_ts is None:
-            await self._notify_once("stream_staleness", "Health check alert. No live stream data found in FeatureStore.")
+            await self._notify_once("stream_staleness", "🏥 <b>HEALTH ALERT</b>\nNo live stream data found in <code>FeatureStore</code>.")
             return {
                 "check": "stream_staleness",
                 "status": "CRITICAL",
@@ -148,8 +148,8 @@ class HealthSupervisorAgent:
         if age > self.config.staleness_threshold_seconds:
             await self._notify_once(
                 "stream_staleness",
-                f"Health check alert. Live data stale for {age:.1f} seconds. "
-                f"Threshold is {self.config.staleness_threshold_seconds:.1f} seconds.",
+                f"🏥 <b>HEALTH ALERT</b>\nLive data stale for <code>{age:.1f}</code> seconds.\n"
+                f"Threshold is <code>{self.config.staleness_threshold_seconds:.1f}</code> seconds.",
             )
             return {
                 "check": "stream_staleness",
@@ -184,8 +184,8 @@ class HealthSupervisorAgent:
             if status == "CRITICAL":
                 await self._notify_once(
                     "memory_usage",
-                    "Health check alert. Memory usage exceeded the critical threshold. "
-                    f"RSS {rss_mb:.1f} MB.",
+                    "🏥 <b>HEALTH ALERT</b>\nMemory usage exceeded critical threshold!\n"
+                    f"RSS: <code>{rss_mb:.1f} MB</code>",
                 )
 
         return {
@@ -209,7 +209,7 @@ class HealthSupervisorAgent:
         try:
             balances = await self.wallet_manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
         except Exception as exc:
-            await self._notify_once("wallet_reconciliation", f"Health check alert. Wallet reconciliation failed. {exc}")
+            await self._notify_once("wallet_reconciliation", f"🏥 <b>HEALTH ALERT</b>\nWallet reconciliation failed: <code>{exc}</code>")
             return {
                 "check": "wallet_reconciliation",
                 "status": "CRITICAL",
@@ -227,9 +227,11 @@ class HealthSupervisorAgent:
         if status != "OK":
             await self._notify_once(
                 "wallet_reconciliation",
-                "Health check alert. Wallet balance drift detected. "
-                f"On-chain USDC {onchain_usdc:.2f} vs ledger available {ledger_available:.2f}. "
-                f"Drift {drift:.2f}. Auto-syncing ledger capital..."
+                "🏥 <b>HEALTH ALERT</b>\nWallet balance drift detected!\n"
+                f"On-chain: <code>{onchain_usdc:.2f} USDC</code>\n"
+                f"Ledger: <code>{ledger_available:.2f} USDC</code>\n"
+                f"Drift: <code>{drift:.2f} USD</code>\n"
+                "<i>Auto-syncing ledger capital...</i>"
             )
             # Perform actual sync to adapt strategy
             if onchain_usdc > 0:
@@ -273,8 +275,8 @@ class HealthSupervisorAgent:
         if status != "OK":
             await self._notify_once(
                 "disk_usage",
-                "Health check alert. Disk usage is elevated. "
-                f"Total {total_disk} bytes."
+                "🏥 <b>HEALTH ALERT</b>\nDisk usage is elevated!\n"
+                f"Total: <code>{total_disk} bytes</code>"
             )
 
         payload = {

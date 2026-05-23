@@ -22,20 +22,35 @@ class InstitutionalMessageFormatter:
 
     @staticmethod
     def format_trade_execution_html(data: Dict[str, Any]) -> str:
-        """Telegram-safe HTML trade report."""
+        """Telegram-safe HTML trade report with enhanced aesthetics."""
         status = str(data.get("status") or data.get("execution_status") or "SUCCESS").upper()
+        
+        # Emoji mapping for status
+        status_emoji = {
+            "SUCCESS": "✅",
+            "EXECUTED": "✅",
+            "FILLED": "🎯",
+            "FAILED": "❌",
+            "ERROR": "🚨",
+            "REJECTED": "🚫",
+            "SKIPPED": "⏭️",
+            "PAPER": "📝",
+            "DRY_RUN": "🧪",
+        }.get(status, "🔔")
+
         status_labels = {
             "SUCCESS": "TRADE CONFIRMED",
             "EXECUTED": "TRADE CONFIRMED",
-            "FILLED": "TRADE CONFIRMED",
+            "FILLED": "ORDER FILLED",
             "FAILED": "TRADE FAILED",
-            "ERROR": "TRADE FAILED",
+            "ERROR": "SYSTEM ERROR",
             "REJECTED": "TRADE REJECTED",
-            "SKIPPED": "TRADE SKIPPED",
+            "SKIPPED": "SIGNAL SKIPPED",
             "PAPER": "PAPER TRADE RECORDED",
-            "DRY_RUN": "DRY RUN RECORDED",
+            "DRY_RUN": "DRY RUN EXECUTED",
         }
         title = status_labels.get(status, "TRADE SIGNAL PROCESSED")
+        
         reasons = [
             data.get("reason_1", "Pattern alignment detected"),
             data.get("reason_2", "Liquidity depth sufficient"),
@@ -44,22 +59,23 @@ class InstitutionalMessageFormatter:
         reason_lines = "\n".join(f"• {_html(reason)}" for reason in reasons if reason)
 
         lines = [
-            f"<b>{_html(title)}</b>",
+            f"{status_emoji} <b>{_html(title)}</b>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"<b>Status</b>: <code>{_html(status)}</code>",
+            f"<b>Market</b>: <code>{_html(data.get('ticker', 'UNKNOWN'))}</code>",
+            f"<b>Action</b>: <b>{_html(data.get('side', 'N/A'))}</b>",
+            "───────────────────",
+            f"<b>AI Prob</b>: <code>{_fmt_number(data.get('probability'), 2)}</code>",
+            f"<b>Kelly</b>  : <code>{_fmt_number(data.get('kelly_pct'), 1)}%</code>",
+            f"<b>Regime</b> : <code>{_html(data.get('regime', 'STABLE'))}</code>",
+            "───────────────────",
+            f"<b>Execution</b>: <code>{_html(data.get('path', 'PASSIVE_MAKER'))}</code>",
+            f"<b>Slippage</b> : <code>{_fmt_number(data.get('slippage_bps'), 2)} bps</code>",
             "",
-            f"Status: <b>{_html(status)}</b>",
-            f"Market: <code>{_html(data.get('ticker', 'UNKNOWN'))}</code>",
-            f"Direction: <b>{_html(data.get('side', 'N/A'))}</b>",
-            f"Sentiment: <code>{_html(data.get('sentiment', 'NEUTRAL'))}</code>",
-            f"Probability: <code>{_fmt_number(data.get('probability'), 2)}</code>",
-            f"Kelly Allocation: <code>{_fmt_number(data.get('kelly_pct'), 1)}%</code>",
-            f"Regime: <code>{_html(data.get('regime', 'STABLE'))}</code>",
-            f"Execution: <code>{_html(data.get('path', 'PASSIVE_MAKER'))}</code>",
-            f"Slippage Est: <code>{_fmt_number(data.get('slippage_bps'), 2)}bps</code>",
-            "",
-            "<b>Reasoning</b>",
+            "<b>💡 Rationale</b>",
             reason_lines,
-            "",
-            f"Trade ID: <code>#{_html(data.get('trade_id', 'N/A'))}</code>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"ID: <code>#{_html(data.get('trade_id', 'N/A'))}</code>",
         ]
         return "\n".join(lines).strip()
 
@@ -96,25 +112,35 @@ def _fmt_signal_html(s) -> str:
 
 def format_scan_report_html(result) -> str:
     sentiment_data = getattr(result, "aggregate_sentiment", {"sentiment": "NEUTRAL", "bullish_pct": 50})
-    sent_label = sentiment_data.get("sentiment", "NEUTRAL")
+    sent_label = sentiment_data.get("label", "NEUTRAL")
     bull_pct = sentiment_data.get("bullish_pct", 50)
+
+    # Visual bar for sentiment
+    bar_len = 10
+    bull_chars = int(round(bull_pct / 100 * bar_len))
+    bar = "🟢" * bull_chars + "🔴" * (bar_len - bull_chars)
 
     parts = [
         f"📊 <b>QUANT MARKET SCAN</b> — <code>{result.total_markets_scanned}</code> markets",
-        f"🌍 <b>Market Feeling</b>: <code>{sent_label}</code> ({bull_pct:.1f}% bull)\n"
+        f"🌍 <b>Market Feeling</b>: <code>{sent_label}</code> ({bull_pct:.1f}% bull)",
+        f"<code>{bar}</code>",
+        ""
     ]
 
     if hasattr(result, "winning_bets") and result.winning_bets:
         parts.append("💎 <b>TOP ALPHA OPPORTUNITIES</b>")
+        parts.append("───────────────────")
         for s in result.winning_bets[:3]:
             parts.append(_fmt_signal_html(s))
             parts.append("")
 
     if hasattr(result, "trending_markets") and result.trending_markets:
         parts.append("📈 <b>TRENDING VOLATILITY</b>")
+        parts.append("───────────────────")
         for s in result.trending_markets[:3]:
             parts.append(_fmt_signal_html(s))
             parts.append("")
+
 
     if hasattr(result, "arbitrage_opportunities") and result.arbitrage_opportunities:
         parts.append("💰 <b>ARBITRAGE SIGNALS</b>")

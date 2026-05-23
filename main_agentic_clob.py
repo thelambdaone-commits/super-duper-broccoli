@@ -8,6 +8,7 @@ from bootstrap.factories import build_access_control
 from bootstrap.initializer import prepare_runtime_context
 from bootstrap.lifecycle import BotLifecycle
 from utils.exceptions import QuantFatal
+from utils.local_dependency_loader import normalize_project_path_env
 from utils.localization_sync import apply_backward_compatible_aliases
 from utils.logging_setup import setup_logging
 from utils.telegram_helpers import parse_private_chat_ids
@@ -66,6 +67,7 @@ async def resolve_chat():
     print("Chat resolution complete.")
 
 def main_sync():
+    normalize_project_path_env()
     setup_logging()
     apply_backward_compatible_aliases()
 

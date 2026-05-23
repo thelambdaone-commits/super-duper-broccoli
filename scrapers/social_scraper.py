@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import subprocess
 import json
 from typing import List, Dict, Any
@@ -16,7 +17,19 @@ class SocialScraper:
         """
         Executes snscrape via subprocess to fetch recent tweets.
         """
-        cmd = ["snscrape", "--jsonl", "--max-results", str(limit), "twitter-search", query]
+        # Resolve snscrape from the project root's virtual environment
+        snscrape_bin = "snscrape"
+        try:
+            # Assume project root is the parent of the directory containing this file's parent ('scrapers/')
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            venv_bin = os.path.join(project_root, ".venv", "bin", "snscrape")
+            if os.path.exists(venv_bin):
+                snscrape_bin = venv_bin
+        except Exception:
+            # Fallback to PATH if root resolution fails
+            pass
+
+        cmd = [snscrape_bin, "--jsonl", "--max-results", str(limit), "twitter-search", query]
 
         try:
             process = await asyncio.create_subprocess_exec(

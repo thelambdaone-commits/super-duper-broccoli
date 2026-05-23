@@ -322,18 +322,18 @@ class LobstarMLOpsEngine:
         calib = self.get_calibration_summary()
 
         lines = [
-            "🧠 *MLOPS FEEDBACK LOOP REPORT*",
+            "🧠 <b>MLOPS FEEDBACK LOOP REPORT</b>",
             "───────────────────────────────",
             "",
-            "📊 *DRIFT DETECTION:*",
-            f"  • Total Checks: `{drift['total_checks']}`",
-            f"  • Drift Detected: `{drift['drift_detected']}`",
-            f"  • Critical: `{drift.get('critical', 0)}`",
+            "📊 <b>DRIFT DETECTION :</b>",
+            f"  • Total Checks : <code>{drift['total_checks']}</code>",
+            f"  • Drift Detected : <code>{drift['drift_detected']}</code>",
+            f"  • Critical : <code>{drift.get('critical', 0)}</code>",
             "",
-            "🎯 *CALIBRATION HEALTH:*",
-            f"  • Avg Brier Score: `{calib['avg_brier']:.5f}`",
-            f"  • Retrain Triggered: `{calib['retrain_triggered']}`",
-            f"  • Last Action: `{calib['last_action']}`",
+            "🎯 <b>CALIBRATION HEALTH :</b>",
+            f"  • Avg Brier Score : <code>{calib['avg_brier_score']:.5f}</code>",
+            f"  • Retrain Triggered : <code>{calib['retrain_triggered']}</code>",
+            f"  • Last Action : <code>{calib['last_action']}</code>",
         ]
 
         return "\n".join(lines)

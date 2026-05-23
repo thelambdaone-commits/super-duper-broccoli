@@ -10,9 +10,13 @@ from utils.exceptions import QuantFatal
 logger = logging.getLogger("FeatureStore")
 
 
-FEATURE_STORE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "user_data", "data", "feature_store.duckdb"
+# Prioritize DATA_PATH env var to ensure consistency across components.
+# Default to the repo-local `data/` directory used by the live runtime.
+DEFAULT_DATA_DIR = os.getenv(
+    "DATA_PATH",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"),
 )
+FEATURE_STORE_PATH = os.path.join(DEFAULT_DATA_DIR, "feature_store.duckdb")
 
 
 ALLOWED_TABLES = frozenset({
@@ -52,11 +56,18 @@ class FeatureStore:
         try:
             import duckdb
             try:
+                # Try standard connection (R/W)
                 self._conn = duckdb.connect(self.db_path)
             except duckdb.IOException as e:
                 if "lock" in str(e).lower():
-                    logger.warning(f"⚠️ DuckDB lock conflict on {self.db_path}. Falling back to in-memory database (:memory:) to prevent crashes...")
-                    self._conn = duckdb.connect(":memory:")
+                    try:
+                        # Fallback 1: Read-only connection (allows multi-reader)
+                        logger.info(f"🔗 Attempting read-only connection to {self.db_path} due to lock conflict.")
+                        self._conn = duckdb.connect(self.db_path, read_only=True)
+                    except Exception as e2:
+                        # Fallback 2: In-memory (prevent crash)
+                        logger.warning(f"⚠️ DuckDB lock conflict on {self.db_path} and read-only failed. Falling back to in-memory database (:memory:): {e2}")
+                        self._conn = duckdb.connect(":memory:")
                 else:
                     raise
             self._conn.execute("SET memory_limit = '2GB'")

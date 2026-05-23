@@ -16,14 +16,14 @@ def format_execution_notification(signal: dict[str, Any], result: dict[str, Any]
     price = float(result.get("price", result.get("target_price", 0.0)) or 0.0)
 
     lines = [
-        f"{status_emoji} *Trade Executed*",
-        f"• *Ticker* : `{ticker}`",
-        f"• *Side* : `{side}`",
-        f"• *Strategy* : `{strategy}`",
-        f"• *Requested* : `{requested_qty:.2f}`",
-        f"• *Filled* : `{filled_qty:.2f}` @ `{execution_price:.4f}`",
-        f"• *Notional* : `{notional_usd:.2f} USDC`",
-        f"• *Mode* : `{execution_mode}`",
+        f"{status_emoji} <b>Trade Executed</b>",
+        f"• <b>Ticker</b> : <code>{ticker}</code>",
+        f"• <b>Side</b> : <code>{side}</code>",
+        f"• <b>Strategy</b> : <code>{strategy}</code>",
+        f"• <b>Requested</b> : <code>{requested_qty:.2f}</code>",
+        f"• <b>Filled</b> : <code>{filled_qty:.2f}</code> @ <code>{execution_price:.4f}</code>",
+        f"• <b>Notional</b> : <code>{notional_usd:.2f} USDC</code>",
+        f"• <b>Mode</b> : <code>{execution_mode}</code>",
     ]
 
     if strategy == "TWAP":
@@ -35,20 +35,20 @@ def format_execution_notification(signal: dict[str, Any], result: dict[str, Any]
         true_completion_rate = float(result.get("true_completion_rate", 0.0) or 0.0)
         lines.extend(
             [
-                f"• *Tranches* : `{slices_filled}/{slices_attempted}`",
-                f"• *Completion Réelle* : `{true_completion_rate:.2%}`",
-                f"• *PR Réalisé* : `{realized_pr:.2%}`",
-                f"• *Volume Moyen Observé* : `{avg_market_volume:,.2f}`",
-                f"• *Limitation Vol.* : `{capped_events}`",
+                f"• <b>Tranches</b> : <code>{slices_filled}/{slices_attempted}</code>",
+                f"• <b>Completion Réelle</b> : <code>{true_completion_rate:.2%}</code>",
+                f"• <b>PR Réalisé</b> : <code>{realized_pr:.2%}</code>",
+                f"• <b>Volume Moyen Observé</b> : <code>{avg_market_volume:,.2f}</code>",
+                f"• <b>Limitation Vol.</b> : <code>{capped_events}</code>",
             ]
         )
 
     if result.get("execution_preference") == "PASSIVE_ONLY":
-        lines.append("• *Mode d'exécution* : `PASSIVE_ONLY`")
+        lines.append("• <b>Mode d'exécution</b> : <code>PASSIVE_ONLY</code>")
 
     if strategy == "TWAP" and int(result.get("volume_capped_events", 0)) > 0:
         lines.append("")
-        lines.append("_L’exécution a été ralentie pour respecter le Participation Rate._")
+        lines.append("<i>L’exécution a été ralentie pour respecter le Participation Rate.</i>")
 
     return "\n".join(lines)
 
@@ -63,25 +63,25 @@ def format_cognitive_decision_notification(decision: dict[str, Any], ticker: str
 
     reason = str(decision.get("reason") or "No reason provided")
     lines = [
-        "🧠 *Décision Lobstar Cognitive Brain*",
-        f"• *Ticker* : `{ticker}`",
-        f"• *Verdict* : `{decision.get('action', 'UNKNOWN')}`",
-        f"• *Régime CLOB* : `{microstructure_regime}`",
-        f"• *Score Liquidité* : `{observed_liquidity_score:.2f}/1.00`",
-        f"• *Spread* : `{spread_bps:.2f} bps`",
-        f"• *Order Imbalance* : `{order_imbalance:+.4f}`",
+        "🧠 <b>Décision Lobstar Cognitive Brain</b>",
+        f"• <b>Ticker</b> : <code>{ticker}</code>",
+        f"• <b>Verdict</b> : <code>{decision.get('action', 'UNKNOWN')}</code>",
+        f"• <b>Régime CLOB</b> : <code>{microstructure_regime}</code>",
+        f"• <b>Score Liquidité</b> : <code>{observed_liquidity_score:.2f}/1.00</code>",
+        f"• <b>Spread</b> : <code>{spread_bps:.2f} bps</code>",
+        f"• <b>Order Imbalance</b> : <code>{order_imbalance:+.4f}</code>",
     ]
 
     if abs(take_profit_bias) > 0.0 or abs(stop_loss_bias) > 0.0:
         lines.extend(
             [
-                "⚡ *Ajustements Microstructure* :",
-                f"  └ TP Bias : `{take_profit_bias:+.2f} bps`",
-                f"  └ SL Bias : `{stop_loss_bias:+.2f} bps`",
+                "⚡ <b>Ajustements Microstructure</b> :",
+                f"  └ TP Bias : <code>{take_profit_bias:+.2f} bps</code>",
+                f"  └ SL Bias : <code>{stop_loss_bias:+.2f} bps</code>",
             ]
         )
 
-    lines.append(f"• *Raison* : _{reason}_")
+    lines.append(f"• <b>Raison</b> : <i>{reason}</i>")
     return "\n".join(lines)
 
 
@@ -104,29 +104,29 @@ def format_daily_tca_report(summary: dict[str, Any], as_of_utc: datetime | None 
     )[:3]
 
     lines = [
-        "📊 *Daily TCA Report*",
-        f"• *As of* : `{as_of.strftime('%Y-%m-%d %H:%M UTC')}`",
-        f"• *Source* : `{metrics_path or 'execution_metrics.jsonl'}`",
+        "📊 <b>Daily TCA Report</b>",
+        f"• <b>As of</b> : <code>{as_of.strftime('%Y-%m-%d %H:%M UTC')}</code>",
+        f"• <b>Source</b> : <code>{metrics_path or 'execution_metrics.jsonl'}</code>",
         "──────────────",
-        f"• *Total Orders* : `{total_orders}`",
-        f"• *Total Volume* : `{total_volume:,.2f} USDC`",
-        f"• *True Completion* : `{true_completion_rate:.2%}`",
-        f"• *Avg Slippage* : `{avg_slippage_bps:+.2f} bps`",
-        f"• *Volume Capped Ratio* : `{volume_capped_ratio:.2%}`",
-        f"• *TWAP Orders* : `{twap_orders}`",
+        f"• <b>Total Orders</b> : <code>{total_orders}</code>",
+        f"• <b>Total Volume</b> : <code>{total_volume:,.2f} USDC</code>",
+        f"• <b>True Completion</b> : <code>{true_completion_rate:.2%}</code>",
+        f"• <b>Avg Slippage</b> : <code>{avg_slippage_bps:+.2f} bps</code>",
+        f"• <b>Volume Capped Ratio</b> : <code>{volume_capped_ratio:.2%}</code>",
+        f"• <b>TWAP Orders</b> : <code>{twap_orders}</code>",
     ]
 
     if top_assets:
         lines.append("──────────────")
-        lines.append("• *Top Assets*")
+        lines.append("• <b>Top Assets</b>")
         for asset, data in top_assets:
             asset_volume = float(data.get("total_volume_usd", 0.0) or 0.0)
             asset_completion = float(data.get("true_completion_rate", 0.0) or 0.0)
             asset_slippage = float(data.get("avg_slippage_bps", 0.0) or 0.0)
             lines.append(
-                f"  └ `{asset}`: `{asset_volume:,.2f} USDC` | `{asset_completion:.2%}` | `{asset_slippage:+.2f} bps`"
+                f"  └ <code>{asset}</code>: <code>{asset_volume:,.2f} USDC</code> | <code>{asset_completion:.2%}</code> | <code>{asset_slippage:+.2f} bps</code>"
             )
 
     lines.append("──────────────")
-    lines.append("_Generated from JSONL TCA metrics._")
+    lines.append("<i>Generated from JSONL TCA metrics.</i>")
     return "\n".join(lines)

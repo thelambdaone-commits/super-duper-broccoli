@@ -5,6 +5,7 @@ import time
 import pytest
 
 from utils.feature_store import FeatureStore
+from utils import feature_store as feature_store_module
 
 
 @pytest.fixture
@@ -23,6 +24,9 @@ def store(db_path: str) -> FeatureStore:
 
 
 class TestFeatureStoreSchema:
+    def test_default_feature_store_path_targets_repo_data_dir(self) -> None:
+        assert feature_store_module.FEATURE_STORE_PATH.endswith("/data/feature_store.duckdb")
+
     def test_init_creates_tables(self, store: FeatureStore) -> None:
         stats = store.get_stats()
         assert "market_microstructure" in stats

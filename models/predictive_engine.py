@@ -47,6 +47,15 @@ class PolymarketPredictiveEngine:
             if allow_mock_predictions is None
             else allow_mock_predictions
         )
+
+        # SECURITY: Mode guard to prevent random mock trades in real-capital modes
+        if self.allow_mock_predictions:
+            mode = os.getenv("EXECUTION_MODE", "PAPER").upper()
+            is_real = os.getenv("REAL", "false").lower() == "true"
+            if is_real or mode in ("PROD", "SHADOW"):
+                logger.warning("🚨 [SECURITY] Simulated predictive gate FORCE-DISABLED for live mode: %s", mode)
+                self.allow_mock_predictions = False
+
         self._inference_count = 0
         self._hybrid_model: Optional[Any] = None
 

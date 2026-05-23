@@ -30,18 +30,19 @@ class TelegramMessageFormatter:
         kelly = float(signal.get("kelly", 0.0))
 
         return (
-            "<b>🚨 QUANT SIGNAL</b>\n"
-            "───────────────────\n"
+            "<b>🚨 QUANT SIGNAL DETECTED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             f"Asset: <code>{ticker}</code>\n"
             f"Action: {action}\n"
-            f"Regime: <code>{regime}</code>\n"
             "───────────────────\n"
-            "<b>Probabilistic Edge:</b>\n"
+            "<b>Probabilistic Edge</b>\n"
             f"• Market: <code>{p_market:.1%}</code>\n"
             f"• AI Prob: <code>{p_real:.1%}</code>\n"
             f"• Alpha: <b>{edge:+.1%}</b>\n"
             "───────────────────\n"
-            f"<b>Risk:</b> Kelly Size <code>{kelly:.1%}</code>"
+            f"<b>Risk:</b> Kelly Size <code>{kelly:.1%}</code>\n"
+            f"<b>Regime:</b> <code>{regime}</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
 
     def format_risk_alert_html(self, alert: Mapping[str, Any]) -> str:

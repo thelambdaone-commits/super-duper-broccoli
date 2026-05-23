@@ -103,18 +103,18 @@ class ApiKeyNotifier:
         if not missing:
             return ""
 
-        lines = ["⚠️ *CREDENTIALS ALERT*\n"]
+        lines = ["⚠️ <b>CREDENTIALS ALERT</b>\n"]
         if critical:
-            lines.append("🔴 *CRITICAL keys missing (bot may fail):*")
+            lines.append("🔴 <b>CRITICAL keys missing (bot may fail) :</b>")
             for key in critical:
-                lines.append(f"  • `{key}`")
+                lines.append(f"  • <code>{key}</code>")
         non_critical = [k for k in missing if k not in critical]
         if non_critical:
-            lines.append("\n🟡 *Optional keys missing:*")
+            lines.append("\n🟡 <b>Optional keys missing :</b>")
             for key in non_critical:
-                lines.append(f"  • `{key}`")
+                lines.append(f"  • <code>{key}</code>")
 
-        lines.append("\n_Update your `.env` or Vault configuration._")
+        lines.append("\n<i>Update your .env or Vault configuration.</i>")
         return "\n".join(lines)
 
 

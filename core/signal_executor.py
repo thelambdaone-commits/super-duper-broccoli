@@ -127,6 +127,19 @@ async def _execute_guarded(
     if price <= 0:
         return {"status": "SKIPPED", "reason": "Invalid price"}
 
+    # --- LOBSTAR V2: PRE-VALIDATION NORMALIZATION ---
+    # We must normalize size BEFORE checking risk/reserving capital,
+    # because Polymarket might increase the size to meet min_notional.
+    normalized_size = size
+    normalized_price = price
+    try:
+        if freqai and hasattr(freqai, "normalize_and_validate"):
+            normalized_size, normalized_price = freqai.normalize_and_validate(ticker, price, size)
+            logger.debug(f"📐 Size normalized for {ticker}: {size} -> {normalized_size}")
+    except Exception as e:
+        logger.warning(f"📐 Normalization failed for {ticker}: {e}")
+        return {"status": "SKIPPED", "reason": f"Normalization rejection: {e}"}
+
     # Slippage Gate: reject when the live book is meaningfully worse than the signal.
     try:
         if str(mode).upper() != "REPLAY" and freqai and hasattr(freqai, "client") and hasattr(freqai.client, "get_order_book"):
@@ -159,8 +172,8 @@ async def _execute_guarded(
         logger.debug(f"Slippage check bypassed: {exc}")
 
     report_data = {
-        "ticker": ticker, "side": side, "price": price,
-        "size": size, "executed_size": 0.0, "probability": confidence,
+        "ticker": ticker, "side": side, "price": normalized_price,
+        "size": normalized_size, "executed_size": 0.0, "probability": confidence,
         "kelly_pct": sizing.get("kelly_pct", 0), "regime": regime,
         "path": "PASSIVE_MAKER" if executor else "DIRECT_CLOB",
         "trade_id": "N/A", "status": "PENDING",
@@ -175,7 +188,7 @@ async def _execute_guarded(
         if store:
             try:
                 store.record_decision(
-                    mode=mode, ticker=ticker, side=side, price=price, sized=size,
+                    mode=mode, ticker=ticker, side=side, price=normalized_price, sized=normalized_size,
                     executed_size=0.0, kelly_pct=sizing.get("kelly_pct", 0.0),
                     regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
                     authorized=True, reason="REPLAY_SKIP_EXECUTION",
@@ -187,48 +200,18 @@ async def _execute_guarded(
     if store:
         try:
             store.record_signal(
-                source=signal_source, ticker=ticker, side=side, price=price,
-                size=size, confidence=confidence, regime_label=regime,
+                source=signal_source, ticker=ticker, side=side, price=normalized_price,
+                size=normalized_size, confidence=confidence, regime_label=regime,
             )
         except Exception as e:
             logger.error(f"Failed to record signal: {e}")
 
-    # ALWAYS RECORD TO PAPER FOR BENCHMARKING (User request: concurrent logic)
-    # We record paper even in PROD mode to track "theoretical" performance vs real fills
-    paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
-    try:
-        ledger.record_paper_order(
-            ticker=ticker, side=side, price=price, size=size,
-            confidence=confidence, regime_label=regime, signal_source=signal_source,
-            tenant_wallet=tenant_wallet,
-        )
-        if risk and mode == "PAPER":
-            risk.book_exposure(ticker, size, side)
-    except Exception as e:
-        logger.error(f"Concurrent Paper recording failed: {e}")
-
-    if mode == "PAPER":
-        report_data["status"] = "SUCCESS"
-        report_data["executed_size"] = size
-        report_data["trade_id"] = paper_order_id
-        if store:
-            try:
-                store.record_decision(
-                    mode=mode, ticker=ticker, side=side, price=price, sized=size,
-                    executed_size=size, kelly_pct=sizing.get("kelly_pct", 0.0),
-                    regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
-                    authorized=True, reason="Paper order recorded",
-                )
-            except Exception as e:
-                logger.error(f"Failed to record paper decision: {e}")
-        return report_data
-
-    # PROD / SHADOW Logic
+    # PROD / SHADOW / PAPER Logic: validate risk before recording anything
     validation = ledger.validate_and_reserve(
         ticker=ticker,
         side=side,
-        limit_price=price,
-        requested_size=size,
+        limit_price=normalized_price,
+        requested_size=normalized_size,
     )
     if not validation["authorized"]:
         report_data["status"] = "FAILED"
@@ -236,13 +219,43 @@ async def _execute_guarded(
         if store:
             try:
                 store.record_decision(
-                    mode=mode, ticker=ticker, side=side, price=price, sized=size,
+                    mode=mode, ticker=ticker, side=side, price=normalized_price, sized=normalized_size,
                     executed_size=0.0, kelly_pct=sizing.get("kelly_pct", 0.0),
                     regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
                     authorized=False, reason=validation["reason"],
                 )
             except Exception as e:
                 logger.error(f"Failed to record auth-failed decision: {e}")
+        return report_data
+
+    # Now authorized: record to paper and proceed
+    final_size = validation["size"]
+    paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
+    try:
+        ledger.record_paper_order(
+            ticker=ticker, side=side, price=normalized_price, size=final_size,
+            confidence=confidence, regime_label=regime, signal_source=signal_source,
+            tenant_wallet=tenant_wallet,
+        )
+        if risk and mode == "PAPER":
+            risk.book_exposure(ticker, final_size, side)
+    except Exception as e:
+        logger.error(f"Concurrent Paper recording failed: {e}")
+
+    if mode == "PAPER":
+        report_data["status"] = "SUCCESS"
+        report_data["executed_size"] = final_size
+        report_data["trade_id"] = paper_order_id
+        if store:
+            try:
+                store.record_decision(
+                    mode=mode, ticker=ticker, side=side, price=normalized_price, sized=final_size,
+                    executed_size=final_size, kelly_pct=sizing.get("kelly_pct", 0.0),
+                    regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
+                    authorized=True, reason="Paper order recorded",
+                )
+            except Exception as e:
+                logger.error(f"Failed to record paper decision: {e}")
         return report_data
 
     final_size = validation["size"]

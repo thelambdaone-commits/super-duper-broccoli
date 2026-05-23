@@ -131,10 +131,13 @@ class PolymarketWalletManager:
                 eoa_usdc_e = await get_erc20_balance(self.usdc_polygon_contract, wallet_address)
 
                 # Query Proxy balances
-                if proxy_address:
+                if proxy_address and proxy_address.lower() != wallet_address.lower():
                     proxy_pusd = await get_erc20_balance(self.pusd_contract, proxy_address)
                     proxy_usdc_native = await get_erc20_balance(self.usdc_native_contract, proxy_address)
                     proxy_usdc_e = await get_erc20_balance(self.usdc_polygon_contract, proxy_address)
+                elif proxy_address and proxy_address.lower() == wallet_address.lower():
+                    # If same address, just fetch pUSD as it wasn't counted in direct USDC
+                    proxy_pusd = await get_erc20_balance(self.pusd_contract, wallet_address)
                 else:
                     # Fallback to EOA if no proxy is configured
                     proxy_pusd = await get_erc20_balance(self.pusd_contract, wallet_address)
@@ -318,19 +321,19 @@ class PolymarketWalletManager:
         ]
 
         if proxy_address:
-            lines.append(f"🛡️ <b>Proxy</b>: <code>{safe_proxy_address}</code>")
+            lines.append(f"🛡️ <b>Proxy Wallet</b>: <code>{safe_proxy_address}</code>")
 
         lines.extend([
             "",
-            f"💵 <b>USDC Direct</b>: <code>{usdc_direct:.2f}</code>",
-            f"🛡️ <b>pUSD Proxy</b>: <code>{usdc_proxy:.2f}</code>",
-            f"💰 <b>Total Cap</b>: <b>{total_capital:.2f} $</b>",
+            f"💵 <b>USDC (Direct)</b>: <code>{usdc_direct:.2f}</code>",
+            f"🛡️ <b>pUSD (Polymarket)</b>: <code>{usdc_proxy:.2f}</code>",
+            f"💰 <b>Total Balance</b>: <b>{total_capital:.2f} $</b>",
             f"👛 <b>Gas (POL)</b>: <code>{float(soldes.get('eth_balance', 0.0)):.4f}</code>",
             "───────────────────"
         ])
 
         if not proxy_address:
-            lines.append("⚠️ <i>No Proxy Wallet set. Balance tracking limited.</i>")
+            lines.append("💡 <i>Hint: Use <code>/import</code> or check your EOA-Proxy link to enable full pUSD tracking.</i>")
             lines.append("───────────────────")
 
         text = "\n".join(lines)

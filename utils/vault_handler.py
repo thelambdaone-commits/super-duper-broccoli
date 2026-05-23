@@ -2,8 +2,6 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterable
-import hvac
-from hvac.exceptions import VaultError
 
 from utils.exceptions import QuantFatal
 from utils.credential_manager import CredentialManager, POLYMARKET_WALLET_PATH
@@ -136,7 +134,7 @@ class VaultHandler:
 
         self.vault_addr: str = os.getenv("VAULT_ADDR", "http://127.0.0.1:8200")
         self.vault_token: str | None = os.getenv("VAULT_TOKEN")
-        self._client: hvac.Client | None = None
+        self._client: Any = None
         self.secret_source = _normalize_secret_source(os.getenv("SECRET_SOURCE"))
         self.use_vault = self._should_use_vault()
         self.chat_id: str | None = os.getenv("CHAT_ID")
@@ -152,6 +150,8 @@ class VaultHandler:
         return self.vault_addr.lower() != "false" and bool(self.vault_token)
 
     def _connect(self) -> None:
+        import hvac
+        from hvac.exceptions import VaultError
         try:
             self._client = hvac.Client(url=self.vault_addr, token=self.vault_token)
             if not self._client.is_authenticated():
@@ -317,7 +317,10 @@ class VaultHandler:
             self.valider_initialisation(validated_secrets)
             return validated_secrets
 
-        except (VaultError, KeyError) as e:
+        except (Exception, KeyError) as e:
+            from hvac.exceptions import VaultError
+            if not isinstance(e, (VaultError, KeyError)):
+                raise e
             if self._client:
                 self._client.logout()
             raise QuantFatal(f"Secret extraction failed: {e}")
@@ -393,7 +396,10 @@ class VaultHandler:
             )
             logger.info("%s optional credential(s) patched into Vault.", len(filtered))
             return sorted(filtered)
-        except VaultError as e:
+        except Exception as e:
+            from hvac.exceptions import VaultError
+            if not isinstance(e, VaultError):
+                raise e
             raise QuantFatal(f"Secret patch failed: {e}")
         finally:
             if self._client:
@@ -408,6 +414,13 @@ class VaultHandler:
             "CLOB_PRIVATE_KEY": private_key,
         }
         logger.info("Stored ephemeral session wallet for chat_id=%s address=%s...%s", chat_key, public_address[:6], public_address[-4:])
+
+    def set_user_proxy(self, chat_id: int | str, proxy_address: str) -> None:
+        """Set or update the proxy wallet address for a session wallet."""
+        chat_key = str(chat_id)
+        if chat_key in VaultHandler._session_wallets:
+            VaultHandler._session_wallets[chat_key]["proxy_wallet"] = proxy_address
+            logger.info("Associated proxy %s with session wallet for chat_id=%s", proxy_address[:10], chat_key)
 
     def obtenir_wallet_session(self, chat_id: int | str) -> Dict[str, str] | None:
         """Return an in-memory session wallet without touching disk."""

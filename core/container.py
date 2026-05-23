@@ -67,7 +67,7 @@ class ServiceContainer:
         self.risk.rehydrate_from_ledger(self.ledger)
 
         # Determine store path
-        default_data_dir = os.getenv("DATA_PATH", "user_data/data")
+        default_data_dir = os.getenv("DATA_PATH", "data")
         api_store_path = os.getenv(
             "API_FEATURE_STORE_PATH",
             os.path.join(default_data_dir, "feature_store.duckdb"),

@@ -16,7 +16,7 @@ class ClobCredentialDeriver:
             host=self.host,
             key=self.private_key,
             chain_id=137,
-            signature_type=2,
+            signature_type=3,
         )
         creds = client.create_or_derive_api_key()
         return {

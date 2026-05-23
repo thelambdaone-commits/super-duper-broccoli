@@ -16,5 +16,5 @@ def test_wallet_cockpit_layout_is_telegram_html_and_escapes_values() -> None:
     assert "<code>default &lt;prod&gt;</code>" in text
     assert "<code>0xabc&amp;def</code>" in text
     assert "<code>0xproxy&lt;bad&gt;</code>" in text
-    assert "💰 <b>Total Cap</b>: <b>16.74 $</b>" in text
+    assert "💰 <b>Total Balance</b>: <b>16.74 $</b>" in text
     assert "*Polymarket Cockpit*" not in text
