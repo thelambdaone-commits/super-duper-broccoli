@@ -1,7 +1,7 @@
 {
   "version": 1,
   "purpose": "Persistent compact memory for project prompts. Store decisions, gotchas, preferences, and verification notes; never store secrets or raw private data.",
-  "updated_at": "2026-05-16T16:48:26.626306",
+  "updated_at": "2026-05-23T17:05:00.000000",
   "entries": [
     {
       "timestamp": 1778889600,
@@ -10,11 +10,7 @@
       "component": "agent_context",
       "summary": "Future prompts should use the lowest-token path: AGENTS.md, project_memory, project_contexts, and Graphify queries before broad file reads or full-repo dumps.",
       "details": "Graphify is installed as graphifyy and graphify-out contains the local project graph. External agent frameworks are reference/context tools unless a bounded adapter and tests are added.",
-      "tags": [
-        "context",
-        "memory",
-        "token_saving"
-      ],
+      "tags": ["context", "memory", "token_saving"],
       "source": "initial_setup"
     },
     {
@@ -24,11 +20,7 @@
       "component": "telegram",
       "summary": "Verified Telegram delivery and PM2 bot health on 2026-05-16: fixed core startup indentation, restored signal executor test APIs, made Telegram send raw text by default, isolated API FeatureStore path, and fixed market scan report fallback.",
       "details": "",
-      "tags": [
-        "telegram",
-        "pm2",
-        "health"
-      ],
+      "tags": ["telegram", "pm2", "health"],
       "source": "cli"
     },
     {
@@ -36,14 +28,30 @@
       "date": "2026-05-16T16:48:26.626224",
       "kind": "integration",
       "component": "market_intelligence",
-      "summary": "Added local Python crypto adaptation of seeker-jpg/market-intelligence-platform-app: utils/crypto_market_intelligence.py, CLI, API endpoint /v1/market-intelligence/crypto, context cards, and tests. Classification uses lexical boundaries to avoid short-ticker false positives.",
+      "summary": "Added local Python crypto adaptation of seeker-jpg/market-intelligence-platform-app: utils/crypto_market_intelligence.py, CLI, API endpoint /v1/market-intelligence/crypto, context cards, and tests.",
       "details": "",
-      "tags": [
-        "crypto",
-        "market_intelligence",
-        "python"
-      ],
+      "tags": ["crypto", "market_intelligence"],
       "source": "cli"
+    },
+    {
+      "timestamp": 1779555600.0,
+      "date": "2026-05-23T17:00:00",
+      "kind": "fix",
+      "component": "strategy_selector",
+      "summary": "Baissé les seuils du sélecteur pour accepter les petits paris gagnants: min_liquidity_usdc 25→1, ev_min 0.005→0.001, sigma_relative_max 0.20→0.50",
+      "details": "Le sélecteur rejetait 100% des signaux (0/75). Les market making signals ont des edges faibles qui ne passaient pas les quality filters.",
+      "tags": ["selector", "thresholds", "small_bets"],
+      "source": "manual"
+    },
+    {
+      "timestamp": 1779555601.0,
+      "date": "2026-05-23T17:00:01",
+      "kind": "fix",
+      "component": "docs",
+      "summary": "Créé AGENTS.md symlink (root→docs/internal/AGENTS.md) et docs/troubleshooting.md manquants. Enrichi project_memory.json.",
+      "details": "",
+      "tags": ["docs", "context"],
+      "source": "manual"
     }
   ]
 }

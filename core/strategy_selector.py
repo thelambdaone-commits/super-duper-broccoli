@@ -22,9 +22,9 @@ class StrategySelectionConfig:
     top_k: int = 3
     exploration_rate: float = 0.10
     max_market_exposure_penalty: float = 0.20
-    ev_min: float = float(_s.get("ev_min", 0.005))
-    sigma_relative_max: float = 0.20
-    min_liquidity_usdc: float = 25.0
+    ev_min: float = float(_s.get("ev_min", 0.001))
+    sigma_relative_max: float = 0.50
+    min_liquidity_usdc: float = 1.0
     max_cost: float = float(_s.get("max_cost", 0.04))
     min_time_to_settlement_hours: float = 0.25
     max_time_to_settlement_hours: float = 24.0 * 365.0
@@ -162,7 +162,12 @@ class StrategySelector:
         current_exposure_by_market: Mapping[str, float] | None = None,
         total_capital: float | None = None,
     ) -> list[StrategyScore]:
-        ranked = self.rank(signals, features_by_market, current_exposure_by_market, total_capital=total_capital)
+        import logging
+        logger = logging.getLogger("Selector")
+        signal_list = list(signals)
+        ranked = self.rank(signal_list, features_by_market, current_exposure_by_market, total_capital=total_capital)
+        logger.info(f"🔍 [SELECTOR] {len(signal_list)} signals entered ranker. {len(ranked)} passed quality filters.")
+        
         slots = max(0, int(self.config.max_concurrent_markets) - len(set((current_exposure_by_market or {}).keys())))
         limit = max(0, min(int(self.config.top_k), int(self.config.max_new_positions_per_cycle), slots if slots > 0 else int(self.config.top_k)))
         selected: list[StrategyScore] = []
@@ -180,6 +185,8 @@ class StrategySelector:
             selected_markets.add(score.signal.market_id)
             if group:
                 selected_groups.add(group)
+                
+        logger.info(f"✨ [SELECTOR] {len(selected)} signals finally selected for execution.")
         return selected
 
     def score_signal(
