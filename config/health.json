@@ -1,7 +1,0 @@
-{
-  "binance_staleness_seconds": 3.0,
-  "polymarket_staleness_seconds": 60.0,
-  "memory_warning_mb": 1024,
-  "memory_critical_mb": 1536,
-  "wallet_drift_tolerance_usdc": 0.01
-}

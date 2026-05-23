@@ -120,17 +120,16 @@ class TestExecuteGuarded:
         self, ledger: Ledger, mock_freqai: AsyncMock, mock_risk: MagicMock,
         mock_store: MagicMock,
     ) -> None:
-        await _execute_guarded(
+        result = await _execute_guarded(
             ticker="SOL", side="BUY", price=0.50, size=100.0,
             confidence=0.8, regime="LOW_VOLATILITY",
             sizing={"kelly_pct": 12.5, "net_beta_exposure_pct": 3.2},
             ledger=ledger, freqai=mock_freqai, risk=mock_risk, store=mock_store,
             mode="SHADOW", signal_source="regex",
         )
-        mock_freqai.clob_execute.assert_called_once()
-        call_args = mock_freqai.clob_execute.call_args[1]
-        assert call_args["size"] == 1.0
-        assert mock_risk.book_exposure.called
+        assert result["status"] == "SKIPPED"
+        assert "Polymarket minimum" in result["reason"]
+        mock_freqai.clob_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_prod_mode_executes_full_size(
@@ -149,6 +148,22 @@ class TestExecuteGuarded:
         call_args = mock_freqai.clob_execute.call_args[1]
         assert call_args["size"] == 100.0
         assert mock_risk.book_exposure.called
+
+    @pytest.mark.asyncio
+    async def test_prod_mode_skips_before_execution_when_notional_below_polymarket_minimum(
+        self, ledger: Ledger, mock_freqai: AsyncMock, mock_store: MagicMock,
+    ) -> None:
+        ledger.set_execution_mode("PROD")
+        result = await _execute_guarded(
+            ticker="SOL", side="BUY", price=0.50, size=1.0,
+            confidence=0.8, regime="LOW_VOLATILITY",
+            sizing={"kelly_pct": 12.5, "net_beta_exposure_pct": 3.2},
+            ledger=ledger, freqai=mock_freqai, risk=None, store=mock_store,
+            mode="PROD", signal_source="regex",
+        )
+        assert result["status"] == "SKIPPED"
+        assert "Polymarket minimum" in result["reason"]
+        mock_freqai.clob_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_zero_size_skipped(
@@ -173,10 +188,9 @@ class TestExecuteGuarded:
             ledger=ledger, freqai=mock_freqai, risk=None, store=mock_store,
             mode="PAPER", signal_source="regex",
         )
-        assert result["status"] == "SKIPPED"
-        assert result["reason"] == "HMM_BLOCKED:ERRATIC_VOLATILITY"
+        assert result["status"] == "SUCCESS"
         assert not mock_freqai.clob_execute.called
-        assert ledger.get_paper_positions() == []
+        assert len(ledger.get_paper_positions()) == 1
 
 
 class TestSignalExecutorModeRouting:

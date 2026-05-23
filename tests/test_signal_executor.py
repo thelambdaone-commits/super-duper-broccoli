@@ -134,6 +134,10 @@ class MockLedger:
         self._mode = mode
 
 
+class MockFreqAIWithMinNotional:
+    POLYMARKET_MIN_NOTIONAL = 5.0
+
+
 def _attach_benign_order_book(freqai) -> None:
     freqai.client = MagicMock()
     freqai.client.get_order_book.return_value = {
@@ -263,6 +267,40 @@ class TestExecuteRegexSignal:
         assert "Slippage threshold exceeded" in result["reason"]
         freqai.clob_execute.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_prod_mode_rejects_negative_net_objective_after_fees(self) -> None:
+        ledger = MockLedger(mode="PROD")
+        signal = {"asset": "SOL", "action": "BUY", "price": 0.84, "timestamp": 123}
+        freqai = AsyncMock()
+        freqai.client = MagicMock()
+        freqai.client.get_order_book.return_value = {
+            "bids": [{"price": 0.83}],
+            "asks": [{"price": 0.85}],
+        }
+
+        result = await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
+
+        assert result["status"] == "SKIPPED"
+        assert "expected net profit" in result["reason"]
+        freqai.clob_execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prod_mode_skips_before_execution_when_under_polymarket_minimum(self) -> None:
+        ledger = MockLedger(mode="PROD")
+        signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
+        freqai = AsyncMock()
+        freqai.POLYMARKET_MIN_NOTIONAL = 5.0
+        _attach_benign_order_book(freqai)
+
+        with patch.object(ledger, "validate_and_reserve", return_value={
+            "authorized": True, "size": 1.0, "reason": "ok",
+        }):
+            result = await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
+
+        assert result["status"] == "SKIPPED"
+        assert "Polymarket minimum" in result["reason"]
+        freqai.clob_execute.assert_not_called()
+
 
 class TestExecuteLobstarSignal:
     @pytest.mark.asyncio
@@ -382,4 +420,4 @@ class TestExecuteLobstarSignal:
             signal=signal, ledger=ledger, freqai=freqai, lobstar=lobstar,
         )
 
-        freqai.clob_execute.assert_called_once()
+        freqai.clob_execute.assert_not_called()

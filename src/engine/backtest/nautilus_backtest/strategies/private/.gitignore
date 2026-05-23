@@ -1,0 +1,12 @@
+# Ignore local private files by default. The files below are curated
+# open-source exceptions kept in this historical namespace for import
+# compatibility.
+*
+!.gitignore
+!__init__.py
+!btc_snapshot_model.py
+!passive_pair_accumulation.py
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.log

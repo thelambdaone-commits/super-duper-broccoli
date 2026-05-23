@@ -93,3 +93,30 @@ agents/polymarket_lp_tool/data/
 utils/polymarket_data/data/
 engine/backtest/nautilus_backtest/data/
 agents/polybot/data/
+
+# --- Separation of Runtime, Artifacts, Secrets ---
+secrets/
+runtime/
+artifacts/
+config
+logs
+memory
+models
+ledger.db
+sitecustomize.pyc
+
+# Compatibility symlinks and relocated runtime state
+user_data/data
+user_data/strategies
+user_data/freqaimodels
+user_data/hypernetworks
+data/*.db
+data/*.duckdb
+data/*.duckdb.wal
+data/*.wal
+data/*.enc
+data/*.jsonl
+data/*wallet*
+data/*state*.json
+data/last_broadcast_hashes.json
+data/ml_weights.json

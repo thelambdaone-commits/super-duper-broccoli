@@ -1,0 +1,23 @@
+# Ignore local private files by default. The files below are curated
+# open-source exceptions kept in this historical namespace for import
+# compatibility.
+*
+!.gitignore
+!__init__.py
+!telonex_binance_btc_download.py
+!telonex_btc_5m_late_favorite_chunked_forward_validate.py
+!telonex_btc_5m_microprice_imbalance_chunked_forward_validate.py
+!telonex_btc_5m_pair_arbitrage_chunked_forward_validate.py
+!telonex_btc_5m_passive_pair_accumulation_search.py
+!telonex_btc_5m_passive_pair_chunked_forward_validate.py
+!telonex_btc_5m_passive_pair_forward_validate.py
+!telonex_btc_5m_polymarket_download.py
+!telonex_btc_5m_snapshot_model_research.py
+!telonex_btc_5m_snapshot_model_runner_validate.py
+!telonex_btc_5m_snapshot_model_walkforward.py
+!telonex_general_market_value_rebound_search.py
+!telonex_resolved_sports_research.py
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.log

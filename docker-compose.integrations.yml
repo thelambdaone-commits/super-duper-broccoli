@@ -1,0 +1,93 @@
+version: "3.9"
+
+# Intégrations optionnelles pour Quant Agentic Trading Core
+# Usage: docker compose -f docker-compose.integrations.yml up -d clodds polybot
+# Ces services tournent en sidecars et communiquent via REST / MCP / WebSocket
+
+services:
+  # ── CloddsBot (alsk1992/CloddsBot) ──
+  # AI trading terminal — 119 skills, 21 messaging channels, 10 prediction market platforms
+  # Communication: MCP (port 18789) + REST API
+  clodds:
+    image: node:22-alpine
+    container_name: clodds-bot
+    ports:
+      - "18789:18789"
+    working_dir: /app
+    volumes:
+      - clodds_data:/app/data
+    environment:
+      - NODE_ENV=production
+      - POLY_API_KEY=${CLODDS_POLY_API_KEY:-}
+      - POLY_API_SECRET=${CLODDS_POLY_API_SECRET:-}
+      - POLY_API_PASSPHRASE=${CLODDS_POLY_API_PASSPHRASE:-}
+      - POLY_PRIVATE_KEY=${CLODDS_POLY_PRIVATE_KEY:-}
+      - POLY_FUNDER_ADDRESS=${CLODDS_POLY_FUNDER_ADDRESS:-}
+      - ANTHROPIC_API_KEY=${CLODDS_ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${CLODDS_OPENAI_API_KEY:-}
+    command: >
+      sh -c "npm install -g clodds && clodds mcp --port 18789"
+    restart: unless-stopped
+    networks:
+      - quant-agentic-net
+    profiles:
+      - full
+      - clodds
+
+  # ── polybot (ent0n29/polybot) — executor service ──
+  # Java/Spring Boot order execution engine (port 8080)
+  # Communication: REST API
+  polybot-executor:
+    image: eclipse-temurin:21-jdk
+    container_name: polybot-executor
+    ports:
+      - "8080:8080"
+    working_dir: /app
+    volumes:
+      - polybot_data:/app/data
+    environment:
+      - POLY_API_KEY=${POLYBOT_POLY_API_KEY:-}
+      - POLY_API_SECRET=${POLYBOT_POLY_API_SECRET:-}
+      - POLY_API_PASSPHRASE=${POLYBOT_POLY_API_PASSPHRASE:-}
+      - POLY_PRIVATE_KEY=${POLYBOT_POLY_PRIVATE_KEY:-}
+      - SPRING_PROFILES_ACTIVE=executor
+    command: >
+      sh -c "java -jar /app/polybot-executor.jar"
+    restart: unless-stopped
+    networks:
+      - quant-agentic-net
+    profiles:
+      - full
+      - polybot
+
+  # ── Redpanda Kafka (for polybot analytics pipeline) ──
+  redpanda:
+    image: redpandadata/redpanda:v24.2.11
+    container_name: polybot-redpanda
+    ports:
+      - "9092:9092"
+    command:
+      - redpanda
+      - start
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+    networks:
+      - quant-agentic-net
+    profiles:
+      - full
+      - polybot
+
+networks:
+  quant-agentic-net:
+    driver: bridge
+
+volumes:
+  clodds_data:
+  polybot_data:

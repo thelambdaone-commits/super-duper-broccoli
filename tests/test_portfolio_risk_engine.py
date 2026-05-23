@@ -196,6 +196,19 @@ class TestComputePositionSize:
         )
         assert result["capital_at_risk"] <= engine.max_real_notional_usdc + 1e-9
 
+    def test_small_live_account_is_raised_to_minimum_viable_trade(self, engine: PortfolioRiskEngine) -> None:
+        engine.ledger.get_execution_mode.return_value = "PROD"
+        engine.ledger.get_capital_summary.return_value = {
+            "total_capital": 16.0,
+            "available_capital": 16.0,
+        }
+        result = engine.compute_position_size(
+            ticker="SOL", side="BUY", price=0.50,
+            confidence=0.8, regime_label="LOW_VOLATILITY",
+        )
+        assert result["capital_at_risk"] >= 5.25
+        assert result["capital_at_risk"] <= 6.0 + 1e-9
+
     def test_nominal_compute(self, engine: PortfolioRiskEngine) -> None:
         result = engine.compute_position_size(
             ticker="SOL", side="BUY", price=0.50,

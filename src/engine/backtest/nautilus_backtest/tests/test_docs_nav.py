@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DOCS_ROOT = REPO_ROOT / "docs"
+MKDOCS_PATH = REPO_ROOT / "mkdocs.yml"
+DOCS_URL_PREFIX = "/prediction-market-backtesting/"
+README_PATH = REPO_ROOT / "README.md"
+README_DOCS_URL_PREFIX = "https://evan-kolberg.github.io/prediction-market-backtesting/"
+HEADING_RE = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.+?)\s*$", re.MULTILINE)
+
+
+def _slugify(title: str) -> str:
+    normalized = title.strip().casefold()
+    normalized = re.sub(r"[^\w\s-]", "", normalized)
+    normalized = re.sub(r"\s+", "-", normalized)
+    return normalized.strip("-")
+
+
+def _iter_nav_targets(node) -> list[str]:  # type: ignore[no-untyped-def]
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, list):
+        targets: list[str] = []
+        for item in node:
+            targets.extend(_iter_nav_targets(item))
+        return targets
+    if isinstance(node, dict):
+        targets: list[str] = []
+        for value in node.values():
+            targets.extend(_iter_nav_targets(value))
+        return targets
+    return []
+
+
+def _heading_slugs_for_doc(doc_path: Path) -> set[str]:
+    text = doc_path.read_text()
+    return {_slugify(match.group("title")) for match in HEADING_RE.finditer(text)}
+
+
+def _resolve_nav_anchor_target(target: str) -> tuple[Path, str] | None:
+    if "#" not in target:
+        return None
+    if target.startswith(("http://", "https://")):
+        return None
+    if target.startswith(DOCS_URL_PREFIX):
+        doc_slug, _, anchor = target.removeprefix(DOCS_URL_PREFIX).partition("/#")
+        return DOCS_ROOT / f"{doc_slug}.md", anchor
+
+    doc_ref, _, anchor = target.partition("#")
+    if not doc_ref.endswith(".md"):
+        return None
+    return DOCS_ROOT / doc_ref, anchor
+
+
+def _nav_doc_targets(node) -> set[str]:  # type: ignore[no-untyped-def]
+    return {
+        target
+        for target in _iter_nav_targets(node)
+        if isinstance(target, str) and target.endswith(".md")
+    }
+
+
+def test_mkdocs_nav_anchor_targets_exist() -> None:
+    config = yaml.safe_load(MKDOCS_PATH.read_text())
+    nav_targets = _iter_nav_targets(config["nav"])
+
+    for target in nav_targets:
+        if not isinstance(target, str):
+            continue
+        resolved = _resolve_nav_anchor_target(target)
+        if resolved is None:
+            continue
+
+        doc_path, anchor = resolved
+        assert doc_path.exists(), f"missing docs file for nav target: {target}"
+        heading_slugs = _heading_slugs_for_doc(doc_path)
+        assert anchor in heading_slugs, f"missing nav anchor {anchor!r} in {doc_path}"
+
+
+def test_mkdocs_nav_uses_relative_doc_anchors() -> None:
+    config = yaml.safe_load(MKDOCS_PATH.read_text())
+    nav_targets = _iter_nav_targets(config["nav"])
+
+    for target in nav_targets:
+        if not isinstance(target, str) or "#" not in target:
+            continue
+        assert not target.startswith(DOCS_URL_PREFIX), (
+            f"mkdocs nav target should use a relative doc anchor, not an absolute docs URL: {target}"
+        )
+
+
+def test_mkdocs_nav_records_all_docs_pages() -> None:
+    config = yaml.safe_load(MKDOCS_PATH.read_text())
+    nav_targets = _nav_doc_targets(config["nav"])
+
+    for doc_path in sorted(DOCS_ROOT.glob("*.md")):
+        expected_target = doc_path.name
+        assert expected_target in nav_targets, f"missing docs page in mkdocs nav: {expected_target}"
+
+
+def test_root_readme_records_all_docs_and_subheaders() -> None:
+    readme_text = README_PATH.read_text()
+
+    docs_index_url = README_DOCS_URL_PREFIX
+    assert docs_index_url in readme_text, "missing docs index link in root README"
+
+    for doc_path in sorted(DOCS_ROOT.glob("*.md")):
+        if doc_path.stem != "index":
+            page_url = f"{README_DOCS_URL_PREFIX}{doc_path.stem}/"
+            assert page_url in readme_text, f"missing docs page link in root README: {page_url}"
+
+        for match in HEADING_RE.finditer(doc_path.read_text()):
+            level = len(match.group("level"))
+            if level not in {2, 3}:
+                continue
+
+            anchor = _slugify(match.group("title"))
+            stem_segment = "" if doc_path.stem == "index" else f"{doc_path.stem}/"
+            target = f"{README_DOCS_URL_PREFIX}{stem_segment}#{anchor}"
+            assert target in readme_text, f"missing docs heading link in root README: {target}"
+
+
+def test_plotting_docs_distinguish_portfolio_and_comparison_summary_panels() -> None:
+    plotting_text = (DOCS_ROOT / "plotting.md").read_text()
+    normalized = re.sub(r"\s+", " ", plotting_text)
+
+    assert (
+        "The repo now emits summary HTML reports only. Individual per-market HTML report generation has been removed."
+        in normalized
+    )
+    assert (
+        "Per-market drilldown should happen through report panels and tables, not separate generated HTML files."
+        in normalized
+    )
+    for panel in (
+        "`total_equity`",
+        "`total_drawdown`",
+        "`total_rolling_sharpe`",
+        "`total_cash_equity`",
+        "`total_brier_advantage`",
+        "`periodic_pnl`",
+        "`monthly_returns`",
+    ):
+        assert panel in normalized
+    assert (
+        "Add per-market panels like `equity`, `market_pnl`, `yes_price`, and `allocation` only when the basket is small enough"
+        in normalized
+    )
+    assert (
+        "Expected artifacts: - one terminal summary table - one summary HTML report when `MarketReportConfig(summary_report=True)` is set - no per-market HTML files"
+        in normalized
+    )
+
+
+def test_docs_do_not_link_to_removed_main_branch() -> None:
+    for doc_path in sorted(DOCS_ROOT.glob("*.md")):
+        text = doc_path.read_text()
+        assert "blob/main/" not in text, f"stale GitHub blob link in {doc_path}"
+        assert "tree/main/" not in text, f"stale GitHub tree link in {doc_path}"

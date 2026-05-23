@@ -78,6 +78,22 @@ def test_rejects_when_predicted_edge_below_threshold() -> None:
     assert reason.startswith("REJECT_NO_EDGE:")
 
 
+def test_rejects_when_fees_consume_predictive_edge() -> None:
+    engine = FakePredictiveEngine(approved=True, edge=0.02, probability=0.56)
+    service = PredictiveGateService(PredictiveGateConfig(min_edge_threshold=0.01), model_registry=engine)
+
+    signal = {
+        "price": 0.5,
+        "order_type": "MARKET",
+        "timestamp_resolution": time.time() + 3600,
+        "market_features": {"price": [0.5], "volume": [100.0], "bid_depth": [50.0], "ask_depth": [50.0]},
+    }
+    allowed, reason = service.validate_signal(signal)
+
+    assert allowed is False
+    assert reason.startswith("REJECT_NO_NET_EDGE:")
+
+
 def test_simulated_gate_can_accept_on_configured_threshold() -> None:
     service = PredictiveGateService(
         PredictiveGateConfig(allow_simulated_gate=True, min_edge_threshold=0.07, simulated_probability=0.62),

@@ -1,0 +1,2138 @@
+from __future__ import annotations
+
+import asyncio
+import gc
+import os
+import time
+import warnings
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from importlib import import_module
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+from nautilus_trader.adapters.polymarket import POLYMARKET_VENUE
+from nautilus_trader.model.book import OrderBook
+from nautilus_trader.model.currencies import pUSD
+from nautilus_trader.model.data import OrderBookDeltas, TradeTick
+from nautilus_trader.model.enums import AccountType, BookType, OmsType
+
+from prediction_market_extensions._native import replay_merge_plan
+from prediction_market_extensions._native import source_days_for_window_ns
+from prediction_market_extensions._runtime_log import emit_loader_event
+from prediction_market_extensions.adapters.polymarket.fee_model import PolymarketFeeModel
+from prediction_market_extensions.adapters.prediction_market import (
+    HistoricalReplayAdapter,
+    LoadedReplay,
+    ReplayAdapterKey,
+    ReplayCoverageStats,
+    ReplayEngineProfile,
+    ReplayLoadRequest,
+    ReplayWindow,
+)
+from prediction_market_extensions.adapters.prediction_market.backtest_utils import (
+    infer_realized_outcome,
+    infer_realized_outcome_from_metadata,
+)
+from prediction_market_extensions.backtesting._backtest_runtime import _record_timestamp_ns
+from prediction_market_extensions.backtesting._replay_specs import BookReplay
+from prediction_market_extensions.backtesting.data_sources.pmxt import (
+    PMXT_PREFETCH_WORKERS_ENV,
+    RunnerPolymarketPMXTDataLoader as PolymarketPMXTDataLoader,
+)
+from prediction_market_extensions.backtesting.data_sources.pmxt import configured_pmxt_data_source
+from prediction_market_extensions.backtesting.data_sources.telonex import (
+    RunnerPolymarketTelonexBookDataLoader as PolymarketTelonexBookDataLoader,
+)
+from prediction_market_extensions.backtesting.data_sources.telonex import (
+    TELONEX_FULL_BOOK_CHANNEL,
+    configured_telonex_data_source,
+)
+
+REPLAY_MATERIALIZE_WORKERS_ENV = "BACKTEST_REPLAY_MATERIALIZE_WORKERS"
+PMXT_GROUPED_MARKET_CHUNK_SIZE_ENV = "PMXT_GROUPED_MARKET_CHUNK_SIZE"
+DEFAULT_REPLAY_MATERIALIZE_WORKERS = 4
+DEFAULT_PMXT_GROUPED_MARKET_CHUNK_SIZE = 24
+MAX_REPLAY_MATERIALIZE_WORKERS = 16
+
+
+def _release_arrow_memory() -> None:
+    try:
+        pa.default_memory_pool().release_unused()
+    except AttributeError:
+        pass
+
+
+def _unique_tmp_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.monotonic_ns()}")
+
+
+def _resolve_backtest_compat_symbol(name: str, default: Any) -> Any:
+    try:
+        module = import_module(
+            "prediction_market_extensions.backtesting._prediction_market_backtest"
+        )
+    except Exception:
+        return default
+    return getattr(module, name, default)
+
+
+def _loader_realized_outcome(loader: Any) -> float | None:
+    metadata = getattr(loader, "resolution_metadata", None)
+    if metadata:
+        outcome_name = str(getattr(loader.instrument, "outcome", "") or "")
+        return infer_realized_outcome_from_metadata(metadata, outcome_name)
+    return infer_realized_outcome(loader.instrument)
+
+
+def _normalize_timestamp(value: object | None, *, default_now: bool = False) -> pd.Timestamp:
+    if value is None:
+        if not default_now:
+            raise ValueError("timestamp is required")
+        value = datetime.now(UTC)
+
+    timestamp = pd.Timestamp(value)
+    if pd.isna(timestamp):
+        if not default_now:
+            raise ValueError("timestamp is required")
+        timestamp = pd.Timestamp(datetime.now(UTC))
+    if timestamp.tzinfo is None:
+        return timestamp.tz_localize(UTC)
+    return timestamp.tz_convert(UTC)
+
+
+def _loaded_window(records: tuple[object, ...]) -> ReplayWindow | None:
+    start_ns: int | None = None
+    end_ns: int | None = None
+    for record in records:
+        timestamp_ns = _record_timestamp_ns(record)
+        if timestamp_ns is None:
+            continue
+        if start_ns is None or timestamp_ns < start_ns:
+            start_ns = timestamp_ns
+        if end_ns is None or timestamp_ns > end_ns:
+            end_ns = timestamp_ns
+    if start_ns is None and end_ns is None:
+        return None
+    return ReplayWindow(start_ns=start_ns, end_ns=end_ns)
+
+
+def _requested_window(start: pd.Timestamp, end: pd.Timestamp) -> ReplayWindow:
+    return ReplayWindow(start_ns=int(start.value), end_ns=int(end.value))
+
+
+def _price_range(prices: tuple[float, ...]) -> float:
+    if not prices:
+        return 0.0
+    return max(prices) - min(prices)
+
+
+def _best_book_midpoint(book: OrderBook) -> float | None:
+    best_bid = book.best_bid_price()
+    best_ask = book.best_ask_price()
+    if best_bid is None or best_ask is None:
+        return None
+    return (float(best_bid) + float(best_ask)) / 2.0
+
+
+def _book_event_count_and_midpoints(
+    *, instrument: Any, records: tuple[object, ...], deltas_type: type[Any]
+) -> tuple[int, tuple[float, ...]]:
+    book = OrderBook(instrument.id, book_type=BookType.L2_MBP)
+    book_event_count = 0
+    prices: list[float] = []
+    for record in records:
+        if not isinstance(record, deltas_type):
+            continue
+        book_event_count += 1
+        book.apply_deltas(record)
+        midpoint = _best_book_midpoint(book)
+        if midpoint is not None:
+            prices.append(midpoint)
+    return book_event_count, tuple(prices)
+
+
+def _book_event_count(records: tuple[object, ...], *, deltas_type: type[Any]) -> int:
+    return sum(1 for record in records if isinstance(record, deltas_type))
+
+
+def _book_event_count_and_prices_for_request(
+    *,
+    instrument: Any,
+    records: tuple[object, ...],
+    deltas_type: type[Any],
+    request: ReplayLoadRequest,
+) -> tuple[int, tuple[float, ...]]:
+    if request.min_price_range > 0.0:
+        return _book_event_count_and_midpoints(
+            instrument=instrument,
+            records=records,
+            deltas_type=deltas_type,
+        )
+    return _book_event_count(records, deltas_type=deltas_type), ()
+
+
+def _validate_replay_window(
+    *,
+    market_label: str,
+    count_label: str,
+    count: int,
+    min_record_count: int,
+    prices: tuple[float, ...],
+    min_price_range: float,
+) -> bool:
+    if count < min_record_count:
+        emit_loader_event(
+            f"Skip {market_label}: {count} {count_label} < {min_record_count} required",
+            level="WARNING",
+            stage="validate",
+            status="skip",
+            rows=count,
+        )
+        return False
+    if prices and _price_range(prices) < min_price_range:
+        emit_loader_event(
+            f"Skip {market_label}: price range {_price_range(prices):.3f} < {min_price_range:.3f}",
+            level="WARNING",
+            stage="validate",
+            status="skip",
+        )
+        return False
+    return True
+
+
+def _cache_home() -> Path:
+    configured = os.getenv("XDG_CACHE_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".cache"
+
+
+def _trade_cache_path(*, loader: Any, date: pd.Timestamp) -> Path | None:
+    condition_id = getattr(loader, "condition_id", None)
+    token_id = getattr(loader, "token_id", None)
+    if not condition_id or not token_id:
+        return None
+    return (
+        _cache_home()
+        / "nautilus_trader"
+        / "polymarket_trades"
+        / str(condition_id)
+        / str(token_id)
+        / f"{date.strftime('%Y-%m-%d')}.parquet"
+    )
+
+
+def _trade_record_sort_key(record: TradeTick) -> tuple[int, int]:
+    return (int(record.ts_event), int(record.ts_init))
+
+
+def _serialize_trade_ticks(trades: tuple[TradeTick, ...]) -> pd.DataFrame:
+    rows = [
+        {
+            "price": float(trade.price),
+            "size": float(trade.size),
+            "aggressor_side": getattr(trade.aggressor_side, "name", str(trade.aggressor_side)),
+            "trade_id": str(trade.trade_id),
+            "ts_event": int(trade.ts_event),
+            "ts_init": int(trade.ts_init),
+        }
+        for trade in trades
+    ]
+    return pd.DataFrame.from_records(rows)
+
+
+def _trade_ticks_from_native_columns(
+    *,
+    loader: Any,
+    data: tuple[list[float], list[float], list[int], list[str], list[int], list[int]],
+) -> tuple[TradeTick, ...]:
+    prices, sizes, aggressor_sides, trade_ids, ts_events, ts_inits = data
+    instrument = loader.instrument
+    return tuple(
+        TradeTick.from_raw_arrays_to_list(
+            instrument.id,
+            int(instrument.price_precision),
+            int(instrument.size_precision),
+            _rounded_float64_array(prices, int(instrument.price_precision)),
+            _rounded_float64_array(sizes, int(instrument.size_precision)),
+            np.asarray(aggressor_sides, dtype=np.uint8),
+            [str(value) for value in trade_ids],
+            np.asarray(ts_events, dtype=np.uint64),
+            np.asarray(ts_inits, dtype=np.uint64),
+        )
+    )
+
+
+def _trade_ticks_from_cache_frame_native(
+    *, loader: Any, frame: pd.DataFrame
+) -> tuple[TradeTick, ...]:
+    if frame.empty:
+        return ()
+    instrument = loader.instrument
+    sorted_frame = frame.sort_values(["ts_event", "ts_init"], kind="stable")
+    aggressor_sides = (
+        sorted_frame["aggressor_side"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .map({"BUYER": 1, "SELLER": 2})
+        .fillna(0)
+        .to_numpy(dtype=np.uint8)
+    )
+    return tuple(
+        TradeTick.from_raw_arrays_to_list(
+            instrument.id,
+            int(instrument.price_precision),
+            int(instrument.size_precision),
+            _rounded_float64_array(
+                sorted_frame["price"].to_numpy(dtype=np.float64),
+                int(instrument.price_precision),
+            ),
+            _rounded_float64_array(
+                sorted_frame["size"].to_numpy(dtype=np.float64),
+                int(instrument.size_precision),
+            ),
+            aggressor_sides,
+            sorted_frame["trade_id"].astype(str).tolist(),
+            sorted_frame["ts_event"].to_numpy(dtype=np.uint64),
+            sorted_frame["ts_init"].to_numpy(dtype=np.uint64),
+        )
+    )
+
+
+def _rounded_float64_array(values: Any, precision: int) -> np.ndarray:
+    return np.round(np.asarray(values, dtype=np.float64), decimals=precision)
+
+
+def _deserialize_trade_ticks(*, loader: Any, frame: pd.DataFrame) -> tuple[TradeTick, ...]:
+    if frame.empty:
+        return ()
+    return _trade_ticks_from_cache_frame_native(loader=loader, frame=frame)
+
+
+def _write_trade_cache(
+    *,
+    path: Path,
+    trades: tuple[TradeTick, ...],
+    market_label: str,
+    day: pd.Timestamp,
+) -> None:
+    tmp_path = _unique_tmp_path(path)
+    frame = _serialize_trade_ticks(trades)
+    day_label = _trade_day_label(day)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(tmp_path, compression="zstd", index=False)
+        os.replace(tmp_path, path)
+        emit_loader_event(
+            f"Wrote Polymarket trade cache for {market_label} {day_label}",
+            stage="cache_write",
+            vendor="polymarket",
+            status="complete",
+            platform="polymarket",
+            data_type="book",
+            source_kind="cache",
+            source=f"polymarket-trade-cache::{path}",
+            cache_path=str(path),
+            market_slug=market_label,
+            rows=len(trades),
+            trade_ticks=len(trades),
+            attrs={"day": day_label},
+        )
+    except Exception as exc:  # noqa: BLE001 - cache writes must not break replay
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        emit_loader_event(
+            f"Failed to write Polymarket trade cache for {market_label} {day_label}",
+            level="ERROR",
+            stage="cache_write",
+            vendor="polymarket",
+            status="error",
+            platform="polymarket",
+            data_type="book",
+            source_kind="cache",
+            source=f"polymarket-trade-cache::{path}",
+            cache_path=str(path),
+            market_slug=market_label,
+            rows=len(trades),
+            trade_ticks=len(trades),
+            attrs={"day": day_label, "error": str(exc)},
+        )
+
+
+def _trade_day_label(day: pd.Timestamp) -> str:
+    return day.strftime("%Y-%m-%d")
+
+
+def _print_trade_progress_header(
+    *, market_label: str, start: pd.Timestamp, end: pd.Timestamp
+) -> None:
+    emit_loader_event(
+        f"Loading Polymarket trade ticks for execution {market_label} "
+        f"(window_start={start.isoformat()}, window_end={end.isoformat()})...",
+        stage="fetch",
+        vendor="polymarket",
+        status="start",
+        platform="polymarket",
+        data_type="book",
+        market_slug=market_label,
+        window_start_ns=int(start.value),
+        window_end_ns=int(end.value),
+    )
+
+
+def _trade_source_label(source: str) -> str:
+    if source.startswith("telonex-trade-cache::"):
+        cache_path = source.partition("::")[2]
+        if cache_path:
+            if "/trades/" in cache_path:
+                return f"telonex trades cache {Path(cache_path).name}"
+            return f"telonex onchain_fills cache {Path(cache_path).name}"
+        return "telonex trade cache"
+    if source.startswith("telonex-local-trades::"):
+        return "telonex local trades"
+    if source.startswith("telonex-local::"):
+        return "telonex local onchain_fills"
+    if source.startswith(("telonex-cache::", "telonex-cache-fast::")):
+        if "/trades/" in source:
+            return "telonex cache trades"
+        return "telonex cache onchain_fills"
+    if source.startswith("telonex-api::"):
+        if "/trades/" in source:
+            return "telonex api trades"
+        return "telonex api onchain_fills"
+    return source
+
+
+def _print_trade_progress_line(
+    *,
+    day: pd.Timestamp,
+    elapsed_secs: float,
+    rows: int,
+    source: str,
+) -> None:
+    source_label = _trade_source_label(source)
+    emit_loader_event(
+        f"trades {_trade_day_label(day)} ({elapsed_secs:.3f}s) ({rows} rows) {source_label}",
+        stage="fetch",
+        vendor="polymarket",
+        status="complete",
+        platform="polymarket",
+        data_type="book",
+        source=source,
+        rows=rows,
+        trade_ticks=rows,
+        elapsed_ms=elapsed_secs * 1000.0,
+        attrs={"day": _trade_day_label(day), "source_label": source_label},
+    )
+
+
+def _polymarket_ceiling_warning(caught_warnings: list[warnings.WarningMessage]) -> str | None:
+    for caught in caught_warnings:
+        message = str(caught.message)
+        if "Polymarket public trades API hit its historical offset ceiling" in message:
+            return message
+    return None
+
+
+def _disable_polymarket_trade_fallback() -> bool:
+    raw = os.getenv("TELONEX_DISABLE_POLYMARKET_TRADE_FALLBACK", "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _trade_days_for_window(start: pd.Timestamp, end: pd.Timestamp) -> tuple[pd.Timestamp, ...]:
+    start_utc = _normalize_timestamp(start)
+    end_utc = _normalize_timestamp(end)
+    return tuple(
+        pd.Timestamp(day, tz=UTC)
+        for day in source_days_for_window_ns(
+            int(start_utc.value),
+            int(end_utc.value),
+            semantics="inclusive",
+        )
+    )
+
+
+async def _load_trade_ticks(
+    loader: Any, *, start: pd.Timestamp, end: pd.Timestamp, market_label: str
+) -> tuple[TradeTick, ...]:
+    start_utc = start.tz_convert(UTC)
+    end_utc = end.tz_convert(UTC)
+    all_trades: list[TradeTick] = []
+    _print_trade_progress_header(market_label=market_label, start=start_utc, end=end_utc)
+    for current_day in _trade_days_for_window(start_utc, end_utc):
+        day_start = current_day
+        day_end = min(current_day + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1), end_utc)
+        cache_path = _trade_cache_path(loader=loader, date=current_day)
+        day_trades: tuple[TradeTick, ...]
+        started_at = time.perf_counter()
+        telonex_loader = getattr(loader, "load_telonex_onchain_fill_ticks", None)
+        telonex_trades = None
+        if callable(telonex_loader):
+            telonex_trades = await asyncio.to_thread(telonex_loader, day_start, day_end)
+        if telonex_trades:
+            day_trades = tuple(sorted(telonex_trades, key=_trade_record_sort_key))
+            source = str(
+                getattr(loader, "_telonex_last_trade_source", None) or "telonex onchain_fills"
+            )
+        elif callable(telonex_loader) and _disable_polymarket_trade_fallback():
+            day_trades = ()
+            source = str(
+                getattr(loader, "_telonex_last_trade_source", None) or "telonex onchain_fills empty"
+            )
+        elif cache_path is not None and cache_path.exists():
+            frame = await asyncio.to_thread(pd.read_parquet, cache_path)
+            day_trades = await asyncio.to_thread(
+                _deserialize_trade_ticks, loader=loader, frame=frame
+            )
+            source = f"polymarket cache {cache_path.name}"
+        else:
+            emit_loader_event(
+                "Fetching Polymarket public trades API "
+                f"{market_label} day={_trade_day_label(current_day)} "
+                f"condition_id={getattr(loader, 'condition_id', None)} "
+                f"token_id={getattr(loader, 'token_id', None)}",
+                stage="fetch",
+                vendor="polymarket",
+                status="start",
+                platform="polymarket",
+                data_type="book",
+                source_kind="remote",
+                source="https://data-api.polymarket.com/trades",
+                market_slug=market_label,
+                condition_id=getattr(loader, "condition_id", None),
+                token_id=getattr(loader, "token_id", None),
+                attrs={"day": _trade_day_label(current_day)},
+            )
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always", RuntimeWarning)
+                fetched = await loader.load_trades(day_start, day_end)
+            ceiling_warning = _polymarket_ceiling_warning(caught_warnings)
+            if ceiling_warning is not None:
+                raise RuntimeError(
+                    "Polymarket public trades API fallback failed for "
+                    f"{market_label} on {_trade_day_label(current_day)}: {ceiling_warning}"
+                )
+            day_trades = tuple(sorted(fetched, key=_trade_record_sort_key))
+            if cache_path is not None:
+                await asyncio.to_thread(
+                    _write_trade_cache,
+                    path=cache_path,
+                    trades=day_trades,
+                    market_label=market_label,
+                    day=current_day,
+                )
+            source = "polymarket api"
+        _print_trade_progress_line(
+            day=current_day,
+            elapsed_secs=time.perf_counter() - started_at,
+            rows=len(day_trades),
+            source=source,
+        )
+        all_trades.extend(
+            trade
+            for trade in day_trades
+            if int(start_utc.value) <= int(trade.ts_event) <= int(end_utc.value)
+        )
+    all_trades.sort(key=_trade_record_sort_key)
+    return tuple(all_trades)
+
+
+def _merge_records(
+    *, book_records: tuple[OrderBookDeltas, ...], trade_records: tuple[TradeTick, ...]
+) -> tuple[object, ...]:
+    if not trade_records:
+        return book_records
+    if not book_records:
+        return trade_records
+    plan = replay_merge_plan(
+        book_ts_events=[int(record.ts_event) for record in book_records],
+        book_ts_inits=[int(record.ts_init) for record in book_records],
+        trade_ts_events=[int(record.ts_event) for record in trade_records],
+        trade_ts_inits=[int(record.ts_init) for record in trade_records],
+    )
+    return tuple(book_records[index] if kind == 0 else trade_records[index] for kind, index in plan)
+
+
+L2_BOOK_ENGINE_PROFILE = ReplayEngineProfile(
+    venue=POLYMARKET_VENUE,
+    oms_type=OmsType.NETTING,
+    account_type=AccountType.CASH,
+    base_currency=pUSD,
+    fee_model_factory=PolymarketFeeModel,
+    fill_model_mode="passive_book",
+    book_type=BookType.L2_MBP,
+    liquidity_consumption=True,
+)
+
+
+@dataclass(frozen=True)
+class _ResolvedBookReplay:
+    replay: BookReplay
+    start: pd.Timestamp
+    end: pd.Timestamp
+
+
+@dataclass(frozen=True)
+class _PreparedBookReplay:
+    resolved: _ResolvedBookReplay
+    loader: Any
+    outcome: str
+
+
+@dataclass(frozen=True)
+class _LoadedBookReplay:
+    prepared: _PreparedBookReplay
+    book_records: tuple[OrderBookDeltas, ...]
+    book_event_count: int
+
+
+async def _gather_bounded(
+    values: Sequence[Any],
+    *,
+    workers: int,
+    func: Callable[[Any], Any],
+) -> list[Any]:
+    worker_count = min(max(1, int(workers)), max(1, len(values)))
+    if worker_count <= 1:
+        return [await func(value) for value in values]
+
+    semaphore = asyncio.Semaphore(worker_count)
+
+    async def _run(value: Any) -> Any:
+        async with semaphore:
+            return await func(value)
+
+    return list(await asyncio.gather(*(_run(value) for value in values)))
+
+
+def _resolve_materialize_workers(source_workers: int) -> int:
+    configured = os.getenv(REPLAY_MATERIALIZE_WORKERS_ENV)
+    if configured is None or not configured.strip():
+        workers = DEFAULT_REPLAY_MATERIALIZE_WORKERS
+    else:
+        try:
+            workers = int(configured.strip())
+        except ValueError:
+            workers = DEFAULT_REPLAY_MATERIALIZE_WORKERS
+    return min(max(1, workers), MAX_REPLAY_MATERIALIZE_WORKERS, max(1, source_workers))
+
+
+def _resolve_pmxt_grouped_market_chunk_size() -> int:
+    configured = os.getenv(PMXT_GROUPED_MARKET_CHUNK_SIZE_ENV)
+    if configured is None or not configured.strip():
+        return DEFAULT_PMXT_GROUPED_MARKET_CHUNK_SIZE
+    try:
+        return max(1, int(configured.strip()))
+    except ValueError:
+        return DEFAULT_PMXT_GROUPED_MARKET_CHUNK_SIZE
+
+
+def _pmxt_cache_disabled_for_all(prepared: Sequence[_PreparedBookReplay]) -> bool:
+    return bool(prepared) and all(
+        getattr(item.loader, "_pmxt_cache_dir", None) is None for item in prepared
+    )
+
+
+def _emit_materialize_worker_event(
+    *,
+    vendor: str,
+    materialize_workers: int,
+    source_workers: int,
+) -> None:
+    if materialize_workers == source_workers:
+        return
+    emit_loader_event(
+        f"Replay materialization using {materialize_workers} worker(s) "
+        f"({REPLAY_MATERIALIZE_WORKERS_ENV}; source stage workers={source_workers})",
+        stage="runtime",
+        vendor=vendor,
+        status="complete",
+        platform="polymarket",
+        data_type="book",
+        attrs={
+            "materialize_workers": materialize_workers,
+            "source_workers": source_workers,
+        },
+        stacklevel=3,
+    )
+
+
+def _call_int_method(obj: Any, name: str, default: int) -> int:
+    method = getattr(obj, name, None)
+    if not callable(method):
+        return max(1, int(default))
+    try:
+        return max(1, int(method()))
+    except (TypeError, ValueError):
+        return max(1, int(default))
+
+
+def _prepared_book_day_count(item: _PreparedBookReplay) -> int:
+    date_range = getattr(item.loader, "_date_range", None)
+    if not callable(date_range):
+        return 1
+    try:
+        return max(1, len(date_range(item.resolved.start, item.resolved.end)))
+    except Exception:
+        return 1
+
+
+def _telonex_materialized_cache_complete(prepared: Sequence[_PreparedBookReplay]) -> bool:
+    if not prepared:
+        return False
+    for item in prepared:
+        replay = item.resolved.replay
+        cache_complete = getattr(item.loader, "has_complete_materialized_deltas_cache", None)
+        if not callable(cache_complete):
+            return False
+        try:
+            if not cache_complete(
+                start=item.resolved.start,
+                end=item.resolved.end,
+                market_slug=replay.market_slug,
+                token_index=replay.token_index,
+                outcome=item.outcome or None,
+            ):
+                return False
+        except Exception:
+            return False
+    return True
+
+
+def _resolve_telonex_book_workers(
+    prepared: Sequence[_PreparedBookReplay],
+    *,
+    requested_workers: int,
+) -> int:
+    requested = max(1, int(requested_workers))
+    if not prepared:
+        return requested
+
+    first_loader = prepared[0].loader
+    max_days = max(_prepared_book_day_count(item) for item in prepared)
+    if _telonex_materialized_cache_complete(prepared):
+        return min(
+            requested,
+            _call_int_method(first_loader, "_resolve_cache_prefetch_workers", requested),
+        )
+
+    config = None
+    config_method = getattr(first_loader, "_config", None)
+    if callable(config_method):
+        try:
+            config = config_method()
+        except Exception:
+            config = None
+    entries = tuple(getattr(config, "ordered_source_entries", ()) or ())
+    has_local = any(getattr(entry, "kind", None) == "local" for entry in entries)
+    has_api = any(getattr(entry, "kind", None) == "api" for entry in entries)
+
+    if has_local:
+        day_workers = min(
+            max_days,
+            _call_int_method(first_loader, "_resolve_local_prefetch_workers", 1),
+        )
+        file_workers = _call_int_method(first_loader, "_resolve_file_worker_limit", requested)
+        return min(requested, max(1, file_workers // max(1, day_workers)))
+
+    if has_api:
+        day_workers = min(
+            max_days,
+            _call_int_method(first_loader, "_resolve_prefetch_workers", requested),
+        )
+        api_workers = _call_int_method(first_loader, "_resolve_api_worker_limit", requested)
+        return min(requested, max(1, api_workers // max(1, day_workers)))
+
+    return min(
+        requested,
+        _call_int_method(first_loader, "_resolve_cache_prefetch_workers", requested),
+    )
+
+
+@dataclass(frozen=True)
+class _BaseReplayAdapter(HistoricalReplayAdapter):
+    _key: ReplayAdapterKey
+    _replay_spec_type: type[Any]
+    _configure_sources_fn: Callable[..., AbstractContextManager[Any]]
+    _engine_profile: ReplayEngineProfile
+    _single_market_required_fields: tuple[str, ...]
+    _single_market_forwarded_fields: tuple[str, ...]
+    _single_market_replay_factory: Callable[[Mapping[str, Any]], Any]
+
+    @property
+    def key(self) -> ReplayAdapterKey:
+        return self._key
+
+    @property
+    def replay_spec_type(self) -> type[Any]:
+        return self._replay_spec_type
+
+    def configure_sources(
+        self, *, sources: tuple[str, ...] | list[str]
+    ) -> AbstractContextManager[Any]:
+        return self._configure_sources_fn(sources=sources)
+
+    @property
+    def engine_profile(self) -> ReplayEngineProfile:
+        return self._engine_profile
+
+    def build_single_market_replay(self, *, field_values: Mapping[str, Any]) -> Any:
+        for field_name in self._single_market_required_fields:
+            if field_values.get(field_name) is None:
+                raise ValueError(f"{field_name} is required for this backtest selection.")
+
+        replay_fields: dict[str, Any] = {}
+        for field_name in self._single_market_forwarded_fields:
+            value = field_values.get(field_name)
+            if value is not None:
+                replay_fields[field_name] = value
+        return self._single_market_replay_factory(replay_fields)
+
+    def _resolve_book_replay_window(
+        self, replay: BookReplay, *, request: ReplayLoadRequest, source_label: str
+    ) -> _ResolvedBookReplay:
+        end = _normalize_timestamp(
+            replay.end_time if replay.end_time is not None else request.default_end_time,
+            default_now=True,
+        )
+        if replay.start_time is not None:
+            start = _normalize_timestamp(replay.start_time)
+        else:
+            lookback_hours = (
+                replay.lookback_hours
+                if replay.lookback_hours is not None
+                else request.default_lookback_hours
+            )
+            if lookback_hours is None:
+                raise ValueError(
+                    f"start_time/end_time or lookback_hours is required for {source_label} book replays."
+                )
+            start = end - pd.Timedelta(hours=float(lookback_hours))
+
+        if start >= end:
+            raise ValueError(
+                f"start_time {start.isoformat()} must be earlier than end_time {end.isoformat()}"
+            )
+        return _ResolvedBookReplay(replay=replay, start=start, end=end)
+
+    @staticmethod
+    def _emit_book_replay_start(*, resolved: _ResolvedBookReplay, vendor: str) -> None:
+        replay = resolved.replay
+        label = vendor.upper() if vendor == "pmxt" else vendor.title()
+        emit_loader_event(
+            f"Loading {label} Polymarket market {replay.market_slug} "
+            f"(token_index={replay.token_index}, window_start={resolved.start.isoformat()}, "
+            f"window_end={resolved.end.isoformat()})...",
+            stage="fetch",
+            vendor=vendor,
+            status="start",
+            platform="polymarket",
+            data_type="book",
+            market_slug=replay.market_slug,
+            token_id=str(replay.token_index),
+            window_start_ns=int(resolved.start.value),
+            window_end_ns=int(resolved.end.value),
+        )
+
+    @staticmethod
+    def _emit_book_replay_fetch_error(
+        *, replay: BookReplay, vendor: str, source_label: str, error: Exception
+    ) -> None:
+        emit_loader_event(
+            f"Skip {replay.market_slug}: unable to load {source_label} L2 book data ({error})",
+            level="WARNING",
+            stage="fetch",
+            vendor=vendor,
+            status="error",
+            platform="polymarket",
+            data_type="book",
+            market_slug=replay.market_slug,
+        )
+
+    def _build_loaded_book_replay_or_none(
+        self,
+        *,
+        prepared: _PreparedBookReplay,
+        records: tuple[object, ...],
+        book_event_count: int | None = None,
+        request: ReplayLoadRequest,
+        vendor: str,
+        source_label: str,
+    ) -> LoadedReplay | None:
+        replay = prepared.resolved.replay
+        if not records:
+            emit_loader_event(
+                f"Skip {replay.market_slug}: no {source_label} L2 book data returned",
+                level="WARNING",
+                stage="validate",
+                vendor=vendor,
+                status="skip",
+                platform="polymarket",
+                data_type="book",
+                market_slug=replay.market_slug,
+            )
+            return None
+
+        deltas_type = _resolve_backtest_compat_symbol("OrderBookDeltas", OrderBookDeltas)
+        if request.min_price_range > 0.0 or book_event_count is None:
+            book_event_count, prices_tuple = _book_event_count_and_prices_for_request(
+                instrument=prepared.loader.instrument,
+                records=records,
+                deltas_type=deltas_type,
+                request=request,
+            )
+        else:
+            prices_tuple = ()
+        if not _validate_replay_window(
+            market_label=replay.market_slug,
+            count_label="book events",
+            count=book_event_count,
+            min_record_count=request.min_record_count,
+            prices=prices_tuple,
+            min_price_range=request.min_price_range,
+        ):
+            return None
+
+        return self._build_loaded_replay(
+            replay=replay,
+            instrument=prepared.loader.instrument,
+            records=records,
+            count=book_event_count,
+            count_key="book_events",
+            market_key="slug",
+            market_id=replay.market_slug,
+            prices=prices_tuple,
+            outcome=prepared.outcome,
+            realized_outcome=_loader_realized_outcome(prepared.loader),
+            metadata=dict(replay.metadata or {}),
+            requested_window=_requested_window(prepared.resolved.start, prepared.resolved.end),
+        )
+
+    def _build_loaded_replay(
+        self,
+        *,
+        replay: Any,
+        instrument: Any,
+        records: tuple[Any, ...],
+        count: int,
+        count_key: str,
+        market_key: str,
+        market_id: str,
+        prices: tuple[float, ...],
+        outcome: str,
+        realized_outcome: float | None,
+        metadata: dict[str, Any],
+        requested_window: ReplayWindow,
+    ) -> LoadedReplay:
+        return LoadedReplay(
+            replay=replay,
+            instrument=instrument,
+            records=records,
+            outcome=outcome,
+            realized_outcome=realized_outcome,
+            metadata=metadata,
+            requested_window=requested_window,
+            loaded_window=_loaded_window(records),
+            coverage_stats=ReplayCoverageStats(
+                count=count,
+                count_key=count_key,
+                market_key=market_key,
+                market_id=market_id,
+                prices=prices,
+            ),
+            instrument_ids=(instrument.id,),
+        )
+
+
+class PolymarketPMXTBookReplayAdapter(_BaseReplayAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            _key=ReplayAdapterKey("polymarket", "pmxt", "book"),
+            _replay_spec_type=BookReplay,
+            _configure_sources_fn=configured_pmxt_data_source,
+            _engine_profile=L2_BOOK_ENGINE_PROFILE,
+            _single_market_required_fields=("market_slug",),
+            _single_market_forwarded_fields=(
+                "market_slug",
+                "token_index",
+                "lookback_hours",
+                "start_time",
+                "end_time",
+                "outcome",
+                "metadata",
+            ),
+            _single_market_replay_factory=lambda fields: BookReplay(
+                market_slug=str(fields["market_slug"]),
+                token_index=int(fields.get("token_index", 0)),
+                lookback_hours=fields.get("lookback_hours"),
+                start_time=fields.get("start_time"),
+                end_time=fields.get("end_time"),
+                outcome=fields.get("outcome"),
+                metadata=fields.get("metadata"),
+            ),
+        )
+
+    async def load_replay(
+        self, replay: BookReplay, *, request: ReplayLoadRequest
+    ) -> LoadedReplay | None:
+        end = _normalize_timestamp(
+            replay.end_time if replay.end_time is not None else request.default_end_time,
+            default_now=True,
+        )
+        if replay.start_time is not None:
+            start = _normalize_timestamp(replay.start_time)
+        else:
+            lookback_hours = (
+                replay.lookback_hours
+                if replay.lookback_hours is not None
+                else request.default_lookback_hours
+            )
+            if lookback_hours is None:
+                raise ValueError(
+                    "start_time/end_time or lookback_hours is required for PMXT book replays."
+                )
+            start = end - pd.Timedelta(hours=float(lookback_hours))
+
+        if start >= end:
+            raise ValueError(
+                f"start_time {start.isoformat()} must be earlier than end_time {end.isoformat()}"
+            )
+
+        emit_loader_event(
+            f"Loading PMXT Polymarket market {replay.market_slug} "
+            f"(token_index={replay.token_index}, window_start={start.isoformat()}, "
+            f"window_end={end.isoformat()})...",
+            stage="fetch",
+            vendor="pmxt",
+            status="start",
+            platform="polymarket",
+            data_type="book",
+            market_slug=replay.market_slug,
+            token_id=str(replay.token_index),
+            window_start_ns=int(start.value),
+            window_end_ns=int(end.value),
+        )
+        try:
+            loader_cls = _resolve_backtest_compat_symbol(
+                "PolymarketPMXTDataLoader", PolymarketPMXTDataLoader
+            )
+            loader = await loader_cls.from_market_slug(
+                replay.market_slug, token_index=replay.token_index
+            )
+            book_records = tuple(await asyncio.to_thread(loader.load_order_book_deltas, start, end))
+            trade_records = await _load_trade_ticks(
+                loader, start=start, end=end, market_label=replay.market_slug
+            )
+            records = _merge_records(book_records=book_records, trade_records=trade_records)
+        except Exception as exc:
+            emit_loader_event(
+                f"Skip {replay.market_slug}: unable to load PMXT L2 book data ({exc})",
+                level="WARNING",
+                stage="fetch",
+                vendor="pmxt",
+                status="error",
+                platform="polymarket",
+                data_type="book",
+                market_slug=replay.market_slug,
+            )
+            return None
+
+        if not records:
+            emit_loader_event(
+                f"Skip {replay.market_slug}: no PMXT L2 book data returned",
+                level="WARNING",
+                stage="validate",
+                vendor="pmxt",
+                status="skip",
+                platform="polymarket",
+                data_type="book",
+                market_slug=replay.market_slug,
+            )
+            return None
+
+        deltas_type = _resolve_backtest_compat_symbol("OrderBookDeltas", OrderBookDeltas)
+        book_event_count, prices_tuple = _book_event_count_and_prices_for_request(
+            instrument=loader.instrument,
+            records=records,
+            deltas_type=deltas_type,
+            request=request,
+        )
+        if not _validate_replay_window(
+            market_label=replay.market_slug,
+            count_label="book events",
+            count=book_event_count,
+            min_record_count=request.min_record_count,
+            prices=prices_tuple,
+            min_price_range=request.min_price_range,
+        ):
+            return None
+
+        return self._build_loaded_replay(
+            replay=replay,
+            instrument=loader.instrument,
+            records=records,
+            count=book_event_count,
+            count_key="book_events",
+            market_key="slug",
+            market_id=replay.market_slug,
+            prices=prices_tuple,
+            outcome=str(loader.instrument.outcome or replay.outcome or ""),
+            realized_outcome=_loader_realized_outcome(loader),
+            metadata=dict(replay.metadata or {}),
+            requested_window=_requested_window(start, end),
+        )
+
+    async def load_replays(
+        self,
+        replays: Sequence[BookReplay],
+        *,
+        request: ReplayLoadRequest,
+        workers: int,
+    ) -> list[LoadedReplay]:
+        resolved_replays = [
+            self._resolve_book_replay_window(replay, request=request, source_label="PMXT")
+            for replay in replays
+        ]
+        for resolved in resolved_replays:
+            self._emit_book_replay_start(resolved=resolved, vendor="pmxt")
+
+        loader_cls = _resolve_backtest_compat_symbol(
+            "PolymarketPMXTDataLoader", PolymarketPMXTDataLoader
+        )
+
+        async def _prepare(resolved: _ResolvedBookReplay) -> _PreparedBookReplay | None:
+            replay = resolved.replay
+            try:
+                loader = await loader_cls.from_market_slug(
+                    replay.market_slug, token_index=replay.token_index
+                )
+                return _PreparedBookReplay(
+                    resolved=resolved,
+                    loader=loader,
+                    outcome=str(loader.instrument.outcome or replay.outcome or ""),
+                )
+            except Exception as exc:
+                self._emit_book_replay_fetch_error(
+                    replay=replay,
+                    vendor="pmxt",
+                    source_label="PMXT",
+                    error=exc,
+                )
+                return None
+
+        prepared = [
+            item
+            for item in await _gather_bounded(resolved_replays, workers=workers, func=_prepare)
+            if item is not None
+        ]
+        prepared_index_by_id = {id(item): index for index, item in enumerate(prepared)}
+        preloaded_books_by_index: dict[int, _LoadedBookReplay] = {}
+        prebuilt_replays_by_index: dict[int, LoadedReplay] = {}
+        book_workers = workers
+        if prepared:
+            resolve_prefetch_workers = getattr(
+                prepared[0].loader,
+                "_resolve_prefetch_workers",
+                None,
+            )
+            if callable(resolve_prefetch_workers):
+                try:
+                    book_workers = min(workers, max(1, int(resolve_prefetch_workers())))
+                except (TypeError, ValueError):
+                    book_workers = workers
+        if (
+            len(prepared) > 48
+            and _pmxt_cache_disabled_for_all(prepared)
+            and os.getenv(PMXT_PREFETCH_WORKERS_ENV) is None
+        ):
+            book_workers = min(book_workers, 4)
+        if prepared and book_workers != workers:
+            emit_loader_event(
+                f"PMXT book stage using {book_workers} worker(s) "
+                f"(replay loader requested {workers})",
+                stage="runtime",
+                vendor="pmxt",
+                status="complete",
+                platform="polymarket",
+                data_type="book",
+            )
+        materialize_workers = _resolve_materialize_workers(book_workers)
+        _emit_materialize_worker_event(
+            vendor="pmxt",
+            materialize_workers=materialize_workers,
+            source_workers=book_workers,
+        )
+        cache_workers = book_workers
+        if prepared:
+            cache_workers = min(
+                book_workers,
+                _call_int_method(
+                    prepared[0].loader,
+                    "_resolve_cache_prefetch_workers",
+                    book_workers,
+                ),
+            )
+
+        async def _load_book(prepared_replay: _PreparedBookReplay) -> _LoadedBookReplay | None:
+            replay = prepared_replay.resolved.replay
+            preloaded_index = prepared_index_by_id.get(id(prepared_replay))
+            if preloaded_index is not None:
+                preloaded = preloaded_books_by_index.pop(preloaded_index, None)
+                if preloaded is not None:
+                    return preloaded
+            try:
+                records = tuple(
+                    await asyncio.to_thread(
+                        prepared_replay.loader.load_order_book_deltas,
+                        prepared_replay.resolved.start,
+                        prepared_replay.resolved.end,
+                    )
+                )
+                return _LoadedBookReplay(
+                    prepared=prepared_replay,
+                    book_records=records,
+                    book_event_count=len(records),
+                )
+            except Exception as exc:
+                self._emit_book_replay_fetch_error(
+                    replay=replay,
+                    vendor="pmxt",
+                    source_label="PMXT",
+                    error=exc,
+                )
+                return None
+
+        async def _load_cached_hour(
+            item: tuple[int, pd.Timestamp],
+        ) -> tuple[int, pd.Timestamp, bool]:
+            index, hour = item
+            prepared_replay = prepared[index]
+            loader = prepared_replay.loader
+
+            def _load() -> bool:
+                batches = loader._load_cached_market_batches(hour)
+                cache_path = loader._cache_path_for_hour(hour)
+                if batches is not None:
+                    rows = loader._row_count_from_batches(batches)
+                    emit_loader_event(
+                        f"Loaded PMXT filtered cache for {loader._hour_label(hour)} ({rows} rows)",
+                        stage="cache_read",
+                        status="cache_hit",
+                        origin="pmxt._load_cached_market_batches",
+                        vendor="pmxt",
+                        platform="polymarket",
+                        data_type="book",
+                        source_kind="cache",
+                        cache_path=str(cache_path) if cache_path is not None else None,
+                        condition_id=getattr(loader, "condition_id", None),
+                        token_id=getattr(loader, "token_id", None),
+                        rows=rows,
+                        attrs={"hour": loader._hour_label(hour)},
+                    )
+                    return True
+                if cache_path is not None:
+                    emit_loader_event(
+                        f"PMXT filtered cache miss for {loader._hour_label(hour)}",
+                        stage="cache_read",
+                        status="cache_miss",
+                        origin="pmxt._load_cached_market_batches",
+                        vendor="pmxt",
+                        platform="polymarket",
+                        data_type="book",
+                        source_kind="cache",
+                        cache_path=str(cache_path),
+                        condition_id=getattr(loader, "condition_id", None),
+                        token_id=getattr(loader, "token_id", None),
+                        attrs={"hour": loader._hour_label(hour)},
+                    )
+                return False
+
+            hit = await asyncio.to_thread(_load)
+            return index, hour, hit
+
+        async def _fill_grouped_pmxt_book_cache() -> None:
+            if not prepared:
+                return
+
+            async def _load_window_cached_book(
+                index: int,
+            ) -> tuple[int, _LoadedBookReplay | None]:
+                prepared_replay = prepared[index]
+                loader = prepared_replay.loader
+                load_deltas_cache = getattr(loader, "_load_deltas_cache_for_range", None)
+                if callable(load_deltas_cache):
+                    records = await asyncio.to_thread(
+                        load_deltas_cache,
+                        prepared_replay.resolved.start,
+                        prepared_replay.resolved.end,
+                    )
+                    if records is not None:
+                        return (
+                            index,
+                            _LoadedBookReplay(
+                                prepared=prepared_replay,
+                                book_records=tuple(records),
+                                book_event_count=len(records),
+                            ),
+                        )
+                load_window_cache_batches = getattr(loader, "_load_window_cache_batches", None)
+                if not callable(load_window_cache_batches):
+                    return index, None
+                batches = await asyncio.to_thread(
+                    load_window_cache_batches,
+                    prepared_replay.resolved.start,
+                    prepared_replay.resolved.end,
+                )
+                if batches is None:
+                    return index, None
+                records = tuple(
+                    await asyncio.to_thread(
+                        loader.load_order_book_deltas_from_hour_batches,
+                        prepared_replay.resolved.start,
+                        prepared_replay.resolved.end,
+                        ((prepared_replay.resolved.start, batches),),
+                    )
+                )
+                return (
+                    index,
+                    _LoadedBookReplay(
+                        prepared=prepared_replay,
+                        book_records=records,
+                        book_event_count=len(records),
+                    ),
+                )
+
+            window_cache_results = await _gather_bounded(
+                tuple(range(len(prepared))),
+                workers=cache_workers,
+                func=_load_window_cached_book,
+            )
+            for index, loaded_book in window_cache_results:
+                if loaded_book is not None:
+                    preloaded_books_by_index[index] = loaded_book
+
+            grouped_chunk_size = _resolve_pmxt_grouped_market_chunk_size()
+            if len(preloaded_books_by_index) > grouped_chunk_size:
+                await _build_preloaded_indexes(tuple(sorted(preloaded_books_by_index)))
+
+            indexes_needing_source = tuple(
+                index
+                for index in range(len(prepared))
+                if index not in preloaded_books_by_index and index not in prebuilt_replays_by_index
+            )
+            if not indexes_needing_source:
+                return
+
+            resolved_batch_size = int(
+                getattr(
+                    prepared[0].loader,
+                    "_pmxt_scan_batch_size",
+                    getattr(prepared[0].loader, "_PMXT_DEFAULT_SCAN_BATCH_SIZE", 100_000),
+                )
+            )
+            hours_by_index: dict[int, tuple[pd.Timestamp, ...]] = {
+                index: tuple(
+                    prepared_replay.loader._archive_hours(
+                        prepared_replay.resolved.start,
+                        prepared_replay.resolved.end,
+                    )
+                )
+                for index, prepared_replay in enumerate(prepared)
+                if index in indexes_needing_source
+            }
+            all_needed_by_hour: dict[pd.Timestamp, list[int]] = {}
+            for index, hours in hours_by_index.items():
+                for hour in hours:
+                    all_needed_by_hour.setdefault(hour, []).append(index)
+
+            cache_disabled = all(
+                getattr(prepared[index].loader, "_pmxt_cache_dir", None) is None
+                for index in indexes_needing_source
+            )
+            if (
+                cache_disabled
+                and len(indexes_needing_source) > 48
+                and os.getenv(PMXT_GROUPED_MARKET_CHUNK_SIZE_ENV) is None
+            ):
+                grouped_chunk_size = min(grouped_chunk_size, 12)
+
+            async def _load_shared_hour(
+                item: tuple[pd.Timestamp, list[int]],
+            ) -> tuple[pd.Timestamp, dict[int, list[pa.RecordBatch] | None]]:
+                hour, indexes = item
+                representative = prepared[indexes[0]].loader
+                requests = tuple(
+                    (
+                        index,
+                        str(prepared[index].loader.condition_id),
+                        str(prepared[index].loader.token_id),
+                    )
+                    for index in indexes
+                    if getattr(prepared[index].loader, "condition_id", None) is not None
+                    and getattr(prepared[index].loader, "token_id", None) is not None
+                )
+                batches_by_request = await asyncio.to_thread(
+                    representative.load_shared_market_batches_for_hour,
+                    hour,
+                    requests=requests,
+                    batch_size=resolved_batch_size,
+                )
+                return hour, batches_by_request
+
+            def _load_cached_batches_for_hour(
+                hour: pd.Timestamp,
+                indexes: Sequence[int],
+            ) -> tuple[dict[int, list[pa.RecordBatch]], list[int]]:
+                batches_by_index: dict[int, list[pa.RecordBatch]] = {}
+                missing_indexes: list[int] = []
+                for index in indexes:
+                    loader = prepared[index].loader
+                    batches = loader._load_cached_market_batches(hour)
+                    cache_path = loader._cache_path_for_hour(hour)
+                    if batches is None:
+                        missing_indexes.append(index)
+                        if cache_path is not None:
+                            emit_loader_event(
+                                f"PMXT filtered cache miss for {loader._hour_label(hour)}",
+                                stage="cache_read",
+                                status="cache_miss",
+                                origin="pmxt._load_cached_market_batches",
+                                vendor="pmxt",
+                                platform="polymarket",
+                                data_type="book",
+                                source_kind="cache",
+                                cache_path=str(cache_path),
+                                condition_id=getattr(loader, "condition_id", None),
+                                token_id=getattr(loader, "token_id", None),
+                                attrs={"hour": loader._hour_label(hour)},
+                            )
+                        continue
+
+                    rows = loader._row_count_from_batches(batches)
+                    emit_loader_event(
+                        f"Loaded PMXT filtered cache for {loader._hour_label(hour)} ({rows} rows)",
+                        stage="cache_read",
+                        status="cache_hit",
+                        origin="pmxt._load_cached_market_batches",
+                        vendor="pmxt",
+                        platform="polymarket",
+                        data_type="book",
+                        source_kind="cache",
+                        cache_path=str(cache_path) if cache_path is not None else None,
+                        condition_id=getattr(loader, "condition_id", None),
+                        token_id=getattr(loader, "token_id", None),
+                        rows=rows,
+                        attrs={"hour": loader._hour_label(hour)},
+                    )
+                    batches_by_index[index] = batches
+                return batches_by_index, missing_indexes
+
+            async def _write_grouped_cache(
+                item: tuple[int, pd.Timestamp, list[pa.RecordBatch]],
+            ) -> None:
+                index, hour, batches = item
+                loader = prepared[index].loader
+                table = pa.Table.from_batches(batches) if batches else loader._empty_market_table()
+                try:
+                    await asyncio.to_thread(loader._write_cache_if_enabled, hour, table)
+                finally:
+                    del table
+                    _release_arrow_memory()
+
+            async def _load_direct_grouped_books(
+                grouped_hours: Mapping[pd.Timestamp, list[int]],
+            ) -> dict[int, _LoadedBookReplay]:
+                grouped_indexes = {
+                    index for _, indexes in grouped_hours.items() for index in indexes
+                }
+                states = {
+                    index: prepared[index].loader.new_order_book_delta_state()
+                    for index in grouped_indexes
+                }
+                records_by_index: dict[int, list[OrderBookDeltas]] = {
+                    index: [] for index in grouped_indexes
+                }
+                gap_hours_by_index: dict[int, list[pd.Timestamp]] = {
+                    index: [] for index in grouped_indexes
+                }
+                hour_items = sorted(grouped_hours.items(), key=lambda item: int(item[0].value))
+                pending_tasks: dict[asyncio.Task[Any], pd.Timestamp] = {}
+                completed_by_hour: dict[
+                    pd.Timestamp,
+                    tuple[dict[int, list[pa.RecordBatch] | None], tuple[int, ...]],
+                ] = {}
+                next_hour_index = 0
+                next_process_index = 0
+                window_cache_writers: dict[int, pq.ParquetWriter] = {}
+                window_cache_paths: dict[int, Path] = {}
+                window_cache_tmp_paths: dict[int, Path] = {}
+                window_cache_rows: dict[int, int] = {}
+                write_window_cache_enabled = getattr(
+                    prepared[0].loader,
+                    "_write_window_cache_enabled",
+                    None,
+                )
+                write_window_cache = (
+                    callable(write_window_cache_enabled)
+                    and write_window_cache_enabled()
+                    and len(grouped_indexes) <= 48
+                )
+
+                def _write_window_cache_batches(
+                    index: int,
+                    batches: list[pa.RecordBatch] | None,
+                ) -> None:
+                    if not write_window_cache or not batches:
+                        return
+                    loader = prepared[index].loader
+                    cache_path = loader._window_cache_path_for_range(
+                        prepared[index].resolved.start,
+                        prepared[index].resolved.end,
+                    )
+                    if cache_path is None:
+                        return
+
+                    table = pa.Table.from_batches(batches)
+                    try:
+                        if table.num_rows == 0:
+                            return
+                        writer = window_cache_writers.get(index)
+                        if writer is None:
+                            cache_path.parent.mkdir(parents=True, exist_ok=True)
+                            tmp_path = _unique_tmp_path(cache_path)
+                            tmp_path.unlink(missing_ok=True)
+                            writer = pq.ParquetWriter(tmp_path, table.schema)
+                            window_cache_writers[index] = writer
+                            window_cache_paths[index] = cache_path
+                            window_cache_tmp_paths[index] = tmp_path
+                            window_cache_rows[index] = 0
+                        writer.write_table(table)
+                        window_cache_rows[index] = window_cache_rows.get(index, 0) + int(
+                            table.num_rows
+                        )
+                    finally:
+                        del table
+                        _release_arrow_memory()
+
+                def _close_window_cache_writers(*, success: bool) -> None:
+                    for index, writer in tuple(window_cache_writers.items()):
+                        cache_path = window_cache_paths[index]
+                        tmp_path = window_cache_tmp_paths[index]
+                        rows = window_cache_rows.get(index, 0)
+                        try:
+                            writer.close()
+                            if success:
+                                os.replace(tmp_path, cache_path)
+                                loader = prepared[index].loader
+                                emit_loader_event(
+                                    f"Wrote PMXT window cache ({rows} rows)",
+                                    stage="cache_write",
+                                    status="complete",
+                                    vendor="pmxt",
+                                    platform="polymarket",
+                                    data_type="book",
+                                    source_kind="cache",
+                                    cache_path=str(cache_path),
+                                    rows=rows,
+                                    condition_id=getattr(loader, "condition_id", None),
+                                    token_id=getattr(loader, "token_id", None),
+                                    attrs={
+                                        "window_start_ns": int(
+                                            prepared[index].resolved.start.value
+                                        ),
+                                        "window_end_ns": int(prepared[index].resolved.end.value),
+                                    },
+                                )
+                        except (OSError, pa.ArrowException) as exc:
+                            loader = prepared[index].loader
+                            emit_loader_event(
+                                "Failed to write PMXT window cache",
+                                level="ERROR",
+                                stage="cache_write",
+                                status="error",
+                                vendor="pmxt",
+                                platform="polymarket",
+                                data_type="book",
+                                source_kind="cache",
+                                cache_path=str(cache_path),
+                                rows=rows,
+                                condition_id=getattr(loader, "condition_id", None),
+                                token_id=getattr(loader, "token_id", None),
+                                attrs={
+                                    "window_start_ns": int(prepared[index].resolved.start.value),
+                                    "window_end_ns": int(prepared[index].resolved.end.value),
+                                    "error": str(exc),
+                                },
+                            )
+                        finally:
+                            tmp_path.unlink(missing_ok=True)
+
+                async def _load_hour_batches(
+                    item: tuple[pd.Timestamp, list[int]],
+                ) -> tuple[pd.Timestamp, dict[int, list[pa.RecordBatch] | None], tuple[int, ...]]:
+                    hour, indexes = item
+                    if cache_disabled:
+                        loaded_hour, batches_by_request = await _load_shared_hour(item)
+                        return loaded_hour, batches_by_request, tuple(indexes)
+
+                    cached_batches, missing_indexes = await asyncio.to_thread(
+                        _load_cached_batches_for_hour,
+                        hour,
+                        indexes,
+                    )
+                    if not missing_indexes:
+                        return hour, cached_batches, ()
+
+                    loaded_hour, raw_batches = await _load_shared_hour((hour, missing_indexes))
+                    for index in missing_indexes:
+                        cached_batches[index] = raw_batches.get(index)
+                    return loaded_hour, cached_batches, tuple(missing_indexes)
+
+                def _submit_next_hour() -> None:
+                    nonlocal next_hour_index
+                    if next_hour_index >= len(hour_items):
+                        return
+                    hour_item = hour_items[next_hour_index]
+                    next_hour_index += 1
+                    task = asyncio.create_task(_load_hour_batches(hour_item))
+                    pending_tasks[task] = hour_item[0]
+
+                async def _process_ready_hours() -> None:
+                    nonlocal next_process_index
+                    while next_process_index < len(hour_items):
+                        expected_hour, indexes = hour_items[next_process_index]
+                        completed = completed_by_hour.pop(expected_hour, None)
+                        if completed is None:
+                            return
+                        batches_by_request, missing_indexes = completed
+                        next_process_index += 1
+                        try:
+                            for index in indexes:
+                                batches = batches_by_request.get(index)
+                                loader = prepared[index].loader
+                                events, gap_hours = await asyncio.to_thread(
+                                    loader.load_order_book_deltas_from_hour_batches_incremental,
+                                    prepared[index].resolved.start,
+                                    prepared[index].resolved.end,
+                                    ((expected_hour, batches),),
+                                    state=states[index],
+                                    sort_events=False,
+                                )
+                                if events:
+                                    records_by_index[index].extend(events)
+                                if gap_hours:
+                                    gap_hours_by_index[index].extend(gap_hours)
+                                if (
+                                    not cache_disabled
+                                    and batches is not None
+                                    and index in missing_indexes
+                                ):
+                                    await _write_grouped_cache((index, expected_hour, batches))
+                                _write_window_cache_batches(index, batches)
+                        finally:
+                            batches_by_request.clear()
+                            gc.collect()
+                            _release_arrow_memory()
+
+                for _ in range(min(book_workers, len(hour_items))):
+                    _submit_next_hour()
+
+                success = False
+                try:
+                    while pending_tasks:
+                        done, _ = await asyncio.wait(
+                            pending_tasks,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for task in done:
+                            pending_tasks.pop(task)
+                            loaded_hour, batches_by_request, missing_indexes = await task
+                            completed_by_hour[loaded_hour] = (
+                                batches_by_request,
+                                missing_indexes,
+                            )
+                            _submit_next_hour()
+                        await _process_ready_hours()
+                    await _process_ready_hours()
+                    success = True
+                finally:
+                    for task in pending_tasks:
+                        task.cancel()
+                    _close_window_cache_writers(success=success)
+
+                loaded_books: dict[int, _LoadedBookReplay] = {}
+                for index in sorted(grouped_indexes):
+                    prepared_replay = prepared[index]
+                    loader = prepared_replay.loader
+                    records = records_by_index[index]
+                    records.sort(key=loader._event_sort_key)
+                    gap_hours = tuple(gap_hours_by_index[index])
+                    if gap_hours:
+                        loader._pmxt_last_load_gap_hours = gap_hours
+                        warnings.warn(
+                            f"PMXT: {len(gap_hours)} archive hour(s) missing for market "
+                            f"{getattr(loader, 'condition_id', None)}/"
+                            f"{getattr(loader, 'token_id', None)} between "
+                            f"{prepared_replay.resolved.start.isoformat()} and "
+                            f"{prepared_replay.resolved.end.isoformat()}; book state was "
+                            "reset on each gap. First gap hour: "
+                            f"{gap_hours[0].isoformat()}.",
+                            stacklevel=2,
+                        )
+                    else:
+                        write_deltas_cache = getattr(loader, "_write_deltas_cache_for_range", None)
+                        write_materialized_cache_enabled = getattr(
+                            loader,
+                            "_write_materialized_cache_enabled",
+                            None,
+                        )
+                        if (
+                            callable(write_deltas_cache)
+                            and callable(write_materialized_cache_enabled)
+                            and write_materialized_cache_enabled()
+                        ):
+                            await asyncio.to_thread(
+                                write_deltas_cache,
+                                records,
+                                prepared_replay.resolved.start,
+                                prepared_replay.resolved.end,
+                            )
+                    loaded_books[index] = _LoadedBookReplay(
+                        prepared=prepared_replay,
+                        book_records=tuple(records),
+                        book_event_count=len(records),
+                    )
+                return loaded_books
+
+            if len(indexes_needing_source) > grouped_chunk_size:
+                for chunk_start in range(
+                    0,
+                    len(indexes_needing_source),
+                    grouped_chunk_size,
+                ):
+                    chunk_indexes = tuple(
+                        indexes_needing_source[chunk_start : chunk_start + grouped_chunk_size]
+                    )
+                    chunk_index_set = set(chunk_indexes)
+                    chunk_needed_by_hour: dict[pd.Timestamp, list[int]] = {}
+                    for hour, indexes in all_needed_by_hour.items():
+                        chunk_hour_indexes = [
+                            index for index in indexes if index in chunk_index_set
+                        ]
+                        if chunk_hour_indexes:
+                            chunk_needed_by_hour[hour] = chunk_hour_indexes
+                    preloaded_books_by_index.update(
+                        await _load_direct_grouped_books(chunk_needed_by_hour)
+                    )
+                    await _build_preloaded_indexes(chunk_indexes)
+                    gc.collect()
+                    _release_arrow_memory()
+                return
+
+            preloaded_books_by_index.update(await _load_direct_grouped_books(all_needed_by_hour))
+
+        async def _load_book_trades_and_build(
+            prepared_replay: _PreparedBookReplay,
+        ) -> LoadedReplay | None:
+            replay = prepared_replay.resolved.replay
+            loaded_book = await _load_book(prepared_replay)
+            if loaded_book is None:
+                return None
+            try:
+                trade_records = await _load_trade_ticks(
+                    prepared_replay.loader,
+                    start=prepared_replay.resolved.start,
+                    end=prepared_replay.resolved.end,
+                    market_label=replay.market_slug,
+                )
+                records = await asyncio.to_thread(
+                    _merge_records,
+                    book_records=loaded_book.book_records,
+                    trade_records=trade_records,
+                )
+                return await asyncio.to_thread(
+                    self._build_loaded_book_replay_or_none,
+                    prepared=prepared_replay,
+                    records=records,
+                    book_event_count=loaded_book.book_event_count,
+                    request=request,
+                    vendor="pmxt",
+                    source_label="PMXT",
+                )
+            except Exception as exc:
+                self._emit_book_replay_fetch_error(
+                    replay=replay,
+                    vendor="pmxt",
+                    source_label="PMXT",
+                    error=exc,
+                )
+                return None
+
+        async def _load_book_trades_and_build_index(
+            index: int,
+        ) -> tuple[int, LoadedReplay | None]:
+            return index, await _load_book_trades_and_build(prepared[index])
+
+        async def _build_preloaded_indexes(indexes: Sequence[int]) -> None:
+            results = await _gather_bounded(
+                tuple(indexes),
+                workers=materialize_workers,
+                func=_load_book_trades_and_build_index,
+            )
+            for index, loaded_sim in results:
+                if loaded_sim is not None:
+                    prebuilt_replays_by_index[index] = loaded_sim
+            gc.collect()
+            _release_arrow_memory()
+
+        can_group_pmxt_books = all(
+            hasattr(item.loader, "load_shared_market_batches_for_hour")
+            and hasattr(item.loader, "load_order_book_deltas_from_hour_batches")
+            and hasattr(item.loader, "load_order_book_deltas_from_hour_batches_incremental")
+            for item in prepared
+        )
+        if can_group_pmxt_books:
+            await _fill_grouped_pmxt_book_cache()
+
+        remaining_indexes = tuple(
+            index for index in range(len(prepared)) if index not in prebuilt_replays_by_index
+        )
+        loaded = await _gather_bounded(
+            remaining_indexes,
+            workers=materialize_workers,
+            func=_load_book_trades_and_build_index,
+        )
+        for index, loaded_sim in loaded:
+            if loaded_sim is not None:
+                prebuilt_replays_by_index[index] = loaded_sim
+        return [
+            prebuilt_replays_by_index[index]
+            for index in range(len(prepared))
+            if index in prebuilt_replays_by_index
+        ]
+
+
+class PolymarketTelonexBookReplayAdapter(_BaseReplayAdapter):
+    def __init__(self) -> None:
+        super().__init__(
+            _key=ReplayAdapterKey("polymarket", "telonex", "book"),
+            _replay_spec_type=BookReplay,
+            _configure_sources_fn=lambda *, sources: configured_telonex_data_source(
+                sources=sources,
+                channel=TELONEX_FULL_BOOK_CHANNEL,
+            ),
+            _engine_profile=L2_BOOK_ENGINE_PROFILE,
+            _single_market_required_fields=("market_slug",),
+            _single_market_forwarded_fields=(
+                "market_slug",
+                "token_index",
+                "lookback_hours",
+                "start_time",
+                "end_time",
+                "outcome",
+                "metadata",
+            ),
+            _single_market_replay_factory=lambda fields: BookReplay(
+                market_slug=str(fields["market_slug"]),
+                token_index=int(fields.get("token_index", 0)),
+                lookback_hours=fields.get("lookback_hours"),
+                start_time=fields.get("start_time"),
+                end_time=fields.get("end_time"),
+                outcome=fields.get("outcome"),
+                metadata=fields.get("metadata"),
+            ),
+        )
+
+    async def load_replay(
+        self, replay: BookReplay, *, request: ReplayLoadRequest
+    ) -> LoadedReplay | None:
+        end = _normalize_timestamp(
+            replay.end_time if replay.end_time is not None else request.default_end_time,
+            default_now=True,
+        )
+        if replay.start_time is not None:
+            start = _normalize_timestamp(replay.start_time)
+        else:
+            lookback_hours = (
+                replay.lookback_hours
+                if replay.lookback_hours is not None
+                else request.default_lookback_hours
+            )
+            if lookback_hours is None:
+                raise ValueError(
+                    "start_time/end_time or lookback_hours is required for Telonex book replays."
+                )
+            start = end - pd.Timedelta(hours=float(lookback_hours))
+
+        if start >= end:
+            raise ValueError(
+                f"start_time {start.isoformat()} must be earlier than end_time {end.isoformat()}"
+            )
+
+        emit_loader_event(
+            f"Loading Telonex Polymarket market {replay.market_slug} "
+            f"(token_index={replay.token_index}, window_start={start.isoformat()}, "
+            f"window_end={end.isoformat()})...",
+            stage="fetch",
+            vendor="telonex",
+            status="start",
+            platform="polymarket",
+            data_type="book",
+            market_slug=replay.market_slug,
+            token_id=str(replay.token_index),
+            window_start_ns=int(start.value),
+            window_end_ns=int(end.value),
+        )
+        try:
+            loader_cls = _resolve_backtest_compat_symbol(
+                "PolymarketTelonexBookDataLoader", PolymarketTelonexBookDataLoader
+            )
+            loader = await loader_cls.from_market_slug(
+                replay.market_slug, token_index=replay.token_index
+            )
+            selected_outcome = str(loader.instrument.outcome or replay.outcome or "")
+            book_records = tuple(
+                await asyncio.to_thread(
+                    loader.load_order_book_deltas,
+                    start,
+                    end,
+                    market_slug=replay.market_slug,
+                    token_index=replay.token_index,
+                    outcome=selected_outcome or None,
+                )
+            )
+            trade_records = await _load_trade_ticks(
+                loader, start=start, end=end, market_label=replay.market_slug
+            )
+            records = _merge_records(book_records=book_records, trade_records=trade_records)
+        except Exception as exc:
+            emit_loader_event(
+                f"Skip {replay.market_slug}: unable to load Telonex L2 book data ({exc})",
+                level="WARNING",
+                stage="fetch",
+                vendor="telonex",
+                status="error",
+                platform="polymarket",
+                data_type="book",
+                market_slug=replay.market_slug,
+            )
+            return None
+
+        if not records:
+            emit_loader_event(
+                f"Skip {replay.market_slug}: no Telonex L2 book data returned",
+                level="WARNING",
+                stage="validate",
+                vendor="telonex",
+                status="skip",
+                platform="polymarket",
+                data_type="book",
+                market_slug=replay.market_slug,
+            )
+            return None
+
+        deltas_type = _resolve_backtest_compat_symbol("OrderBookDeltas", OrderBookDeltas)
+        book_event_count, prices_tuple = _book_event_count_and_prices_for_request(
+            instrument=loader.instrument,
+            records=records,
+            deltas_type=deltas_type,
+            request=request,
+        )
+        if not _validate_replay_window(
+            market_label=replay.market_slug,
+            count_label="book events",
+            count=book_event_count,
+            min_record_count=request.min_record_count,
+            prices=prices_tuple,
+            min_price_range=request.min_price_range,
+        ):
+            return None
+
+        return self._build_loaded_replay(
+            replay=replay,
+            instrument=loader.instrument,
+            records=records,
+            count=book_event_count,
+            count_key="book_events",
+            market_key="slug",
+            market_id=replay.market_slug,
+            prices=prices_tuple,
+            outcome=selected_outcome,
+            realized_outcome=_loader_realized_outcome(loader),
+            metadata=dict(replay.metadata or {}),
+            requested_window=_requested_window(start, end),
+        )
+
+    async def load_replays(
+        self,
+        replays: Sequence[BookReplay],
+        *,
+        request: ReplayLoadRequest,
+        workers: int,
+    ) -> list[LoadedReplay]:
+        resolved_replays = [
+            self._resolve_book_replay_window(replay, request=request, source_label="Telonex")
+            for replay in replays
+        ]
+        for resolved in resolved_replays:
+            self._emit_book_replay_start(resolved=resolved, vendor="telonex")
+
+        loader_cls = _resolve_backtest_compat_symbol(
+            "PolymarketTelonexBookDataLoader", PolymarketTelonexBookDataLoader
+        )
+
+        async def _prepare(resolved: _ResolvedBookReplay) -> _PreparedBookReplay | None:
+            replay = resolved.replay
+            try:
+                loader = await loader_cls.from_market_slug(
+                    replay.market_slug, token_index=replay.token_index
+                )
+                return _PreparedBookReplay(
+                    resolved=resolved,
+                    loader=loader,
+                    outcome=str(loader.instrument.outcome or replay.outcome or ""),
+                )
+            except Exception as exc:
+                self._emit_book_replay_fetch_error(
+                    replay=replay,
+                    vendor="telonex",
+                    source_label="Telonex",
+                    error=exc,
+                )
+                return None
+
+        prepared = [
+            item
+            for item in await _gather_bounded(resolved_replays, workers=workers, func=_prepare)
+            if item is not None
+        ]
+        book_workers = _resolve_telonex_book_workers(prepared, requested_workers=workers)
+        if prepared and book_workers != workers:
+            emit_loader_event(
+                f"Telonex book stage using {book_workers} worker(s) "
+                f"(replay loader requested {workers})",
+                stage="runtime",
+                vendor="telonex",
+                status="complete",
+                platform="polymarket",
+                data_type="book",
+            )
+        materialize_workers = _resolve_materialize_workers(book_workers)
+        _emit_materialize_worker_event(
+            vendor="telonex",
+            materialize_workers=materialize_workers,
+            source_workers=book_workers,
+        )
+        preloaded_books_by_index: dict[int, _LoadedBookReplay] = {}
+        prepared_index_by_id = {id(item): index for index, item in enumerate(prepared)}
+
+        async def _load_book(prepared_replay: _PreparedBookReplay) -> _LoadedBookReplay | None:
+            replay = prepared_replay.resolved.replay
+            try:
+                records = tuple(
+                    await asyncio.to_thread(
+                        prepared_replay.loader.load_order_book_deltas,
+                        prepared_replay.resolved.start,
+                        prepared_replay.resolved.end,
+                        market_slug=replay.market_slug,
+                        token_index=replay.token_index,
+                        outcome=prepared_replay.outcome or None,
+                    )
+                )
+                return _LoadedBookReplay(
+                    prepared=prepared_replay,
+                    book_records=records,
+                    book_event_count=len(records),
+                )
+            except Exception as exc:
+                self._emit_book_replay_fetch_error(
+                    replay=replay,
+                    vendor="telonex",
+                    source_label="Telonex",
+                    error=exc,
+                )
+                return None
+
+        loaded_books = await _gather_bounded(
+            prepared,
+            workers=book_workers,
+            func=_load_book,
+        )
+        failed_book_indexes: set[int] = set()
+        for index, loaded_book in enumerate(loaded_books):
+            if loaded_book is None:
+                failed_book_indexes.add(index)
+                continue
+            preloaded_index = prepared_index_by_id.get(id(loaded_book.prepared))
+            if preloaded_index is not None:
+                preloaded_books_by_index[preloaded_index] = loaded_book
+
+        async def _load_book_trades_and_build(
+            prepared_replay: _PreparedBookReplay,
+        ) -> LoadedReplay | None:
+            replay = prepared_replay.resolved.replay
+            preloaded_index = prepared_index_by_id.get(id(prepared_replay))
+            loaded_book = (
+                preloaded_books_by_index.pop(preloaded_index, None)
+                if preloaded_index is not None
+                else None
+            )
+            if preloaded_index in failed_book_indexes:
+                return None
+            if loaded_book is None:
+                loaded_book = await _load_book(prepared_replay)
+            if loaded_book is None:
+                return None
+            try:
+                trade_records = await _load_trade_ticks(
+                    prepared_replay.loader,
+                    start=prepared_replay.resolved.start,
+                    end=prepared_replay.resolved.end,
+                    market_label=replay.market_slug,
+                )
+                records = await asyncio.to_thread(
+                    _merge_records,
+                    book_records=loaded_book.book_records,
+                    trade_records=trade_records,
+                )
+                return await asyncio.to_thread(
+                    self._build_loaded_book_replay_or_none,
+                    prepared=prepared_replay,
+                    records=records,
+                    book_event_count=loaded_book.book_event_count,
+                    request=request,
+                    vendor="telonex",
+                    source_label="Telonex",
+                )
+            except Exception as exc:
+                self._emit_book_replay_fetch_error(
+                    replay=replay,
+                    vendor="telonex",
+                    source_label="Telonex",
+                    error=exc,
+                )
+                return None
+
+        loaded = await _gather_bounded(
+            prepared,
+            workers=materialize_workers,
+            func=_load_book_trades_and_build,
+        )
+        return [loaded_sim for loaded_sim in loaded if loaded_sim is not None]
+
+
+BUILTIN_REPLAY_ADAPTERS: tuple[HistoricalReplayAdapter, ...] = (
+    PolymarketPMXTBookReplayAdapter(),
+    PolymarketTelonexBookReplayAdapter(),
+)
+
+
+__all__ = ["BUILTIN_REPLAY_ADAPTERS", "L2_BOOK_ENGINE_PROFILE"]

@@ -1,0 +1,12 @@
+.env
+.venv/
+custom_pricing_rules.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Rust
+rust_mm_bot/target/

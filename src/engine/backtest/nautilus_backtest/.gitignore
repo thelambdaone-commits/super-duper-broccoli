@@ -1,0 +1,61 @@
+# macOS
+.DS_Store
+
+# Environment
+.env
+.uv-cache/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+wheels/
+*.egg-info
+*.pyd
+
+# Virtual environment
+.venv
+
+# MkDocs build output
+site/
+
+# Data (contents come from submodule; symlink is tracked)
+data/
+
+# Output
+output/
+kalshi_catalog/
+
+# Live runner/scaffold files are tracked; private artifacts are ignored in live/.gitignore.
+
+# Local relay runtime
+.pmxt-relay/
+
+# Temp
+.tmp/
+
+# Rust
+target/
+crates/*/target/
+crates/*/uv.lock
+*.so
+*.dylib
+*.dll
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.benchmarks/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+.nox/
+.tox/
+junit.xml
+test-results/
+.claude/worktrees/

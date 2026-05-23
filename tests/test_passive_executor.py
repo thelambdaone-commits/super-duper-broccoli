@@ -98,6 +98,20 @@ class TestMakerFirst:
         assert executor.reject_count == 1
 
     @pytest.mark.asyncio
+    async def test_maker_local_sizing_reject_does_not_fall_back_to_taker(
+        self, executor: PassiveExecutor, mock_freqai: AsyncMock,
+    ) -> None:
+        mock_freqai.post_order.side_effect = ValueError(
+            "[Sizing] Ordre rejete: notionnel (0.61) < minimum Polymarket (5.00)"
+        )
+
+        result = await executor.execute("SOL", "BUY", 0.50, 1.0)
+
+        assert result["status"] == "REJECTED_SIZING"
+        assert result["execution_path"] == "maker"
+        mock_freqai.create_order.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_maker_cancel_fails_still_falls_back(
         self, executor: PassiveExecutor, mock_freqai: AsyncMock,
     ) -> None:

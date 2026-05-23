@@ -1,0 +1,1721 @@
+# Added by Evan Kolberg to the NautilusTrader-derived subtree on 2026-03-15.
+# Modified in this repository on 2026-03-19 and 2026-04-02.
+# Distributed under the GNU Lesser General Public License Version 3.0 or later.
+# See the repository NOTICE file for provenance and licensing scope.
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import tempfile
+import time
+import warnings
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
+from datetime import UTC
+from pathlib import Path
+from typing import ClassVar
+from urllib.request import Request, urlopen
+
+import duckdb
+import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
+from nautilus_trader.adapters.polymarket.loaders import PolymarketDataLoader
+from nautilus_trader.model.data import OrderBookDelta
+from nautilus_trader.model.data import OrderBookDeltas
+
+from prediction_market_extensions._native import (
+    decimal_seconds_to_ns,
+    fixed_raw_values,
+    float_seconds_to_ms_string,
+    pmxt_archive_hours_for_window_ns,
+    pmxt_fixed_delta_rows,
+    pmxt_payload_delta_rows,
+    pmxt_payload_sort_key,
+)
+from prediction_market_extensions._runtime_log import (
+    emit_loader_event,
+    emit_loader_progress_snapshot,
+    loader_progress_logs_enabled,
+)
+
+
+def _raw_fixed_values(values: Sequence[object], precision: int) -> list[int]:
+    return fixed_raw_values(values, precision)
+
+
+def _unique_tmp_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.tmp.{os.getpid()}.{time.monotonic_ns()}")
+
+
+@dataclass
+class _PMXTOrderBookConversionState:
+    has_snapshot: bool = False
+    last_payload_key: tuple[int, int] | None = None
+
+
+class PolymarketPMXTDataLoader(PolymarketDataLoader):
+    """
+    Historical Polymarket L2 loader backed by the PMXT hourly archive.
+
+    The PMXT archive stores one parquet file per UTC hour. Each row contains a
+    market-scoped order-book event payload encoded as JSON. This loader filters
+    to one market ID at parquet-scan time, then filters to the target token in
+    Python and converts the payloads into Nautilus `OrderBookDeltas` records.
+    """
+
+    _PMXT_BASE_URL = "https://r2v2.pmxt.dev"
+    _PMXT_REMOTE_COLUMNS: ClassVar[list[str]] = ["market_id", "update_type", "data"]
+    _PMXT_COLUMNS: ClassVar[list[str]] = ["update_type", "data"]
+    _PMXT_FIXED_RAW_REQUIRED_COLUMNS: ClassVar[set[str]] = {
+        "timestamp",
+        "market",
+        "event_type",
+        "asset_id",
+        "bids",
+        "asks",
+        "price",
+        "size",
+        "side",
+    }
+    _PMXT_FIXED_COLUMNS: ClassVar[list[str]] = [
+        "event_type",
+        "timestamp_ns",
+        "asset_id",
+        "bids",
+        "asks",
+        "price",
+        "size",
+        "side",
+    ]
+    _PMXT_CACHE_DIR_ENV = "PMXT_CACHE_DIR"
+    _PMXT_DISABLE_CACHE_ENV = "PMXT_DISABLE_CACHE"
+    _PMXT_LOCAL_ARCHIVE_DIR_ENV = "PMXT_LOCAL_ARCHIVE_DIR"
+    _PMXT_PREFETCH_WORKERS_ENV = "PMXT_PREFETCH_WORKERS"
+    _PMXT_SCAN_BATCH_SIZE_ENV = "PMXT_SCAN_BATCH_SIZE"
+    _PMXT_WRITE_MATERIALIZED_CACHE_ENV = "PMXT_WRITE_MATERIALIZED_CACHE"
+    _PMXT_WRITE_WINDOW_CACHE_ENV = "PMXT_WRITE_WINDOW_CACHE"
+    _PMXT_WINDOW_CACHE_SUBDIR = "window-v1"
+    _PMXT_DELTAS_CACHE_SUBDIR = "book-deltas-v1"
+    _PMXT_DELTAS_CACHE_COLUMN_ORDER: ClassVar[list[str]] = [
+        "event_index",
+        "action",
+        "side",
+        "price",
+        "size",
+        "flags",
+        "sequence",
+        "ts_event",
+        "ts_init",
+    ]
+    _PMXT_DELTAS_CACHE_COLUMNS: ClassVar[set[str]] = set(_PMXT_DELTAS_CACHE_COLUMN_ORDER)
+    _PMXT_DEFAULT_PREFETCH_WORKERS = 16
+    _PMXT_DEFAULT_SCAN_BATCH_SIZE = 100_000
+    _PMXT_DOWNLOAD_CHUNK_SIZE = 4 * 1024 * 1024
+    _PMXT_TEMP_DOWNLOAD_ROOT = Path(tempfile.gettempdir()) / "nautilus_trader" / "pmxt-downloads"
+    _PMXT_TEMP_DOWNLOAD_STALE_SECONDS = 24 * 60 * 60
+
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self._pmxt_cache_dir = self._resolve_cache_dir()
+        self._pmxt_local_archive_dir = self._resolve_local_archive_dir()
+        self._pmxt_prefetch_workers = self._resolve_prefetch_workers()
+        self._pmxt_scan_batch_size = self._resolve_scan_batch_size()
+        self._pmxt_download_progress_callback: (
+            Callable[[str, int, int | None, bool], None] | None
+        ) = None
+        self._pmxt_scan_progress_callback: (
+            Callable[[str, int, int, int, int | None, bool], None] | None
+        ) = None
+        self._pmxt_progress_size_cache: dict[str, int | None] = {}
+        self._pmxt_temp_download_root = self._PMXT_TEMP_DOWNLOAD_ROOT
+        # Hours that no source could supply during the most recent
+        # ``load_order_book_deltas`` call. Strategies and runners can read
+        # this to surface coverage gaps instead of silently trusting an
+        # apparently-continuous record stream.
+        self._pmxt_last_load_gap_hours: tuple[pd.Timestamp, ...] = ()
+        self._cleanup_stale_temp_downloads()
+
+    @property
+    def last_load_gap_hours(self) -> tuple[pd.Timestamp, ...]:
+        """UTC hour-floored timestamps of archive hours that failed to load."""
+        return self._pmxt_last_load_gap_hours
+
+    @staticmethod
+    def _normalize_timestamp(value: pd.Timestamp | str | None) -> pd.Timestamp | None:
+        if value is None:
+            return None
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize(UTC)
+        return ts.tz_convert(UTC)
+
+    @staticmethod
+    def _archive_hours(start: pd.Timestamp, end: pd.Timestamp) -> list[pd.Timestamp]:
+        start_ts = PolymarketPMXTDataLoader._normalize_timestamp(start)
+        end_ts = PolymarketPMXTDataLoader._normalize_timestamp(end)
+        if start_ts is None or end_ts is None:
+            return []
+
+        return [
+            pd.Timestamp(hour_ns, unit="ns", tz=UTC)
+            for hour_ns in pmxt_archive_hours_for_window_ns(
+                int(start_ts.value),
+                int(end_ts.value),
+            )
+        ]
+
+    @classmethod
+    def _archive_filename_for_hour(cls, hour: pd.Timestamp) -> str:
+        ts = hour.tz_convert(UTC)
+        return f"polymarket_orderbook_{ts.strftime('%Y-%m-%dT%H')}.parquet"
+
+    @classmethod
+    def _archive_url_for_hour(cls, hour: pd.Timestamp) -> str:
+        return f"{cls._PMXT_BASE_URL}/{cls._archive_filename_for_hour(hour)}"
+
+    @classmethod
+    def _archive_relative_path_for_hour(cls, hour: pd.Timestamp) -> str:
+        ts = hour.tz_convert(UTC)
+        filename = cls._archive_filename_for_hour(ts)
+        return (
+            Path(ts.strftime("%Y")) / ts.strftime("%m") / ts.strftime("%d") / filename
+        ).as_posix()
+
+    @staticmethod
+    def _env_flag_enabled(value: str | None) -> bool:
+        if value is None:
+            return False
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+    @classmethod
+    def _default_cache_dir(cls) -> Path:
+        xdg_cache_home = os.getenv("XDG_CACHE_HOME")
+        base_dir = Path(xdg_cache_home).expanduser() if xdg_cache_home else Path.home() / ".cache"
+        return base_dir / "nautilus_trader" / "pmxt"
+
+    @classmethod
+    def _resolve_cache_dir(cls) -> Path | None:
+        if cls._env_flag_enabled(os.getenv(cls._PMXT_DISABLE_CACHE_ENV)):
+            return None
+
+        configured = os.getenv(cls._PMXT_CACHE_DIR_ENV)
+        if configured is None:
+            return cls._default_cache_dir()
+
+        value = configured.strip()
+        if not value or value.casefold() in {"0", "false", "no", "off", "none", "disabled"}:
+            return None
+        if value.casefold() in {"1", "true", "yes", "on", "default"}:
+            return cls._default_cache_dir()
+        return Path(value).expanduser()
+
+    @classmethod
+    def _resolve_local_archive_dir(cls) -> Path | None:
+        configured = os.getenv(cls._PMXT_LOCAL_ARCHIVE_DIR_ENV)
+        if configured is None:
+            return None
+
+        value = configured.strip()
+        if not value or value.casefold() in {"0", "false", "no", "off", "none", "disabled"}:
+            return None
+        return Path(value).expanduser()
+
+    @classmethod
+    def _resolve_prefetch_workers(cls) -> int:
+        configured = os.getenv(cls._PMXT_PREFETCH_WORKERS_ENV)
+        if configured is None:
+            return cls._PMXT_DEFAULT_PREFETCH_WORKERS
+
+        value = configured.strip()
+        if not value:
+            return cls._PMXT_DEFAULT_PREFETCH_WORKERS
+
+        try:
+            return max(1, int(value))
+        except ValueError:
+            return cls._PMXT_DEFAULT_PREFETCH_WORKERS
+
+    @classmethod
+    def _resolve_scan_batch_size(cls) -> int:
+        configured = os.getenv(cls._PMXT_SCAN_BATCH_SIZE_ENV)
+        if configured is None:
+            return cls._PMXT_DEFAULT_SCAN_BATCH_SIZE
+
+        value = configured.strip()
+        if not value:
+            return cls._PMXT_DEFAULT_SCAN_BATCH_SIZE
+
+        try:
+            return max(1, int(value))
+        except ValueError:
+            return cls._PMXT_DEFAULT_SCAN_BATCH_SIZE
+
+    @classmethod
+    def _write_materialized_cache_enabled(cls) -> bool:
+        return cls._env_flag_enabled(os.getenv(cls._PMXT_WRITE_MATERIALIZED_CACHE_ENV))
+
+    @classmethod
+    def _write_window_cache_enabled(cls) -> bool:
+        return cls._env_flag_enabled(os.getenv(cls._PMXT_WRITE_WINDOW_CACHE_ENV))
+
+    @classmethod
+    def _market_cache_path_for_hour(
+        cls, cache_dir: Path, condition_id: str, token_id: str, hour: pd.Timestamp
+    ) -> Path:
+        return cache_dir / condition_id / token_id / cls._archive_filename_for_hour(hour)
+
+    def _cache_path_for_hour(self, hour: pd.Timestamp) -> Path | None:
+        if self._pmxt_cache_dir is None or self.condition_id is None or self.token_id is None:
+            return None
+
+        return self._market_cache_path_for_hour(
+            self._pmxt_cache_dir, self.condition_id, self.token_id, hour
+        )
+
+    def _window_cache_path_for_range(self, start: pd.Timestamp, end: pd.Timestamp) -> Path | None:
+        if self._pmxt_cache_dir is None or self.condition_id is None or self.token_id is None:
+            return None
+        start_ts = self._normalize_timestamp(start)
+        end_ts = self._normalize_timestamp(end)
+        if start_ts is None or end_ts is None or end_ts <= start_ts:
+            return None
+        return (
+            self._pmxt_cache_dir
+            / self._PMXT_WINDOW_CACHE_SUBDIR
+            / self.condition_id
+            / self.token_id
+            / f"{int(start_ts.value)}-{int(end_ts.value)}.parquet"
+        )
+
+    def _deltas_cache_path_for_range(self, start: pd.Timestamp, end: pd.Timestamp) -> Path | None:
+        if self._pmxt_cache_dir is None or self.condition_id is None or self.token_id is None:
+            return None
+        start_ts = self._normalize_timestamp(start)
+        end_ts = self._normalize_timestamp(end)
+        if start_ts is None or end_ts is None or end_ts <= start_ts:
+            return None
+        return (
+            self._pmxt_cache_dir
+            / self._PMXT_DELTAS_CACHE_SUBDIR
+            / self.condition_id
+            / self.token_id
+            / f"{int(start_ts.value)}-{int(end_ts.value)}.parquet"
+        )
+
+    @staticmethod
+    def _hour_label(hour: pd.Timestamp) -> str:
+        try:
+            return hour.tz_convert(UTC).strftime("%Y-%m-%dT%H:00Z")
+        except Exception:
+            return str(hour)
+
+    def _emit_cache_write_event(
+        self,
+        *,
+        hour: pd.Timestamp,
+        cache_path: Path,
+        table: pa.Table,
+        level: str,
+        status: str,
+        message: str,
+        error: str | None = None,
+    ) -> None:
+        attrs: dict[str, object] = {"hour": self._hour_label(hour)}
+        if error is not None:
+            attrs["error"] = error
+        emit_loader_event(
+            message,
+            level=level,
+            stage="cache_write",
+            vendor="pmxt",
+            status=status,
+            platform="polymarket",
+            data_type="book",
+            source_kind="cache",
+            source=f"pmxt-cache::{cache_path}",
+            cache_path=str(cache_path),
+            condition_id=getattr(self, "condition_id", None),
+            token_id=getattr(self, "token_id", None),
+            rows=int(table.num_rows),
+            attrs=attrs,
+            stacklevel=3,
+        )
+
+    def _write_market_cache_if_enabled(self, hour: pd.Timestamp, table: pa.Table) -> None:
+        if self._pmxt_cache_dir is None:
+            return
+        cache_path = self._cache_path_for_hour(hour)
+        if cache_path is None:
+            return
+        try:
+            self._write_market_cache(hour, table)
+            self._emit_cache_write_event(
+                hour=hour,
+                cache_path=cache_path,
+                table=table,
+                level="INFO",
+                status="complete",
+                message=(
+                    f"Wrote PMXT filtered market cache for {self._hour_label(hour)} "
+                    f"({table.num_rows} rows)"
+                ),
+            )
+        except (OSError, pa.ArrowException) as exc:
+            self._emit_cache_write_event(
+                hour=hour,
+                cache_path=cache_path,
+                table=table,
+                level="ERROR",
+                status="error",
+                message=f"Failed to write PMXT filtered market cache for {self._hour_label(hour)}",
+                error=str(exc),
+            )
+
+    @classmethod
+    def _local_archive_candidate_paths_for_hour(
+        cls, archive_dir: Path, hour: pd.Timestamp
+    ) -> tuple[Path, ...]:
+        ts = hour.tz_convert(UTC)
+        filename = cls._archive_filename_for_hour(ts)
+        return (archive_dir / filename, archive_dir / ts.strftime("%Y/%m/%d") / filename)
+
+    def _local_archive_paths_for_hour(self, hour: pd.Timestamp) -> tuple[Path, ...]:
+        if self._pmxt_local_archive_dir is None:
+            return ()
+        return self._local_archive_candidate_paths_for_hour(self._pmxt_local_archive_dir, hour)
+
+    def _market_filter(self):
+        return (ds.field("market_id") == self.condition_id) & (
+            (ds.field("update_type") == "book_snapshot")
+            | (ds.field("update_type") == "price_change")
+        )
+
+    @classmethod
+    def _empty_market_table(cls) -> pa.Table:
+        return pa.table(
+            {"update_type": pa.array([], type=pa.string()), "data": pa.array([], type=pa.string())}
+        )
+
+    @classmethod
+    def _is_raw_payload_schema(cls, names: Sequence[str]) -> bool:
+        return {"market_id", "update_type", "data"}.issubset(set(names))
+
+    @classmethod
+    def _is_fixed_schema(cls, names: Sequence[str]) -> bool:
+        return set(cls._PMXT_FIXED_COLUMNS).issubset(set(names))
+
+    @classmethod
+    def _is_raw_fixed_schema(cls, names: Sequence[str]) -> bool:
+        return cls._PMXT_FIXED_RAW_REQUIRED_COLUMNS.issubset(set(names))
+
+    @classmethod
+    def _to_market_batch(cls, batch: pa.RecordBatch) -> pa.RecordBatch:
+        if cls._is_fixed_schema(batch.schema.names):
+            if batch.schema.names == cls._PMXT_FIXED_COLUMNS:
+                return batch
+            return pa.RecordBatch.from_arrays(
+                [batch.column(name) for name in cls._PMXT_FIXED_COLUMNS],
+                names=cls._PMXT_FIXED_COLUMNS,
+            )
+        if batch.schema.names == cls._PMXT_COLUMNS:
+            return batch
+        return pa.RecordBatch.from_arrays(
+            [batch.column("update_type"), batch.column("data")], names=cls._PMXT_COLUMNS
+        )
+
+    def _filter_batch_to_token(self, batch: pa.RecordBatch) -> pa.RecordBatch:
+        if self.token_id is None or batch.num_rows == 0:
+            return self._to_market_batch(batch)
+
+        if self._is_fixed_schema(batch.schema.names):
+            token_mask = pc.equal(batch.column("asset_id"), self.token_id)
+            token_mask = pc.fill_null(token_mask, False)
+            return self._to_market_batch(batch.filter(token_mask))
+
+        token_mask = pc.match_substring_regex(
+            batch.column("data"), rf'"token_id"\s*:\s*"{re.escape(self.token_id)}"'
+        )
+        token_mask = pc.fill_null(token_mask, False)
+        return self._to_market_batch(batch.filter(token_mask))
+
+    def _filter_raw_batch(self, batch: pa.RecordBatch) -> pa.RecordBatch:
+        if batch.num_rows == 0:
+            return self._to_market_batch(batch)
+
+        filtered_batch = batch
+        if self.condition_id is not None:
+            if self._is_raw_payload_schema(filtered_batch.schema.names):
+                market_mask = pc.equal(filtered_batch.column("market_id"), self.condition_id)
+                market_mask = pc.fill_null(market_mask, False)
+                update_type_mask = pc.is_in(
+                    filtered_batch.column("update_type"),
+                    value_set=pa.array(["book_snapshot", "price_change"]),
+                )
+                update_type_mask = pc.fill_null(update_type_mask, False)
+                filtered_batch = filtered_batch.filter(pc.and_(market_mask, update_type_mask))
+            elif self._is_fixed_schema(filtered_batch.schema.names):
+                event_type_mask = pc.is_in(
+                    filtered_batch.column("event_type"),
+                    value_set=pa.array(["book", "price_change"]),
+                )
+                event_type_mask = pc.fill_null(event_type_mask, False)
+                filtered_batch = filtered_batch.filter(event_type_mask)
+
+        return self._filter_batch_to_token(filtered_batch)
+
+    def _load_cached_market_table(self, hour: pd.Timestamp) -> pa.Table | None:
+        cache_path = self._cache_path_for_hour(hour)
+        if cache_path is None or not cache_path.exists():
+            return None
+
+        try:
+            dataset = ds.dataset(str(cache_path), format="parquet")
+            columns = (
+                self._PMXT_FIXED_COLUMNS
+                if self._is_fixed_schema(dataset.schema.names)
+                else self._PMXT_COLUMNS
+            )
+            return dataset.scanner(columns=columns).to_table()
+        except (OSError, ValueError, pa.ArrowException):
+            cache_path.unlink(missing_ok=True)
+            return None
+
+    def _load_cached_market_batches(self, hour: pd.Timestamp) -> list[pa.RecordBatch] | None:
+        cache_path = self._cache_path_for_hour(hour)
+        if cache_path is None or not cache_path.exists():
+            return None
+
+        try:
+            dataset = ds.dataset(str(cache_path), format="parquet")
+            columns = (
+                self._PMXT_FIXED_COLUMNS
+                if self._is_fixed_schema(dataset.schema.names)
+                else self._PMXT_COLUMNS
+            )
+            scanner = dataset.scanner(columns=columns)
+            return list(scanner.to_batches())
+        except (OSError, ValueError, pa.ArrowException):
+            cache_path.unlink(missing_ok=True)
+            return None
+
+    def _load_window_cache_batches(
+        self, start: pd.Timestamp, end: pd.Timestamp
+    ) -> list[pa.RecordBatch] | None:
+        cache_path = self._window_cache_path_for_range(start, end)
+        if cache_path is None or not cache_path.exists():
+            return None
+
+        try:
+            dataset = ds.dataset(str(cache_path), format="parquet")
+            columns = (
+                self._PMXT_FIXED_COLUMNS
+                if self._is_fixed_schema(dataset.schema.names)
+                else self._PMXT_COLUMNS
+            )
+            batches = list(dataset.scanner(columns=columns).to_batches())
+            rows = sum(batch.num_rows for batch in batches)
+            emit_loader_event(
+                f"Loaded PMXT window cache ({rows} rows)",
+                stage="cache_read",
+                status="cache_hit",
+                vendor="pmxt",
+                platform="polymarket",
+                data_type="book",
+                source_kind="cache",
+                cache_path=str(cache_path),
+                rows=int(rows),
+                condition_id=getattr(self, "condition_id", None),
+                token_id=getattr(self, "token_id", None),
+                attrs={
+                    "window_start_ns": int(self._normalize_timestamp(start).value),
+                    "window_end_ns": int(self._normalize_timestamp(end).value),
+                },
+            )
+            return batches
+        except (OSError, ValueError, pa.ArrowException):
+            cache_path.unlink(missing_ok=True)
+            return None
+
+    def _load_deltas_cache_for_range(
+        self, start: pd.Timestamp, end: pd.Timestamp
+    ) -> list[OrderBookDeltas] | None:
+        cache_path = self._deltas_cache_path_for_range(start, end)
+        if cache_path is None or not cache_path.exists():
+            return None
+
+        try:
+            table = pq.read_table(cache_path, columns=self._PMXT_DELTAS_CACHE_COLUMN_ORDER)
+            if not self._PMXT_DELTAS_CACHE_COLUMNS.issubset(set(table.schema.names)):
+                raise ValueError("missing required PMXT materialized deltas cache columns")
+            data = {
+                name: table.column(name).to_pylist()
+                for name in self._PMXT_DELTAS_CACHE_COLUMN_ORDER
+            }
+            records = self._deltas_records_from_columns(data)
+            emit_loader_event(
+                f"Loaded PMXT materialized deltas cache ({len(records)} events)",
+                stage="cache_read",
+                status="cache_hit",
+                vendor="pmxt",
+                platform="polymarket",
+                data_type="book",
+                source_kind="cache",
+                cache_path=str(cache_path),
+                rows=int(table.num_rows),
+                book_events=len(records),
+                condition_id=getattr(self, "condition_id", None),
+                token_id=getattr(self, "token_id", None),
+                attrs={
+                    "window_start_ns": int(self._normalize_timestamp(start).value),
+                    "window_end_ns": int(self._normalize_timestamp(end).value),
+                },
+            )
+            return records
+        except (OSError, ValueError, pa.ArrowException):
+            cache_path.unlink(missing_ok=True)
+            return None
+
+    @staticmethod
+    def _deltas_records_to_table(records: Sequence[OrderBookDeltas]) -> pa.Table | None:
+        if records and not hasattr(records[0], "deltas"):
+            return None
+
+        event_indexes: list[int] = []
+        actions: list[int] = []
+        sides: list[int] = []
+        prices: list[float] = []
+        sizes: list[float] = []
+        flags: list[int] = []
+        sequences: list[int] = []
+        ts_events: list[int] = []
+        ts_inits: list[int] = []
+        for event_index, record in enumerate(records):
+            for delta in record.deltas:
+                event_indexes.append(event_index)
+                actions.append(int(delta.action))
+                sides.append(int(delta.order.side))
+                prices.append(float(delta.order.price))
+                sizes.append(float(delta.order.size))
+                flags.append(int(delta.flags))
+                sequences.append(int(delta.sequence))
+                ts_events.append(int(delta.ts_event))
+                ts_inits.append(int(delta.ts_init))
+        return pa.table(
+            {
+                "event_index": pa.array(event_indexes, pa.int32()),
+                "action": pa.array(actions, pa.uint8()),
+                "side": pa.array(sides, pa.uint8()),
+                "price": pa.array(prices, pa.float64()),
+                "size": pa.array(sizes, pa.float64()),
+                "flags": pa.array(flags, pa.uint8()),
+                "sequence": pa.array(sequences, pa.int32()),
+                "ts_event": pa.array(ts_events, pa.int64()),
+                "ts_init": pa.array(ts_inits, pa.int64()),
+            }
+        )
+
+    def _write_deltas_cache_for_range(
+        self,
+        records: Sequence[OrderBookDeltas],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> None:
+        cache_path = self._deltas_cache_path_for_range(start, end)
+        if cache_path is None:
+            return
+
+        table = self._deltas_records_to_table(records)
+        if table is None:
+            return
+
+        tmp_path = _unique_tmp_path(cache_path)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(table, tmp_path, compression="zstd")
+            os.replace(tmp_path, cache_path)
+            emit_loader_event(
+                f"Wrote PMXT materialized deltas cache ({len(records)} events)",
+                stage="cache_write",
+                status="complete",
+                vendor="pmxt",
+                platform="polymarket",
+                data_type="book",
+                source_kind="cache",
+                cache_path=str(cache_path),
+                rows=int(table.num_rows),
+                book_events=len(records),
+                condition_id=getattr(self, "condition_id", None),
+                token_id=getattr(self, "token_id", None),
+                attrs={
+                    "window_start_ns": int(self._normalize_timestamp(start).value),
+                    "window_end_ns": int(self._normalize_timestamp(end).value),
+                },
+            )
+        except (OSError, ValueError, pa.ArrowException) as exc:
+            emit_loader_event(
+                "Failed to write PMXT materialized deltas cache",
+                level="ERROR",
+                stage="cache_write",
+                status="error",
+                vendor="pmxt",
+                platform="polymarket",
+                data_type="book",
+                source_kind="cache",
+                cache_path=str(cache_path),
+                rows=int(table.num_rows),
+                book_events=len(records),
+                condition_id=getattr(self, "condition_id", None),
+                token_id=getattr(self, "token_id", None),
+                attrs={
+                    "window_start_ns": int(self._normalize_timestamp(start).value),
+                    "window_end_ns": int(self._normalize_timestamp(end).value),
+                    "error": str(exc),
+                },
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def _write_market_cache(self, hour: pd.Timestamp, table: pa.Table) -> None:
+        cache_path = self._cache_path_for_hour(hour)
+        if cache_path is None:
+            return
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = _unique_tmp_path(cache_path)
+        try:
+            pq.write_table(table, tmp_path)
+            os.replace(tmp_path, cache_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def _scan_raw_market_batches(
+        self,
+        dataset: ds.Dataset,
+        *,
+        batch_size: int,
+        source: str | None = None,
+        total_bytes: int | None = None,
+    ) -> list[pa.RecordBatch]:
+        scanner = dataset.scanner(
+            columns=self._PMXT_REMOTE_COLUMNS, filter=self._market_filter(), batch_size=batch_size
+        )
+        batches: list[pa.RecordBatch] = []
+        scanned_batches = 0
+        scanned_rows = 0
+        matched_rows = 0
+        last_emit = 0.0
+        if source is not None:
+            self._emit_scan_progress(
+                source,
+                scanned_batches=scanned_batches,
+                scanned_rows=scanned_rows,
+                matched_rows=matched_rows,
+                total_bytes=total_bytes,
+                finished=False,
+            )
+        for batch in scanner.to_batches():
+            scanned_batches += 1
+            scanned_rows += batch.num_rows
+            filtered_batch = self._filter_batch_to_token(batch)
+            matched_rows += filtered_batch.num_rows
+            if filtered_batch.num_rows:
+                batches.append(filtered_batch)
+            if source is not None:
+                now = time.monotonic()
+                if scanned_batches == 1 or (now - last_emit) >= 0.2:
+                    self._emit_scan_progress(
+                        source,
+                        scanned_batches=scanned_batches,
+                        scanned_rows=scanned_rows,
+                        matched_rows=matched_rows,
+                        total_bytes=total_bytes,
+                        finished=False,
+                    )
+                    last_emit = now
+        if source is not None:
+            self._emit_scan_progress(
+                source,
+                scanned_batches=scanned_batches,
+                scanned_rows=scanned_rows,
+                matched_rows=matched_rows,
+                total_bytes=total_bytes,
+                finished=True,
+            )
+        return batches
+
+    @staticmethod
+    def _market_stats_value(market_type: pa.DataType, condition_id: str) -> bytes | str:
+        if (
+            pa.types.is_binary(market_type)
+            or pa.types.is_large_binary(market_type)
+            or pa.types.is_fixed_size_binary(market_type)
+        ):
+            return condition_id.encode("utf-8")
+        return condition_id
+
+    def _matching_raw_fixed_market_row_groups(
+        self, parquet_file: pq.ParquetFile
+    ) -> list[int] | None:
+        if self.condition_id is None:
+            return None
+
+        schema = parquet_file.schema_arrow
+        try:
+            market_index = schema.names.index("market")
+        except ValueError:
+            return None
+        token_index = schema.names.index("asset_id") if "asset_id" in schema.names else None
+
+        market_value = self._market_stats_value(schema.field("market").type, self.condition_id)
+        row_groups: list[int] = []
+        for index in range(parquet_file.num_row_groups):
+            column = parquet_file.metadata.row_group(index).column(market_index)
+            stats = column.statistics
+            if stats is None or stats.min is None or stats.max is None:
+                return None
+            try:
+                market_matches = stats.min <= market_value <= stats.max
+            except TypeError:
+                return None
+            if not market_matches:
+                continue
+            if self.token_id is not None and token_index is not None:
+                token_stats = parquet_file.metadata.row_group(index).column(token_index).statistics
+                if (
+                    token_stats is not None
+                    and token_stats.min is not None
+                    and token_stats.max is not None
+                ):
+                    try:
+                        if not token_stats.min <= self.token_id <= token_stats.max:
+                            continue
+                    except TypeError:
+                        pass
+            row_groups.append(index)
+        return row_groups
+
+    def _load_raw_fixed_market_batches_pyarrow(
+        self,
+        parquet_path: Path,
+        *,
+        batch_size: int,
+        progress_source: str,
+        total_bytes: int | None,
+    ) -> list[pa.RecordBatch] | None:
+        if self.condition_id is None:
+            return None
+
+        parquet_file = pq.ParquetFile(parquet_path)
+        if not self._is_raw_fixed_schema(parquet_file.schema_arrow.names):
+            return None
+
+        row_groups = self._matching_raw_fixed_market_row_groups(parquet_file)
+        if row_groups is None:
+            return None
+
+        if progress_source is not None:
+            self._emit_scan_progress(
+                progress_source,
+                scanned_batches=0,
+                scanned_rows=0,
+                matched_rows=0,
+                total_bytes=total_bytes,
+                finished=False,
+            )
+
+        if not row_groups:
+            if progress_source is not None:
+                self._emit_scan_progress(
+                    progress_source,
+                    scanned_batches=0,
+                    scanned_rows=0,
+                    matched_rows=0,
+                    total_bytes=total_bytes,
+                    finished=True,
+                )
+            return []
+
+        raw_columns = [
+            "event_type",
+            "timestamp",
+            "market",
+            "asset_id",
+            "bids",
+            "asks",
+            "price",
+            "size",
+            "side",
+        ]
+        raw_table = parquet_file.read_row_groups(row_groups, columns=raw_columns)
+        market_value = self._market_stats_value(
+            raw_table.schema.field("market").type, self.condition_id
+        )
+        market_mask = pc.equal(raw_table.column("market"), pa.scalar(market_value))
+        event_type_mask = pc.is_in(
+            raw_table.column("event_type"), value_set=pa.array(["book", "price_change"])
+        )
+        mask = pc.and_(pc.fill_null(market_mask, False), pc.fill_null(event_type_mask, False))
+        if self.token_id is not None:
+            token_mask = pc.equal(raw_table.column("asset_id"), self.token_id)
+            mask = pc.and_(mask, pc.fill_null(token_mask, False))
+
+        filtered = raw_table.filter(mask)
+        timestamp_ns = pc.cast(
+            pc.cast(filtered.column("timestamp"), pa.timestamp("ns", tz="UTC")),
+            pa.int64(),
+        )
+        table = pa.Table.from_arrays(
+            [
+                filtered.column("event_type"),
+                timestamp_ns,
+                filtered.column("asset_id"),
+                filtered.column("bids"),
+                filtered.column("asks"),
+                pc.cast(filtered.column("price"), pa.string()),
+                pc.cast(filtered.column("size"), pa.string()),
+                filtered.column("side"),
+            ],
+            names=self._PMXT_FIXED_COLUMNS,
+        )
+
+        batches = list(table.to_batches(max_chunksize=batch_size))
+        if progress_source is not None:
+            self._emit_scan_progress(
+                progress_source,
+                scanned_batches=len(row_groups),
+                scanned_rows=int(raw_table.num_rows),
+                matched_rows=int(table.num_rows),
+                total_bytes=total_bytes,
+                finished=True,
+            )
+        return batches
+
+    def _load_raw_market_batches_duckdb(
+        self,
+        parquet_path: Path,
+        *,
+        batch_size: int,
+        progress_source: str,
+        total_bytes: int | None,
+    ) -> list[pa.RecordBatch] | None:
+        if self.condition_id is None:
+            return None
+        if progress_source is not None:
+            self._emit_scan_progress(
+                progress_source,
+                scanned_batches=0,
+                scanned_rows=0,
+                matched_rows=0,
+                total_bytes=total_bytes,
+                finished=False,
+            )
+
+        connection = duckdb.connect(":memory:")
+        try:
+            schema_rows = connection.execute(
+                "DESCRIBE SELECT * FROM read_parquet(?) LIMIT 0", [str(parquet_path)]
+            ).fetchall()
+            schema_names = {str(row[0]) for row in schema_rows}
+            if self._is_raw_fixed_schema(schema_names):
+                query = (
+                    "SELECT "
+                    "event_type, "
+                    "CAST(epoch_ns(timestamp) AS BIGINT) AS timestamp_ns, "
+                    "asset_id, "
+                    "bids, "
+                    "asks, "
+                    "CAST(price AS VARCHAR) AS price, "
+                    "CAST(size AS VARCHAR) AS size, "
+                    "side "
+                    "FROM read_parquet(?) "
+                    "WHERE decode(market) = ? "
+                    "AND event_type IN ('book', 'price_change')"
+                )
+                params: list[object] = [str(parquet_path), self.condition_id]
+                if self.token_id is not None:
+                    query += " AND asset_id = ?"
+                    params.append(self.token_id)
+            elif self._is_raw_payload_schema(schema_names):
+                query = (
+                    "SELECT update_type, data FROM read_parquet(?) "
+                    "WHERE market_id = ? "
+                    "AND update_type IN ('book_snapshot', 'price_change')"
+                )
+                params = [str(parquet_path), self.condition_id]
+                if self.token_id is not None:
+                    query += " AND regexp_matches(data, ?)"
+                    params.append(rf'"token_id"\s*:\s*"{re.escape(self.token_id)}"')
+            else:
+                return None
+
+            table = connection.execute(query, params).to_arrow_table()
+        finally:
+            connection.close()
+
+        batches = list(table.to_batches(max_chunksize=batch_size))
+        if progress_source is not None:
+            self._emit_scan_progress(
+                progress_source,
+                scanned_batches=len(batches),
+                scanned_rows=int(table.num_rows),
+                matched_rows=int(table.num_rows),
+                total_bytes=total_bytes,
+                finished=True,
+            )
+        return batches
+
+    def _load_remote_market_table(self, hour: pd.Timestamp, *, batch_size: int) -> pa.Table | None:
+        batches = self._load_remote_market_batches(hour, batch_size=batch_size)
+        if batches is None:
+            return None
+        if not batches:
+            return self._empty_market_table()
+        return pa.Table.from_batches(batches)
+
+    def _load_remote_market_batches(
+        self, hour: pd.Timestamp, *, batch_size: int
+    ) -> list[pa.RecordBatch] | None:
+        archive_url = self._archive_url_for_hour(hour)
+        return self._load_raw_market_batches_via_download(archive_url, batch_size=batch_size)
+
+    def _load_raw_market_batches_via_download(
+        self, archive_url: str, *, batch_size: int
+    ) -> list[pa.RecordBatch] | None:
+        try:
+            with self._temporary_download_path(archive_url) as download_path:
+                total_bytes = self._download_to_file_with_progress(archive_url, download_path)
+                if total_bytes is None and not download_path.exists():
+                    return None
+                return self._load_raw_market_batches_from_local_file(
+                    download_path,
+                    batch_size=batch_size,
+                    progress_source=archive_url,
+                    total_bytes=total_bytes,
+                )
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            if "404" in str(exc):
+                return None
+            return None
+        except Exception:
+            return None
+
+    def _load_local_archive_market_batches(
+        self, hour: pd.Timestamp, *, batch_size: int
+    ) -> list[pa.RecordBatch] | None:
+        for archive_path in self._local_archive_paths_for_hour(hour):
+            if not archive_path.exists():
+                continue
+
+            batches = self._load_raw_market_batches_from_local_file(
+                archive_path,
+                batch_size=batch_size,
+                progress_source=str(archive_path),
+                total_bytes=self._progress_total_bytes(str(archive_path)),
+            )
+            if batches is not None:
+                return batches
+
+        return None
+
+    def _filter_table_to_token(self, table: pa.Table) -> pa.Table:
+        if self.token_id is None or table.num_rows == 0:
+            return table
+
+        if self._is_fixed_schema(table.schema.names):
+            token_mask = pc.equal(table.column("asset_id"), self.token_id)
+            token_mask = pc.fill_null(token_mask, False)
+            return table.filter(token_mask)
+
+        token_mask = pc.match_substring_regex(
+            table.column("data"), rf'"token_id"\s*:\s*"{re.escape(self.token_id)}"'
+        )
+        token_mask = pc.fill_null(token_mask, False)
+        return table.filter(token_mask)
+
+    def _load_market_table(self, hour: pd.Timestamp, *, batch_size: int) -> pa.Table | None:
+        table = self._load_cached_market_table(hour)
+        if table is not None:
+            return table
+
+        local_archive_batches = self._load_local_archive_market_batches(hour, batch_size=batch_size)
+        if local_archive_batches is not None:
+            table = (
+                pa.Table.from_batches(local_archive_batches)
+                if local_archive_batches
+                else self._empty_market_table()
+            )
+            if self._pmxt_cache_dir is not None:
+                self._write_market_cache_if_enabled(hour, table)
+            return table
+
+        remote_table = self._load_remote_market_table(hour, batch_size=batch_size)
+        if remote_table is not None:
+            remote_table = self._filter_table_to_token(remote_table)
+            if self._pmxt_cache_dir is not None:
+                self._write_market_cache_if_enabled(hour, remote_table)
+            return remote_table
+
+        return None
+
+    def _load_market_batches(
+        self, hour: pd.Timestamp, *, batch_size: int
+    ) -> list[pa.RecordBatch] | None:
+        batches = self._load_cached_market_batches(hour)
+        if batches is not None:
+            return batches
+
+        batches = self._load_local_archive_market_batches(hour, batch_size=batch_size)
+        if batches is not None:
+            if self._pmxt_cache_dir is not None:
+                table = pa.Table.from_batches(batches) if batches else self._empty_market_table()
+                self._write_market_cache_if_enabled(hour, table)
+            return batches
+
+        batches = self._load_remote_market_batches(hour, batch_size=batch_size)
+        if batches is not None:
+            if self._pmxt_cache_dir is not None:
+                table = pa.Table.from_batches(batches) if batches else self._empty_market_table()
+                self._write_market_cache_if_enabled(hour, table)
+            return batches
+
+        return None
+
+    def _emit_download_progress(
+        self, url: str, *, downloaded_bytes: int, total_bytes: int | None, finished: bool
+    ) -> None:
+        emit_loader_progress_snapshot(
+            owner=self,
+            vendor="pmxt",
+            mode="download",
+            source=url,
+            source_kind="remote" if url.startswith(("http://", "https://")) else None,
+            downloaded_bytes=downloaded_bytes,
+            total_bytes=total_bytes,
+            finished=finished,
+        )
+        callback = getattr(self, "_pmxt_download_progress_callback", None)
+        if callback is None:
+            return
+        callback(url, downloaded_bytes, total_bytes, finished)
+
+    def _emit_scan_progress(
+        self,
+        source: str,
+        *,
+        scanned_batches: int,
+        scanned_rows: int,
+        matched_rows: int,
+        total_bytes: int | None,
+        finished: bool,
+    ) -> None:
+        emit_loader_progress_snapshot(
+            owner=self,
+            vendor="pmxt",
+            mode="scan",
+            source=source,
+            source_kind=None,
+            scanned_batches=scanned_batches,
+            scanned_rows=scanned_rows,
+            matched_rows=matched_rows,
+            total_bytes=total_bytes,
+            finished=finished,
+        )
+        callback = getattr(self, "_pmxt_scan_progress_callback", None)
+        if callback is None:
+            return
+        callback(source, scanned_batches, scanned_rows, matched_rows, total_bytes, finished)
+
+    @staticmethod
+    def _content_length_from_response(response: object) -> int | None:
+        headers = getattr(response, "headers", None)
+        if headers is None:
+            return None
+        raw_value = headers.get("Content-Length")
+        if raw_value is None:
+            return None
+        try:
+            return max(0, int(raw_value))
+        except (TypeError, ValueError):
+            return None
+
+    def _progress_total_bytes(self, source: str) -> int | None:
+        if (
+            getattr(self, "_pmxt_scan_progress_callback", None) is None
+            and not loader_progress_logs_enabled()
+        ):
+            return None
+
+        cache = getattr(self, "_pmxt_progress_size_cache", None)
+        if cache is None:
+            cache = {}
+            self._pmxt_progress_size_cache = cache
+        if source in cache:
+            return cache[source]
+
+        total_bytes: int | None = None
+        if "://" in source:
+            try:
+                with urlopen(Request(source, method="HEAD")) as response:
+                    total_bytes = self._content_length_from_response(response)
+            except Exception:
+                total_bytes = None
+        else:
+            try:
+                total_bytes = Path(source).expanduser().stat().st_size
+            except OSError:
+                total_bytes = None
+
+        cache[source] = total_bytes
+        return total_bytes
+
+    def _download_to_file_with_progress(self, url: str, destination: Path) -> int | None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with urlopen(url) as response, destination.open("wb") as handle:
+            total_bytes = self._content_length_from_response(response)
+            downloaded_bytes = 0
+            last_emit = 0.0
+            supports_chunked_read = True
+            self._emit_download_progress(
+                url, downloaded_bytes=0, total_bytes=total_bytes, finished=False
+            )
+            while True:
+                if supports_chunked_read:
+                    try:
+                        chunk = response.read(self._PMXT_DOWNLOAD_CHUNK_SIZE)
+                    except TypeError:
+                        supports_chunked_read = False
+                        chunk = response.read()
+                else:
+                    break
+                if not chunk:
+                    break
+                handle.write(chunk)
+                downloaded_bytes += len(chunk)
+                now = time.monotonic()
+                if downloaded_bytes == total_bytes or (now - last_emit) >= 0.2:
+                    self._emit_download_progress(
+                        url,
+                        downloaded_bytes=downloaded_bytes,
+                        total_bytes=total_bytes,
+                        finished=False,
+                    )
+                    last_emit = now
+                if not supports_chunked_read:
+                    break
+            self._emit_download_progress(
+                url, downloaded_bytes=downloaded_bytes, total_bytes=total_bytes, finished=True
+            )
+
+        if total_bytes is None:
+            with suppress(OSError):
+                total_bytes = destination.stat().st_size
+
+        cache = getattr(self, "_pmxt_progress_size_cache", None)
+        if cache is None:
+            cache = {}
+            self._pmxt_progress_size_cache = cache
+        cache[url] = total_bytes
+        return total_bytes
+
+    def _download_payload_with_progress(self, url: str) -> bytes | None:
+        with urlopen(url) as response:
+            total_bytes = self._content_length_from_response(response)
+            downloaded_bytes = 0
+            last_emit = 0.0
+            chunks: list[bytes] = []
+            supports_chunked_read = True
+            self._emit_download_progress(
+                url, downloaded_bytes=0, total_bytes=total_bytes, finished=False
+            )
+            while True:
+                if supports_chunked_read:
+                    try:
+                        chunk = response.read(self._PMXT_DOWNLOAD_CHUNK_SIZE)
+                    except TypeError:
+                        supports_chunked_read = False
+                        chunk = response.read()
+                else:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                downloaded_bytes += len(chunk)
+                now = time.monotonic()
+                if downloaded_bytes == total_bytes or (now - last_emit) >= 0.2:
+                    self._emit_download_progress(
+                        url,
+                        downloaded_bytes=downloaded_bytes,
+                        total_bytes=total_bytes,
+                        finished=False,
+                    )
+                    last_emit = now
+                if not supports_chunked_read:
+                    break
+            self._emit_download_progress(
+                url, downloaded_bytes=downloaded_bytes, total_bytes=total_bytes, finished=True
+            )
+            return b"".join(chunks)
+
+    def _load_raw_market_batches_from_local_file(
+        self, parquet_path: Path, *, batch_size: int, progress_source: str, total_bytes: int | None
+    ) -> list[pa.RecordBatch] | None:
+        try:
+            pyarrow_batches = self._load_raw_fixed_market_batches_pyarrow(
+                parquet_path,
+                batch_size=batch_size,
+                progress_source=progress_source,
+                total_bytes=total_bytes,
+            )
+            if pyarrow_batches is not None:
+                return pyarrow_batches
+        except (OSError, TypeError, ValueError, pa.ArrowException):
+            pass
+
+        try:
+            duckdb_batches = self._load_raw_market_batches_duckdb(
+                parquet_path,
+                batch_size=batch_size,
+                progress_source=progress_source,
+                total_bytes=total_bytes,
+            )
+            if duckdb_batches is not None:
+                return duckdb_batches
+        except (duckdb.Error, OSError, ValueError, pa.ArrowException):
+            pass
+
+        try:
+            dataset = ds.dataset(str(parquet_path), format="parquet")
+            return self._scan_raw_market_batches(
+                dataset, batch_size=batch_size, source=progress_source, total_bytes=total_bytes
+            )
+        except (OSError, ValueError, pa.ArrowException):
+            return None
+
+    @staticmethod
+    def _temporary_download_filename(url: str) -> str:
+        filename = Path(url.split("?", maxsplit=1)[0]).name
+        return filename or "pmxt-hour.parquet"
+
+    @staticmethod
+    def _pid_is_active(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+
+    @contextmanager
+    def _temporary_download_path(self, url: str) -> Iterator[Path]:
+        temp_root = Path(
+            getattr(self, "_pmxt_temp_download_root", self._PMXT_TEMP_DOWNLOAD_ROOT)
+        ).expanduser()
+        temp_root.mkdir(parents=True, exist_ok=True)
+        process_root = temp_root / f"pid-{os.getpid()}"
+        process_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=process_root, prefix="hour-") as temp_dir:
+            yield Path(temp_dir) / self._temporary_download_filename(url)
+        with suppress(OSError):
+            process_root.rmdir()
+
+    def _cleanup_stale_temp_downloads(self) -> None:
+        temp_root = Path(
+            getattr(self, "_pmxt_temp_download_root", self._PMXT_TEMP_DOWNLOAD_ROOT)
+        ).expanduser()
+        if not temp_root.exists():
+            return
+
+        cutoff = time.time() - self._PMXT_TEMP_DOWNLOAD_STALE_SECONDS
+        with suppress(OSError):
+            for child in temp_root.iterdir():
+                with suppress(OSError):
+                    stat = child.stat()
+                    is_process_root = child.is_dir() and child.name.startswith("pid-")
+                    if is_process_root:
+                        pid_text = child.name.removeprefix("pid-")
+                        try:
+                            pid = int(pid_text)
+                        except ValueError:
+                            pid = None
+                        if pid is not None and not self._pid_is_active(pid):
+                            shutil.rmtree(child, ignore_errors=True)
+                            continue
+                    if stat.st_mtime >= cutoff:
+                        continue
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+
+    def _iter_market_tables(
+        self, hours: list[pd.Timestamp], *, batch_size: int
+    ) -> Iterator[tuple[pd.Timestamp, pa.Table | None]]:
+        max_workers = min(self._pmxt_prefetch_workers, len(hours))
+        if max_workers <= 1:
+            for hour in hours:
+                yield hour, self._load_market_table(hour, batch_size=batch_size)
+            return
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures: dict[pd.Timestamp, Future[pa.Table | None]] = {}
+            next_index = 0
+
+            def _submit_next() -> None:
+                nonlocal next_index
+                if next_index >= len(hours):
+                    return
+                hour = hours[next_index]
+                next_index += 1
+                futures[hour] = executor.submit(
+                    self._load_market_table, hour, batch_size=batch_size
+                )
+
+            for _ in range(max_workers):
+                _submit_next()
+
+            for hour in hours:
+                table = futures.pop(hour).result()
+                _submit_next()
+                yield hour, table
+
+    def _iter_market_batches(
+        self, hours: list[pd.Timestamp], *, batch_size: int
+    ) -> Iterator[tuple[pd.Timestamp, list[pa.RecordBatch] | None]]:
+        max_workers = min(self._pmxt_prefetch_workers, len(hours))
+        if max_workers <= 1:
+            for hour in hours:
+                yield hour, self._load_market_batches(hour, batch_size=batch_size)
+            return
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures: dict[pd.Timestamp, Future[list[pa.RecordBatch] | None]] = {}
+            next_index = 0
+
+            def _submit_next() -> None:
+                nonlocal next_index
+                if next_index >= len(hours):
+                    return
+                hour = hours[next_index]
+                next_index += 1
+                futures[hour] = executor.submit(
+                    self._load_market_batches, hour, batch_size=batch_size
+                )
+
+            for _ in range(max_workers):
+                _submit_next()
+
+            for hour in hours:
+                batches = futures.pop(hour).result()
+                _submit_next()
+                yield hour, batches
+
+    @staticmethod
+    def _timestamp_to_ms_string(timestamp_secs: float) -> str:
+        return float_seconds_to_ms_string(timestamp_secs)
+
+    @staticmethod
+    def _event_sort_key(record: OrderBookDeltas) -> tuple[int, int]:
+        ts_event = int(getattr(record, "ts_event", getattr(record, "ts_init", 0)))
+        ts_init = int(getattr(record, "ts_init", ts_event))
+        return (ts_event, ts_init)
+
+    def _deltas_records_from_columns(self, data: dict[str, list[object]]) -> list[OrderBookDeltas]:
+        event_indexes = data["event_index"]
+        actions = data["action"]
+        sides = data["side"]
+        prices = data["price"]
+        sizes = data["size"]
+        flags = data["flags"]
+        sequences = data["sequence"]
+        ts_events = data["ts_event"]
+        ts_inits = data["ts_init"]
+
+        records: list[OrderBookDeltas] = []
+        current_event_index: int | None = None
+        deltas: list[OrderBookDelta] = []
+        instrument = self.instrument
+        instrument_id = instrument.id
+        price_precision = int(instrument.price_precision)
+        size_precision = int(instrument.size_precision)
+        price_raws = _raw_fixed_values(prices, price_precision)
+        size_raws = _raw_fixed_values(sizes, size_precision)
+        for idx, raw_event_index in enumerate(event_indexes):
+            event_index = int(raw_event_index)
+            if current_event_index is None:
+                current_event_index = event_index
+            elif event_index != current_event_index:
+                records.append(OrderBookDeltas(instrument_id, deltas))
+                deltas = []
+                current_event_index = event_index
+
+            deltas.append(
+                OrderBookDelta.from_raw(
+                    instrument_id,
+                    int(actions[idx]),
+                    int(sides[idx]),
+                    price_raws[idx],
+                    price_precision,
+                    size_raws[idx],
+                    size_precision,
+                    0,
+                    flags=int(flags[idx]),
+                    sequence=int(sequences[idx]),
+                    ts_event=int(ts_events[idx]),
+                    ts_init=int(ts_inits[idx]),
+                )
+            )
+        if deltas:
+            records.append(OrderBookDeltas(instrument_id, deltas))
+        return records
+
+    def _payload_sort_key(self, update_type: str, payload_text: str) -> tuple[int, int]:
+        return pmxt_payload_sort_key(update_type, payload_text)
+
+    @classmethod
+    def _batches_use_fixed_schema(cls, batches: Sequence[pa.RecordBatch]) -> bool:
+        return bool(batches) and cls._is_fixed_schema(batches[0].schema.names)
+
+    @staticmethod
+    def new_order_book_delta_state() -> _PMXTOrderBookConversionState:
+        return _PMXTOrderBookConversionState()
+
+    def _order_book_deltas_from_hour_batches_with_state(
+        self,
+        *,
+        start_ns: int,
+        end_ns: int,
+        hour_batches: Iterator[tuple[pd.Timestamp, list[pa.RecordBatch] | None]],
+        include_order_book: bool,
+        state: _PMXTOrderBookConversionState,
+    ) -> tuple[list[OrderBookDeltas], list[pd.Timestamp]]:
+        token_id = self.token_id
+        if token_id is None:
+            raise ValueError("token_id is required for PMXT loading")
+
+        events: list[OrderBookDeltas] = []
+        gap_hours: list[pd.Timestamp] = []
+
+        for hour, batches in hour_batches:
+            if batches is None:
+                # Distinguish "no source could supply this hour" from "hour
+                # loaded fine but had no events for this market". A None
+                # result is a coverage gap: warn loudly and invalidate the
+                # incremental book so subsequent price_change deltas wait for
+                # a fresh book_snapshot rather than applying against a
+                # potentially stale state.
+                gap_hours.append(hour)
+                state.has_snapshot = False
+                continue
+            if not batches:
+                continue
+
+            if self._batches_use_fixed_schema(batches):
+                native_rows = pmxt_fixed_delta_rows(
+                    event_type_columns=[batch.column("event_type") for batch in batches],
+                    timestamp_ns_columns=[batch.column("timestamp_ns") for batch in batches],
+                    asset_id_columns=[batch.column("asset_id") for batch in batches],
+                    bids_json_columns=[batch.column("bids") for batch in batches],
+                    asks_json_columns=[batch.column("asks") for batch in batches],
+                    price_columns=[batch.column("price") for batch in batches],
+                    size_columns=[batch.column("size") for batch in batches],
+                    side_columns=[batch.column("side") for batch in batches],
+                    token_id=token_id,
+                    start_ns=start_ns,
+                    end_ns=end_ns,
+                    has_snapshot=state.has_snapshot,
+                    last_payload_key=state.last_payload_key,
+                )
+                state.has_snapshot, state.last_payload_key, delta_columns = native_rows
+                if include_order_book and delta_columns["event_index"]:
+                    events.extend(self._deltas_records_from_columns(delta_columns))
+                continue
+
+            update_type_columns = [batch.column("update_type") for batch in batches]
+            payload_text_columns = [batch.column("data") for batch in batches]
+
+            native_rows = pmxt_payload_delta_rows(
+                update_type_columns=update_type_columns,
+                payload_text_columns=payload_text_columns,
+                token_id=token_id,
+                start_ns=start_ns,
+                end_ns=end_ns,
+                has_snapshot=state.has_snapshot,
+                last_payload_key=state.last_payload_key,
+            )
+            state.has_snapshot, state.last_payload_key, delta_columns = native_rows
+            if include_order_book and delta_columns["event_index"]:
+                events.extend(self._deltas_records_from_columns(delta_columns))
+
+        return events, gap_hours
+
+    def load_order_book_deltas_from_hour_batches_incremental(
+        self,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        hour_batches: Sequence[tuple[pd.Timestamp, list[pa.RecordBatch] | None]],
+        *,
+        state: _PMXTOrderBookConversionState,
+        include_order_book: bool = True,
+        sort_events: bool = True,
+    ) -> tuple[list[OrderBookDeltas], tuple[pd.Timestamp, ...]]:
+        start_ts = self._normalize_timestamp(start)
+        end_ts = self._normalize_timestamp(end)
+        if start_ts is None or end_ts is None or end_ts <= start_ts:
+            return [], ()
+
+        events, gap_hours = self._order_book_deltas_from_hour_batches_with_state(
+            start_ns=int(start_ts.value),
+            end_ns=int(end_ts.value),
+            hour_batches=iter(hour_batches),
+            include_order_book=include_order_book,
+            state=state,
+        )
+        if sort_events:
+            events.sort(key=self._event_sort_key)
+        return events, tuple(gap_hours)
+
+    def _order_book_deltas_from_hour_batches(
+        self,
+        *,
+        start_ts: pd.Timestamp,
+        end_ts: pd.Timestamp,
+        hour_batches: Iterator[tuple[pd.Timestamp, list[pa.RecordBatch] | None]],
+        include_order_book: bool,
+    ) -> list[OrderBookDeltas]:
+        state = self.new_order_book_delta_state()
+        self._pmxt_last_load_gap_hours = ()
+
+        events, gap_hours = self._order_book_deltas_from_hour_batches_with_state(
+            start_ns=int(start_ts.value),
+            end_ns=int(end_ts.value),
+            hour_batches=hour_batches,
+            include_order_book=include_order_book,
+            state=state,
+        )
+
+        events.sort(key=self._event_sort_key)
+
+        if gap_hours:
+            self._pmxt_last_load_gap_hours = tuple(gap_hours)
+            gap_count = len(gap_hours)
+            warnings.warn(
+                f"PMXT: {gap_count} archive hour(s) missing for market "
+                f"{self.condition_id}/{self.token_id} between {start_ts.isoformat()} "
+                f"and {end_ts.isoformat()}; book state was reset on each gap. "
+                f"First gap hour: {gap_hours[0].isoformat()}.",
+                stacklevel=2,
+            )
+
+        return events
+
+    def load_order_book_deltas_from_hour_batches(
+        self,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        hour_batches: Sequence[tuple[pd.Timestamp, list[pa.RecordBatch] | None]],
+        *,
+        include_order_book: bool = True,
+    ) -> list[OrderBookDeltas]:
+        if self.condition_id is None:
+            raise ValueError("condition_id is required for PMXT loading")
+        if self.token_id is None:
+            raise ValueError("token_id is required for PMXT loading")
+
+        start_ts = self._normalize_timestamp(start)
+        end_ts = self._normalize_timestamp(end)
+        if start_ts is None or end_ts is None or end_ts <= start_ts:
+            return []
+
+        records = self._order_book_deltas_from_hour_batches(
+            start_ts=start_ts,
+            end_ts=end_ts,
+            hour_batches=iter(hour_batches),
+            include_order_book=include_order_book,
+        )
+        if (
+            include_order_book
+            and not self._pmxt_last_load_gap_hours
+            and self._write_materialized_cache_enabled()
+        ):
+            self._write_deltas_cache_for_range(records, start_ts, end_ts)
+        return records
+
+    def load_order_book_deltas(
+        self,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+        *,
+        batch_size: int | None = None,
+        include_order_book: bool = True,
+    ) -> list[OrderBookDeltas]:
+        """
+        Load one market's historical L2 updates from PMXT.
+
+        Only the target token's rows are materialized in memory; each parquet file
+        is filtered by market ID during scan and discarded once processed.
+        """
+        if self.condition_id is None:
+            raise ValueError("condition_id is required for PMXT loading")
+        if self.token_id is None:
+            raise ValueError("token_id is required for PMXT loading")
+
+        start_ts = self._normalize_timestamp(start)
+        end_ts = self._normalize_timestamp(end)
+        if start_ts is None or end_ts is None or end_ts <= start_ts:
+            return []
+
+        deltas_cache = self._load_deltas_cache_for_range(start_ts, end_ts)
+        if deltas_cache is not None:
+            return deltas_cache
+
+        window_cache_batches = self._load_window_cache_batches(start_ts, end_ts)
+        if window_cache_batches is not None:
+            records = self._order_book_deltas_from_hour_batches(
+                start_ts=start_ts,
+                end_ts=end_ts,
+                hour_batches=iter(((start_ts, window_cache_batches),)),
+                include_order_book=include_order_book,
+            )
+            if (
+                include_order_book
+                and not self._pmxt_last_load_gap_hours
+                and self._write_materialized_cache_enabled()
+            ):
+                self._write_deltas_cache_for_range(records, start_ts, end_ts)
+            return records
+
+        hours = self._archive_hours(start_ts, end_ts)
+        resolved_batch_size = (
+            max(1, int(batch_size))
+            if batch_size is not None
+            else int(getattr(self, "_pmxt_scan_batch_size", self._PMXT_DEFAULT_SCAN_BATCH_SIZE))
+        )
+        records = self._order_book_deltas_from_hour_batches(
+            start_ts=start_ts,
+            end_ts=end_ts,
+            hour_batches=self._iter_market_batches(hours, batch_size=resolved_batch_size),
+            include_order_book=include_order_book,
+        )
+        if (
+            include_order_book
+            and not self._pmxt_last_load_gap_hours
+            and self._write_materialized_cache_enabled()
+        ):
+            self._write_deltas_cache_for_range(records, start_ts, end_ts)
+        return records
+
+    @staticmethod
+    def _timestamp_to_ns(value: object) -> int:
+        return decimal_seconds_to_ns(value)

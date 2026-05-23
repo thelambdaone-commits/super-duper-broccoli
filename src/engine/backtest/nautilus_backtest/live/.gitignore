@@ -1,0 +1,16 @@
+# Live runner/scaffold files and selected public model profiles are safe to publish.
+# Keep diagnostics, logs, env files, and local runtime ledgers private.
+__pycache__/
+*.pyc
+models/*
+!models/btc_snapshot_model_s150_ev_guarded_cached_432_summary.json
+!models/btc_snapshot_model_s199_cost101_daily_stop120_profile.json
+!models/btc_snapshot_model_s204_btc_l2_full_mar1_may9.json
+!models/btc_snapshot_model_s223_btc_eth_sol_l2_full_feb12_may9.json
+!models/btc_snapshot_model_s226_btc_only_l2_full_feb12_may9.json
+!models/btc_snapshot_model_s231_btc_eth_sol_xrp_l2_full_feb12_may9.json
+*_diagnostics.json
+*_settlements.json
+*.log
+.env
+.env.*

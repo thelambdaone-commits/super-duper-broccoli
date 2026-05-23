@@ -5,6 +5,7 @@ import pytest
 from core.autonomous_trading_loop import AutonomousTradingConfig, AutonomousTradingLoop
 from core.strategy_lifecycle_manager import StrategyLifecycleConfig, StrategyLifecycleManager, StrategyPhase
 from ledger.ledger_db import Ledger
+from user_data.strategies.base_strategy import StrategySignal
 from user_data.strategies.polymarket_strategy_factory import MeanReversionStrategy
 
 
@@ -181,3 +182,30 @@ async def test_bootstrap_paper_history_generates_closed_trades(ledger, lifecycle
     closed = [a for a in actions if a.action == "close" and a.status == "CLOSED"]
     assert closed
     assert len(ledger.get_paper_positions("CLOSED")) >= 1
+
+
+@pytest.mark.asyncio
+async def test_autonomous_loop_rejects_trade_when_fees_destroy_expected_profit(ledger, lifecycle):
+    loop = AutonomousTradingLoop(
+        ledger=ledger,
+        lifecycle=lifecycle,
+        config=AutonomousTradingConfig(default_paper_capital_usdc=20.0),
+    )
+
+    action = await loop.open_position(
+        StrategySignal(
+            strategy_id="fee_guard",
+            market_id="m1",
+            ticker="MKT1",
+            side="BUY",
+            price=0.90,
+            confidence=0.55,
+            edge=0.01,
+            reason="tiny edge should die after fees",
+            metadata={"spread": 0.03},
+        )
+    )
+
+    assert action.status == "REJECTED"
+    assert "net expected profit" in action.reason
+    assert ledger.get_paper_positions("OPEN") == []
