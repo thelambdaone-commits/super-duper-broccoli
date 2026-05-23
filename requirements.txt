@@ -1,3 +1,6 @@
+pydantic-ai[groq,openai,mcp,logfire]>=1.0.0
+pydantic-graph>=1.0.0
+
 # freqtrade is optional and should be installed in a separate strategy sandbox:
 # 2024.1 depends on unavailable pandas-ta here; 2026.4 requires numpy>2.0 while
 # the ML stack below is pinned to numpy 1.26.x for sklearn/scipy compatibility.
@@ -6,10 +9,10 @@ torch==2.2.1
 xgboost==2.0.3
 lightgbm==4.3.0
 hmmlearn==0.3.2
-scikit-learn==1.4.0
-pandas==2.2.1
-numpy==1.26.4
-scipy==1.12.0
+scikit-learn>=1.4.0
+pandas>=2.2.1
+numpy>=1.26.4
+scipy>=1.12.0
 requests==2.31.0
 joblib==1.3.2
 python-dotenv==1.2.2
@@ -19,6 +22,7 @@ mcp==1.27.1
 openai==2.24.0
 py-clob-client-v2==1.0.1
 polars>=1.0
+pyarrow
 python-telegram-bot==22.0
 fastapi==0.136.1
 uvicorn==0.47.0
@@ -35,6 +39,7 @@ pytest==8.0.0
 pytest-asyncio==0.23.0
 psutil
 transformers
+huggingface_hub
 redis>=5.0.0
 hiredis>=2.3.0
 feedparser>=6.0.10
@@ -55,16 +60,16 @@ git+https://github.com/D4Vinci/Scrapling.git@735af8f2210ed970c99737d4c8126fe4f2a
 # ── New Modules (Phase 1-2) ──
 # Volatility Surface (Phase 1.1): ssvi.py is pure Python; no extra deps needed beyond torch+numpy+scipy
 
+colorama
+nltk
+textblob
+
 # Earnings Analyzer (Phase 1.2) — optional; install if scraping earnings calls
 # earnings-analyzer>=1.2.2
 
 # Chart Pattern Detection (Phase 1.3) — optional for YOLOv8 inference
 # ultralytics>=8.0.0
 # mplfinance>=0.12.0
-
-# Sentiment Ensemble (Phase 1.4) — FinBERT/FinancialBERT via transformers (already present)
-# nltk  # for VADER sentiment
-# textblob  # optional lightweight sentiment
 
 # Portfolio Optimization (Phase 2.2) — optional
 # scikit-portfolio>=0.2.0
@@ -82,3 +87,12 @@ plotext>=5.2.8
 textual-plotext>=0.2.0
 rich>=13.7.0
 snscrape
+
+# ── Polymarket LP Tool dependencies (Phase 1b) ──
+# py-clob-client-v2 already included above
+
+# ── On-chain Polymarket data (Phase 2a) ──
+# web3, pandas, pyarrow already included above
+
+# ── Pydantic AI extra providers (Phase 1a) ──
+# groq, openai, mcp providers already included above

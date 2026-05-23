@@ -7,3 +7,15 @@
 [submodule "freqtrade"]
 	path = freqtrade
 	url = https://github.com/freqtrade/freqtrade.git
+[submodule "agents/polymarket_lp_tool"]
+	path = agents/polymarket_lp_tool
+	url = https://github.com/lihanyu81/polymarket_lp_tool.git
+[submodule "utils/polymarket_data"]
+	path = utils/polymarket_data
+	url = https://github.com/SII-WANGZJ/Polymarket_data.git
+[submodule "agents/polybot"]
+	path = agents/polybot
+	url = https://github.com/ent0n29/polybot.git
+[submodule "engine/backtest/nautilus_backtest"]
+	path = engine/backtest/nautilus_backtest
+	url = https://github.com/evan-kolberg/prediction-market-backtesting.git
