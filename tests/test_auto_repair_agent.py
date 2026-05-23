@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.auto_repair_agent import build_test_command, collect_failures, infer_targeted_tests, redact_secrets
+from core.healing.auto_repair_agent import build_test_command, collect_failures, infer_targeted_tests, redact_secrets
 
 
 def test_collect_failures_classifies_import_and_syntax_errors() -> None:

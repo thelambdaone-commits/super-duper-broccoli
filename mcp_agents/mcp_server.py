@@ -57,7 +57,7 @@ def initialize(
     ledger: Ledger,
     hmm_filter: HMMRegimeFilter,
     risk_engine: Optional[PortfolioRiskEngine] = None,
-    feature_store: Optional[any] = None,
+    feature_store: Optional[Any] = None,
     passive_executor: Optional[PassiveExecutor] = None,
     arb_scanner: Optional[ArbitrageScanner] = None,
     vol_surface: Optional[Any] = None,
@@ -453,6 +453,114 @@ def get_feature_history(
         "count": len(features),
         "samples": features[:limit],
     }
+
+# ── External Integration Bridges ──
+
+_clodds_mcp_client: Optional[Any] = None
+
+
+async def _ensure_clodds_client():
+    """Lazily connect to CloddsBot MCP server if available."""
+    global _clodds_mcp_client
+    if _clodds_mcp_client is not None:
+        return True
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("http://localhost:18789/health", timeout=2.0)
+            if resp.status_code == 200:
+                _clodds_mcp_client = resp
+                logger.info("CloddsBot MCP peer detected at localhost:18789")
+                return True
+    except Exception:
+        logger.debug("CloddsBot MCP peer not available")
+    return False
+
+
+@mcp.tool()
+async def clodds_lp_repricing(
+    token_id: str,
+    side: str,
+    current_price: float,
+    mid_price: float,
+    delta: float = 0.03,
+) -> dict:
+    """Use the polymarket_lp_tool SimplePricePolicy to decide whether to keep, cancel, or reprice
+    a limit order. token_id is the CLOB token ID, side is BUY or SELL."""
+    from agent_skills.polymarket_market_making_skill.adapter_lp_tool import LpToolAdapter
+    adapter = LpToolAdapter()
+    return adapter.decide_price(
+        token_id=token_id,
+        side=side,
+        current_price=current_price,
+        mid_price=mid_price,
+        delta=delta,
+    )
+
+
+@mcp.tool()
+async def clodds_lp_set_custom_rule(token_id: str, side: str, target_price: float) -> str:
+    """Set a custom pricing rule for a given token+side. The rule will persist and override
+    the default SimplePricePolicy logic for future repricing decisions."""
+    from agent_skills.polymarket_market_making_skill.adapter_lp_tool import LpToolAdapter
+    adapter = LpToolAdapter()
+    adapter.set_custom_rule(token_id, side, {"target_price": target_price})
+    return f"Custom rule set for {token_id}:{side} -> target_price={target_price}"
+
+
+@mcp.tool()
+async def pydantic_agent_analyze(market_query: str) -> dict:
+    """Run the Pydantic AI analysis agent on a market query. Returns a structured MarketAnalysis
+    with fair price, edge, regime, and recommendation."""
+    try:
+        from core.pydantic_agent_factory import PydanticAgentFactory, AgentDeps
+        from core.container import _container
+        if _container is None:
+            return {"error": "ServiceContainer not initialized"}
+        deps = AgentDeps(
+            secrets=getattr(_container, "secrets", {}),
+            store=getattr(_container, "store", None),
+            ledger=getattr(_container, "ledger", None),
+            risk=getattr(_container, "risk", None),
+            executor=getattr(_container, "executor", None),
+            hmm=getattr(_container, "hmm", None),
+            freqai=getattr(_container, "freqai", None),
+            market_scanner=getattr(_container, "market_scanner", None),
+            notifier=getattr(_container, "notifier", None),
+            signal_router=getattr(_container, "signal_router", None),
+        )
+        factory = PydanticAgentFactory(deps)
+        result = await factory.run_signal_flow(market_query)
+        return result.model_dump()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def clodds_mcp_health() -> dict:
+    """Check if the CloddsBot MCP sidecar is reachable."""
+    available = await _ensure_clodds_client()
+    return {"clodds_bot_available": available, "status": "ok" if available else "unavailable"}
+
+
+@mcp.tool()
+async def polymarket_data_fetch_onchain(blocks: int = 100) -> dict:
+    """Fetch recent on-chain Polymarket OrderFilled events using the Polymarket_data
+    submodule. Fetches the latest N blocks from Polygon RPC."""
+    try:
+        from utils.polymarket_data.polymarket import LogFetcher, EventDecoder
+        fetcher = LogFetcher(use_alchemy=False)
+        latest = fetcher.get_latest_block()
+        logs = fetcher.fetch_range_in_batches(latest - blocks, latest)
+        decoder = EventDecoder()
+        decoded = decoder.decode_batch(logs)
+        events = decoder.format_batch(decoded)
+        return {"status": "ok", "blocks_scanned": blocks, "events_found": len(events), "events": events[:50]}
+    except ImportError:
+        return {"error": "Polymarket_data not installed. Run: cd utils/polymarket_data && pip install -e ."}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

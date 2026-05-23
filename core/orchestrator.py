@@ -311,7 +311,10 @@ class LobstarOrchestrator:
         )
         try:
             from models.predictive_engine import create_predictive_engine
-            model_registry = create_predictive_engine(min_edge_threshold=config.min_edge_threshold)
+            model_registry = create_predictive_engine(
+                min_edge_threshold=config.min_edge_threshold,
+                feature_store=self.store
+            )
         except Exception:
             model_registry = None
         return PredictiveGateService(

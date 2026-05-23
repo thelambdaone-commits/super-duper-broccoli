@@ -241,10 +241,14 @@ class CommandRouter:
         return service
 
     def _btc_launch_markup(self, interval: str) -> InlineKeyboardMarkup:
+        mode = getattr(self.listener, '_ledger', None)
+        is_live = mode and mode.get_execution_mode() == "PROD"
+        prefix = "⚡ Live" if is_live else "📈 Paper"
+        
         return InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("📈 Paper Up", callback_data=f"btc_paper:{interval}:up"),
-                InlineKeyboardButton("📉 Paper Down", callback_data=f"btc_paper:{interval}:down"),
+                InlineKeyboardButton(f"{prefix} Up", callback_data=f"btc_paper:{interval}:up"),
+                InlineKeyboardButton(f"{prefix} Down", callback_data=f"btc_paper:{interval}:down"),
             ],
             [
                 InlineKeyboardButton("📡 Track Live", callback_data=f"btc_track:{interval}"),
@@ -262,6 +266,9 @@ class CommandRouter:
     def _format_btc_launch_text(self, result) -> str:
         age_seconds = max(0, int(datetime.now(timezone.utc).timestamp() - float(result.generated_at)))
         strongest_label = "UP" if result.strongest_direction == "up" else "DOWN"
+        mode = getattr(self.listener, '_ledger', None)
+        is_live = mode and mode.get_execution_mode() == "PROD"
+        action_text = "Actions: trade live directionnel, refresh du training, ou annulation instant." if is_live else "Actions: paper trade directionnel, refresh du training, ou annulation instant du paper BTC."
         return (
             f"🧠 <b>BTC {result.interval.upper()} Direction Launch</b>\n"
             "───────────────────\n"
@@ -274,8 +281,61 @@ class CommandRouter:
             f"• Dataset: <code>{result.train_samples}</code> train / <code>{result.val_samples}</code> val\n"
             f"• Cache Age: <code>{age_seconds}s</code>\n"
             "───────────────────\n"
-            "Actions: paper trade directionnel, refresh du training, ou annulation instant du paper BTC."
+            f"{action_text}"
         )
+
+    def _crypto_menu_markup(self) -> InlineKeyboardMarkup:
+        assets = [("BTC", "btc"), ("ETH", "eth"), ("SOL", "sol"), ("XRP", "xrp"), ("DOGE", "doge"), ("BNB", "bnb")]
+        horizons = [("5m", "5"), ("15m", "15"), ("1h", "1h"), ("4h", "4h"), ("1d", "1d")]
+
+        asset_rows = []
+        row = []
+        for label, key in assets:
+            row.append(InlineKeyboardButton(label, callback_data=f"crypto_asset:{key}"))
+            if len(row) == 3:
+                asset_rows.append(row)
+                row = []
+        if row:
+            asset_rows.append(row)
+
+        horizon_rows = []
+        for label, key in horizons:
+            row = [
+                InlineKeyboardButton(
+                    f"{asset_label} {label}",
+                    callback_data=f"crypto_horizon:{asset_key}:{key}",
+                )
+                for asset_label, asset_key in assets
+            ]
+            horizon_rows.append(row)
+
+        quick_launch_rows = [
+            [
+                InlineKeyboardButton("🧠 BTC 5m", callback_data="btc_launch:5m"),
+                InlineKeyboardButton("🧠 BTC 15m", callback_data="btc_launch:15m"),
+            ],
+        ]
+        return InlineKeyboardMarkup(quick_launch_rows + asset_rows + horizon_rows)
+
+    def _crypto_menu_text(self) -> str:
+        mode = getattr(self.listener, '_ledger', None)
+        is_live = mode and mode.get_execution_mode() == "PROD"
+        action_type = "live" if is_live else "paper"
+        
+        return (
+            "🧭 <b>CENTRE CRYPTO LOBSTAR</b>\n"
+            "───────────────────\n"
+            "Choisis un actif ou un horizon pour ouvrir le bon écran.\n\n"
+            "• Les boutons BTC 5m / 15m lancent l'entraînement directionnel avec cache.\n"
+            "• Les boutons d'actif montrent les marchés actifs.\n"
+            "• Les boutons d'horizon ouvrent le sentiment détaillé.\n"
+            f"• <code>/btc5</code> et <code>/btc15</code> ouvrent l'écran de launch BTC avec {action_type}, track, SL et cancel.\n"
+            "• Les autres alias <code>/eth1h</code>, <code>/sol5</code>, etc. restent disponibles.\n"
+            "───────────────────"
+        )
+
+    async def render_crypto_menu(self):
+        return self._crypto_menu_text(), self._crypto_menu_markup()
 
     async def render_btc_launch(self, interval: str, *, force_refresh: bool = False):
         service = self._get_btc_launch_service()
@@ -505,48 +565,7 @@ class CommandRouter:
             await self._cmd_crypto_markets(update, context)
             return
 
-        assets = [("BTC", "btc"), ("ETH", "eth"), ("SOL", "sol"), ("XRP", "xrp"), ("DOGE", "doge"), ("BNB", "bnb")]
-        horizons = [("5m", "5"), ("15m", "15"), ("1h", "1h"), ("4h", "4h"), ("1d", "1d")]
-
-        asset_rows = []
-        row = []
-        for label, key in assets:
-            row.append(InlineKeyboardButton(label, callback_data=f"crypto_asset:{key}"))
-            if len(row) == 3:
-                asset_rows.append(row)
-                row = []
-        if row:
-            asset_rows.append(row)
-
-        horizon_rows = []
-        for label, key in horizons:
-            row = [
-                InlineKeyboardButton(
-                    f"{asset_label} {label}",
-                    callback_data=f"crypto_horizon:{asset_key}:{key}",
-                )
-                for asset_label, asset_key in assets
-            ]
-            horizon_rows.append(row)
-        quick_launch_rows = [
-            [
-                InlineKeyboardButton("🧠 BTC 5m", callback_data="btc_launch:5m"),
-                InlineKeyboardButton("🧠 BTC 15m", callback_data="btc_launch:15m"),
-            ],
-        ]
-        reply_markup = InlineKeyboardMarkup(quick_launch_rows + asset_rows + horizon_rows)
-
-        text = (
-            "🧭 <b>CENTRE CRYPTO LOBSTAR</b>\n"
-            "───────────────────\n"
-            "Choisis un actif ou un horizon pour ouvrir le bon écran.\n\n"
-            "• Les boutons BTC 5m / 15m lancent l'entraînement directionnel avec cache.\n"
-            "• Les boutons d'actif montrent les marchés actifs.\n"
-            "• Les boutons d'horizon ouvrent le sentiment détaillé.\n"
-            "• <code>/btc5</code> et <code>/btc15</code> ouvrent maintenant l'écran de launch BTC avec boutons paper/cancel.\n"
-            "• Les autres alias <code>/eth1h</code>, <code>/sol5</code>, etc. restent disponibles.\n"
-            "───────────────────"
-        )
+        text, reply_markup = await self.render_crypto_menu()
         await self.listener.reply_to(text, update, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
     async def _cmd_all_crypto_markets(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

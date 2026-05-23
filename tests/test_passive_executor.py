@@ -157,6 +157,25 @@ class TestTakerOnly:
         assert "error" in result
 
     @pytest.mark.asyncio
+    async def test_taker_local_reject_does_not_report_fill(
+        self, executor: PassiveExecutor, mock_freqai: AsyncMock,
+    ) -> None:
+        mock_freqai.post_order.return_value = {
+            "status": "POST_ONLY_REJECTED",
+            "error": "would match",
+        }
+        mock_freqai.create_order.return_value = {
+            "status": "LOCAL_REJECT_MIN_NOTIONAL",
+            "error": "below min notional",
+        }
+
+        result = await executor.execute("SOL", "BUY", 0.50, 1.0)
+
+        assert result["status"] == "TAKER_FAILED"
+        assert result["execution_path"] == "taker"
+        assert result["error"] == "below min notional"
+
+    @pytest.mark.asyncio
     async def test_taker_returns_executed_price(
         self, executor: PassiveExecutor, mock_freqai: AsyncMock,
     ) -> None:

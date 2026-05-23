@@ -16,14 +16,14 @@ logger = logging.getLogger("MarketScanner")
 
 SCAN_INTERVAL_SECONDS = 300
 TOP_MARKETS_LIMIT = 100
-MIN_VOLUME_USD = 1_000
+MIN_VOLUME_USD = 100
 CRYPTO_TAGS = {"cryptocurrency", "btc", "bitcoin", "eth", "ethereum", "sol", "solana", "crypto", "cryptocurrencies", "altcoin", "altcoins"}
 BULLISH_KEYWORDS = {"bullish", "moon", "pump", "buy", "long", "accumulate", "bull", "bull trap", "bull run", "bull market", "bullish reversal", "bullish momentum", "bullish trend", "bullish pattern", "bullish breakout", "bullish divergence", "bull flag", "bullish engulfing", "bullish hammer", "bullish pennant", "bullish wedge", "bullish channel", "bullish triangle", "bullish flag", "bullish pattern", "bullish setup", "bullish signal", "bullish alert", "bullish call", "bullish recommendation", "bullish advice", "bullish prediction", "bullish forecast", "bullish outlook", "bullish sentiment", "bullish bias", "bullish stance", "bullish position", "bullish exposure", "bullish allocation", "bullish investment", "bullish trade", "bullish position", "bullish holding", "bullish long", "bullish buy", "bullish accumulation", "bullish entry", "bullish exit", "bullish stop", "bullish limit", "bullish take profit", "bullish stop loss", "bullish risk", "bullish reward", "bullish ratio", "bullish risk reward", "bullish risk/reward", "bullish rr", "bullish payoff", "bullish expectancy", "bullish edge", "bullish advantage", "bullish opportunity", "bullish setup", "bullish signal", "bullish alert", "bullish call", "bullish recommendation", "bullish advice", "bullish prediction", "bullish forecast", "bullish outlook", "bullish sentiment", "bullish bias", "bullish stance", "bullish position", "bullish exposure", "bullish allocation", "bullish investment", "bullish trade", "bullish position", "bullish holding", "bullish long", "bullish buy", "bullish accumulation", "bullish entry", "bullish exit", "bullish stop", "bullish limit", "bullish take profit", "bullish stop loss", "bullish risk", "bullish reward", "bullish ratio", "bullish risk reward", "bullish risk/reward", "bullish rr", "bullish payoff", "bullish expectancy", "bullish edge", "bullish advantage", "bullish opportunity"}
 BEARISH_KEYWORDS = {"bearish", "dump", "sell", "short", "bear", "bear trap", "bear market", "bearish reversal", "bearish momentum", "bearish trend", "bearish pattern", "bearish breakout", "bearish divergence", "bearish flag", "bearish engulfing", "bearish hammer", "bearish pennant", "bearish wedge", "bearish channel", "bearish triangle", "bearish flag", "bearish pattern", "bearish setup", "bearish signal", "bearish alert", "bearish call", "bearish recommendation", "bearish advice", "bearish prediction", "bearish forecast", "bearish outlook", "bearish sentiment", "bearish bias", "bearish stance", "bearish position", "bearish exposure", "bearish allocation", "bearish investment", "bearish trade", "bearish position", "bearish holding", "bearish short", "bearish sell", "bearish accumulation", "bearish entry", "bearish exit", "bearish stop", "bearish limit", "bearish take profit", "bearish stop loss", "bearish risk", "bearish reward", "bearish ratio", "bearish risk reward", "bearish risk/reward", "bearish rr", "bearish payoff", "bearish expectancy", "bearish edge", "bearish advantage", "bearish opportunity", "bearish setup", "bearish signal", "bearish alert", "bearish call", "bearish recommendation", "bearish advice", "bearish prediction", "bearish forecast", "bearish outlook", "bearish sentiment", "bearish bias", "bearish stance", "bearish position", "bearish exposure", "bearish allocation", "bearish investment", "bearish trade", "bearish position", "bearish holding", "bearish short", "bearish sell", "bearish accumulation", "bearish entry", "bearish exit", "bearish stop", "bearish limit", "bearish take profit", "bearish stop loss", "bearish risk", "bearish reward", "bearish ratio", "bearish risk reward", "bearish risk/reward", "bearish rr", "bearish payoff", "bearish expectancy", "bearish edge", "bearish advantage", "bearish opportunity"}
 
 SCAN_INTERVAL_SECONDS = 300
 TOP_MARKETS_LIMIT = 100
-MIN_VOLUME_USD = 1_000
+MIN_VOLUME_USD = 100
 
 
 @dataclass
@@ -40,6 +40,7 @@ class MarketSignal:
     sentiment: str  # BULLISH or BEARISH
     direction: str  # 📈 UP or 📉 DOWN
     fee_rate_bps: int = 0
+    market_features: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -58,9 +59,11 @@ class MarketScanner:
         self,
         client: Optional[PolymarketClient] = None,
         wallet_flow_service: Optional[WalletFlowService] = None,
+        store: Optional[FeatureStore] = None,
     ) -> None:
         self.client = client or PolymarketClient()
         self.wallet_flow_service = wallet_flow_service
+        self.store = store or FeatureStore()
         self._last_scan: Optional[ScanResult] = None
         self._known_markets: dict[str, float] = {}
         self._sentiment_cache: dict[str, str] = {}
@@ -121,12 +124,15 @@ class MarketScanner:
             return result
 
         result.total_markets_scanned = len(markets)
+        logger.info(f"🔍 [SCANNER] Fetched {len(markets)} markets from Gamma API.")
+        
+        self._active_markets_snapshot = []
 
         for market in markets:
             if market.volume < MIN_VOLUME_USD:
                 continue
 
-            # USER CONSTRAINT: 3 days max resolution
+            # USER CONSTRAINT: 30 days max resolution
             if market.end_date:
                 try:
                     # Handle different ISO formats from Polymarket
@@ -139,7 +145,7 @@ class MarketScanner:
 
                     now = datetime.now(timezone.utc)
                     days_to_res = (end_dt - now).total_seconds() / (24 * 3600)
-                    if days_to_res > 3:
+                    if days_to_res > 30:
                         # logger.debug(f"Skipping {market.slug}: resolves in {days_to_res:.1f} days")
                         continue
                     if days_to_res < 0:
@@ -147,12 +153,24 @@ class MarketScanner:
                         continue
                 except Exception as e:
                     logger.warning(f"Failed to parse end_date for {market.slug}: {e}")
+            
+            # Store in snapshot for strategies
+            self._active_markets_snapshot.append(market)
 
             if not self._is_crypto_market(market):
                 continue
 
             slug = market.slug
             prev_prob = self._known_markets.get(slug)
+            
+            # Common features for this market point-in-time
+            signal_features = {
+                "mid_price": market.yes_price,
+                "volume": market.volume,
+                "liquidity": market.liquidity,
+                "spread_bps": market.spread * 10000,
+                "known_wallet_flow_score": self._wallet_flow_scores.get(slug.lower(), 0.0),
+            }
 
             # Check for winning bets (imminent resolution)
             winning = market.winning_outcome
@@ -174,12 +192,14 @@ class MarketScanner:
                     sentiment=sentiment,
                     direction=direction,
                     fee_rate_bps=getattr(market, "fee_rate_bps", 0),
+                    market_features=signal_features,
                 ))
 
-            # Check for trending markets (sharp moves)
+            # Check for trending markets (momentum moves)
             if prev_prob is not None:
                 prob_change = abs(market.probability_pct - prev_prob)
-                if prob_change >= 15 and market.volume >= 50000:
+                # Lowered from 15% and 50k vol to 2% and 5k vol
+                if prob_change >= 2.0 and market.volume >= 5000:
                     direction = "📈 UP" if market.yes_price > prev_prob / 100 else "📉 DOWN"
                     sentiment = self._get_sentiment(market)
                     result.trending_markets.append(MarketSignal(
@@ -187,7 +207,7 @@ class MarketScanner:
                         side="BUY" if direction == "📈 UP" else "SELL",
                         price=round(market.yes_price, 4),
                         confidence=round(0.5 + prob_change / 100, 4),
-                        reason=f"Sharp move: {prob_change:.0f}% change in probability",
+                        reason=f"Momentum: {prob_change:.1f}% change in probability",
                         market_question=market.question,
                         market_slug=slug,
                         current_prob=round(market.probability_pct, 1),
@@ -195,10 +215,11 @@ class MarketScanner:
                         sentiment=sentiment,
                         direction=direction,
                         fee_rate_bps=getattr(market, "fee_rate_bps", 0),
+                        market_features=signal_features,
                     ))
 
             # Check for competitive markets (tight spreads)
-            if market.is_competitive and market.volume >= 25000:
+            if market.is_competitive and market.volume >= 5000:
                 spread_pct = market.spread * 100
                 sentiment = self._get_sentiment(market)
                 direction = "📈 UP" if market.yes_price <= 0.5 else "📉 DOWN"
@@ -207,7 +228,7 @@ class MarketScanner:
                     side="BUY" if direction == "📈 UP" else "SELL",
                     price=round(market.yes_price, 4),
                     confidence=round(0.5 + (50 - spread_pct) / 100, 4),
-                    reason=f"Competitive market: spread {spread_pct:.1f}%, vol ${market.volume:,.0f}",
+                    reason=f"Competitive market: range {market.yes_price:.2f}, vol ${market.volume:,.0f}",
                     market_question=market.question,
                     market_slug=slug,
                     current_prob=round(market.probability_pct, 1),
@@ -215,6 +236,7 @@ class MarketScanner:
                     sentiment=sentiment,
                     direction=direction,
                     fee_rate_bps=getattr(market, "fee_rate_bps", 0),
+                    market_features=signal_features,
                 ))
 
             # Check for arbitrage opportunities (surebets)
@@ -238,6 +260,7 @@ class MarketScanner:
                             sentiment="ARBITRAGE",
                             direction="📈 UP" if yes_price < no_price else "📉 DOWN",
                             fee_rate_bps=getattr(market, "fee_rate_bps", 0),
+                            market_features=signal_features,
                         ))
 
             self._known_markets[slug] = market.probability_pct
@@ -274,16 +297,15 @@ class MarketScanner:
     def get_strategy_features(self) -> list[dict[str, Any]]:
         """
         Convert the latest scan snapshot into lightweight strategy feature rows.
-
-        The autonomous strategy loop needs feature-shaped market inputs, while the
-        scanner naturally produces ranked market signals. This adapter gives the
-        loop a usable, current market view instead of running with an empty list.
+        Includes all markets that passed the initial filters + benchmarks.
         """
         if not self._last_scan or not self._last_scan.total_markets_scanned:
             return []
 
         rows: list[dict[str, Any]] = []
         seen: set[str] = set()
+        
+        # 1. Start with explicit signals from scanner
         all_signals = (
             self._last_scan.winning_bets
             + self._last_scan.trending_markets
@@ -296,43 +318,95 @@ class MarketScanner:
             if not market_id or market_id in seen:
                 continue
             seen.add(market_id)
+            rows.append(self._sig_to_feature(sig))
 
-            price = max(0.0001, min(0.9999, float(sig.price)))
-            implied_probability = max(0.0001, min(0.9999, float(sig.current_prob) / 100.0))
-            spread = max(0.01, min(0.08, float(sig.fee_rate_bps or 0) / 10000.0 or 0.02))
-            side_sign = 1.0 if sig.side.upper() == "BUY" else -1.0
-            sentiment_score = side_sign * max(0.05, min(1.0, float(sig.confidence)))
+        # 2. Add all other active markets passing filters
+        if hasattr(self, "_active_markets_snapshot"):
+            for market in self._active_markets_snapshot:
+                if market.slug in seen:
+                    continue
+                seen.add(market.slug)
+                rows.append(self._market_to_feature(market))
 
-            rows.append(
-                {
-                    "market_id": market_id,
-                    "ticker": sig.ticker,
+        # 3. Add benchmarks from FeatureStore
+        for ticker in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
+            if ticker in seen:
+                continue
+            # Try to get latest price from FeatureStore
+            latest = self.store.get_latest_microstructure(ticker)
+            if latest:
+                price = latest["mid_price"]
+                seen.add(ticker)
+                rows.append({
+                    "market_id": f"benchmark_{ticker}",
+                    "ticker": ticker,
                     "price": price,
-                    "timestamp": datetime.now(timezone.utc).timestamp(),
-                    "bid_price": max(0.0001, price - (spread / 2.0)),
-                    "ask_price": min(0.9999, price + (spread / 2.0)),
-                    "bid_volume": max(25.0, float(sig.volume) / 2.0),
-                    "ask_volume": max(25.0, float(sig.volume) / 2.0),
-                    "spread": spread,
-                    "order_imbalance": 0.25 * side_sign,
-                    "ml_probability": implied_probability,
-                    "hmm_regime": sig.sentiment,
-                    "sentiment_score": sentiment_score,
-                    "semantic_confidence": max(0.0, min(1.0, float(sig.confidence))),
-                    "external_price": implied_probability,
-                    "metadata": {
-                        "market_question": sig.market_question,
-                        "market_slug": sig.market_slug,
-                        "scanner_reason": sig.reason,
-                        "scanner_volume": float(sig.volume),
-                        "current_prob_pct": float(sig.current_prob),
-                        "known_wallet_flow_score": self._wallet_flow_scores.get(market_id.lower(), 0.0),
-                        "source": "market_scanner",
-                    },
-                }
-            )
+                    "timestamp": latest["timestamp"],
+                    "bid_price": price * 0.999,
+                    "ask_price": price * 1.001,
+                    "bid_volume": latest["bid_volume"],
+                    "ask_volume": latest["ask_volume"],
+                    "spread": latest["spread"] / 10000.0, # Convert bps back if needed
+                    "order_imbalance": latest["order_imbalance"],
+                    "ml_probability": price,
+                    "hmm_regime": "NEUTRAL",
+                    "sentiment_score": 0.0,
+                    "known_wallet_flow_score": 0.0,
+                    "metadata": {"source": "feature_store_benchmark"}
+                })
 
+        logger.info(f"📊 [SCANNER] Generated {len(rows)} strategy feature rows (incl. {len(all_signals)} signals).")
         return rows
+
+    def _sig_to_feature(self, sig: MarketSignal) -> dict[str, Any]:
+        price = max(0.0001, min(0.9999, float(sig.price)))
+        spread = max(0.01, min(0.08, float(sig.fee_rate_bps or 0) / 10000.0 or 0.02))
+        return {
+            "market_id": sig.market_slug or sig.ticker,
+            "ticker": sig.ticker,
+            "price": price,
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "bid_price": max(0.0001, price - (spread / 2.0)),
+            "ask_price": min(0.9999, price + (spread / 2.0)),
+            "bid_volume": max(25.0, float(sig.volume) / 2.0),
+            "ask_volume": max(25.0, float(sig.volume) / 2.0),
+            "spread": spread,
+            "order_imbalance": 0.0,
+            "ml_probability": price,
+            "hmm_regime": sig.sentiment,
+            "sentiment_score": 0.1,
+            "known_wallet_flow_score": self._wallet_flow_scores.get(sig.market_slug.lower() if sig.market_slug else "", 0.0),
+            "metadata": {
+                "market_question": sig.market_question,
+                "market_slug": sig.market_slug,
+                "source": "market_scanner_signal",
+            }
+        }
+
+    def _market_to_feature(self, market: Market) -> dict[str, Any]:
+        price = max(0.0001, min(0.9999, float(market.yes_price)))
+        spread = max(0.01, min(0.08, float(market.spread)))
+        return {
+            "market_id": market.slug,
+            "ticker": market.slug,
+            "price": price,
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "bid_price": max(0.0001, price - (spread / 2.0)),
+            "ask_price": min(0.9999, price + (spread / 2.0)),
+            "bid_volume": max(25.0, float(market.volume) / 2.0),
+            "ask_volume": max(25.0, float(market.volume) / 2.0),
+            "spread": spread,
+            "order_imbalance": 0.0,
+            "ml_probability": price,
+            "hmm_regime": "NEUTRAL",
+            "sentiment_score": 0.0,
+            "known_wallet_flow_score": self._wallet_flow_scores.get(market.slug.lower(), 0.0),
+            "metadata": {
+                "market_question": market.question,
+                "market_slug": market.slug,
+                "source": "market_scanner_raw",
+            }
+        }
 
     def _refresh_wallet_flow_scores(self) -> None:
         if not self.wallet_flow_service:

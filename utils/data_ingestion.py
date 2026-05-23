@@ -244,25 +244,33 @@ class BinanceWSListener:
 
     @staticmethod
     def _depth_to_snapshot(msg: dict) -> Optional[dict]:
-        bids = msg.get("b", [])
-        asks = msg.get("a", [])
+        # Handle both diff depth (b, a) and partial depth (bids, asks)
+        bids = msg.get("b", msg.get("bids", []))
+        asks = msg.get("a", msg.get("asks", []))
         if not bids or not asks:
             return None
-        best_bid = float(bids[0][0])
-        best_ask = float(asks[0][0])
-        bid_vol = sum(float(b[1]) for b in bids[:10])
-        ask_vol = sum(float(a[1]) for a in asks[:10])
-        mid = (best_bid + best_ask) / 2 if best_bid > 0 and best_ask > 0 else 0.0
-        spread_bps = ((best_ask - best_bid) / mid) * 10000 if mid > 0 else 0.0
-        imbalance = bid_vol / (bid_vol + ask_vol) if (bid_vol + ask_vol) > 0 else 0.5
-        return {
-            "timestamp": float(msg.get("E", 0)) / 1000.0,
-            "mid_price": mid,
-            "spread_bps": spread_bps,
-            "order_imbalance": imbalance,
-            "bid_volume": bid_vol,
-            "ask_volume": ask_vol,
-        }
+        try:
+            best_bid = float(bids[0][0])
+            best_ask = float(asks[0][0])
+            bid_vol = sum(float(b[1]) for b in bids[:10])
+            ask_vol = sum(float(a[1]) for a in asks[:10])
+            mid = (best_bid + best_ask) / 2 if best_bid > 0 and best_ask > 0 else 0.0
+            spread_bps = ((best_ask - best_bid) / mid) * 10000 if mid > 0 else 0.0
+            imbalance = bid_vol / (bid_vol + ask_vol) if (bid_vol + ask_vol) > 0 else 0.5
+            
+            # Use event time 'E' or transaction time 'T' or current time
+            ts = float(msg.get("E", msg.get("T", time.time() * 1000))) / 1000.0
+            
+            return {
+                "timestamp": ts,
+                "mid_price": mid,
+                "spread_bps": spread_bps,
+                "order_imbalance": imbalance,
+                "bid_volume": bid_vol,
+                "ask_volume": ask_vol,
+            }
+        except (IndexError, ValueError, TypeError):
+            return None
 
     def _record_kline(self, ticker: str, data: dict) -> None:
         ts = data["timestamp"]
@@ -292,6 +300,13 @@ class BinanceWSListener:
             mid_price=data["mid_price"],
             order_imbalance=data["order_imbalance"],
         )
+        
+        # Throttled logging to prevent flooding
+        if not hasattr(self, "_depth_counts"):
+            self._depth_counts = {}
+        self._depth_counts[ticker] = self._depth_counts.get(ticker, 0) + 1
+        if self._depth_counts[ticker] % 100 == 0:
+            logger.info(f"📊 [BINANCE] Recorded 100 depth ticks for {ticker} (Last price: {data['mid_price']:.2f})")
 
         self.store.record_web_event(
             source="binance_ws",
@@ -316,34 +331,51 @@ class BinanceWSListener:
             f"{t.lower()}@kline_1m/{t.lower()}@depth10@100ms"
             for t in self.tickers
         )
-        url = f"wss://stream.binance.com:9443/ws/{streams}"
-        logger.info(f"Connecting to Binance WS: {url[:80]}...")
+        # Combined stream URL format
+        url = f"wss://stream.binance.com:9443/stream?streams={streams}"
+        logger.info(f"Connecting to Binance WS (Combined): {url[:80]}...")
         self._running = True
-        async for ws in websockets.connect(url, ping_interval=30):
-            self._ws = ws
+        
+        while self._running:
             try:
-                async for raw in ws:
-                    if not self._running:
-                        break
-                    try:
-                        msg = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
+                async with websockets.connect(url, ping_interval=30) as ws:
+                    self._ws = ws
+                    async for raw in ws:
+                        if not self._running:
+                            break
+                        try:
+                            msg = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
 
-                    event_type = msg.get("e", "")
-                    ticker = msg.get("s", "")
-
-                    if event_type == "kline":
-                        ohlcv = self._kline_to_ohlcv(msg)
-                        if ohlcv:
-                            self._record_kline(ticker, ohlcv)
-                    elif event_type == "depthUpdate":
-                        depth = self._depth_to_snapshot(msg)
-                        if depth:
-                            self._record_depth(ticker, depth)
-            except websockets.ConnectionClosed:
-                logger.warning("Binance WS disconnected, reconnecting...")
-                continue
+                        # Determine stream type
+                        # Combined streams wrap data: {"stream":"...", "data":{...}}
+                        if "stream" in msg and "data" in msg:
+                            stream_name = msg["stream"]
+                            data = msg["data"]
+                            ticker = stream_name.split("@")[0].upper()
+                            if "kline" in stream_name:
+                                ohlcv = self._kline_to_ohlcv(data)
+                                if ohlcv: self._record_kline(ticker, ohlcv)
+                            else:
+                                depth = self._depth_to_snapshot(data)
+                                if depth: self._record_depth(ticker, depth)
+                        else:
+                            # Direct stream format
+                            event_type = msg.get("e", "")
+                            ticker = msg.get("s", "")
+                            if event_type == "kline":
+                                ohlcv = self._kline_to_ohlcv(msg)
+                                if ohlcv: self._record_kline(ticker, ohlcv)
+                            elif event_type == "depthUpdate":
+                                depth = self._depth_to_snapshot(msg)
+                                if depth: self._record_depth(ticker, depth)
+            except (websockets.ConnectionClosed, Exception) as e:
+                if self._running:
+                    logger.warning(f"Binance WS disconnected ({e}), reconnecting in 5s...")
+                    await asyncio.sleep(5)
+                else:
+                    break
 
     def stop(self) -> None:
         self._running = False

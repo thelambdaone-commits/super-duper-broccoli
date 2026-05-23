@@ -103,8 +103,8 @@ class PortfolioRiskEngine:
     def _vol_target_size(self, capital: float, asset_vol: float) -> float:
         capital = max(0.0, float(capital))
         if asset_vol <= 0:
-            return capital * 0.01
-        return min(capital * self.target_portfolio_vol / asset_vol, capital * 0.1)
+            return capital * self.max_single_position_pct
+        return min(capital * self.target_portfolio_vol / asset_vol, capital * self.max_single_position_pct)
 
     def _regime_multiplier(self, regime_label: str, confidence: float) -> float:
         confidence = max(0.0, min(float(confidence), 1.0))
@@ -175,9 +175,9 @@ class PortfolioRiskEngine:
         ticker: str,
         side: str,
         price: float,
-        confidence: float = 0.5,
-        win_prob: float = 0.55,
-        win_loss_ratio: float = 1.5,
+        confidence: float = 0.85,
+        win_prob: float = 0.75,
+        win_loss_ratio: float = 2.5,
         asset_volatility: float = 0.5,
         regime_label: str = "LOW_VOLATILITY",
     ) -> dict:

@@ -36,6 +36,7 @@ def _setup_autonomous_trading(
         strategies = build_default_polymarket_strategies()
         for s in strategies:
             lifecycle.register_strategy(s)
+        print(f"DEBUG: [SCHEDULER] Registered {len(strategies)} strategies to Lifecycle Manager.")
 
         loop = AutonomousTradingLoop(
             ledger=ledger,

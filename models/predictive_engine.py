@@ -111,7 +111,8 @@ class PolymarketPredictiveEngine:
             symbol = f"{symbol}USDT"
 
         try:
-            events = self.feature_store.get_web_events(event_type="book_ticker", limit=200)
+            # Check for any depth or book_ticker events from Binance
+            events = self.feature_store.get_web_events(limit=500)
         except Exception as exc:
             raise QuantFatal(f"Unable to read Binance web events: {exc}") from exc
 
@@ -166,11 +167,16 @@ class PolymarketPredictiveEngine:
         timestamp_resolution: float,
         max_staleness_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
-        binance_snapshot = self._latest_binance_snapshot(
-            ticker=ticker,
-            max_staleness_seconds=max_staleness_seconds,
-        )
-        live_features = {**polymarket_frame, **binance_snapshot}
+        try:
+            binance_snapshot = self._latest_binance_snapshot(
+                ticker=ticker,
+                max_staleness_seconds=max_staleness_seconds,
+            )
+            live_features = {**polymarket_frame, **binance_snapshot}
+        except Exception as e:
+            logger.debug(f"Binance benchmark unavailable for {ticker}: {e}. Using Polymarket features only.")
+            live_features = polymarket_frame
+
         df_live = pd.DataFrame(self._normalize_market_feature_rows(live_features))
         if df_live.empty:
             raise QuantFatal("Live feature matrix is empty after Binance injection")
@@ -398,12 +404,14 @@ def create_predictive_engine(
     min_edge_threshold: float = 0.07,
     load_models: bool = True,
     model_dir: str = DEFAULT_MODEL_DIR,
+    feature_store: Optional[Any] = None,
 ) -> PolymarketPredictiveEngine:
     """
     Factory function pour créer le PredictiveEngine avec config par défaut.
     """
     engine = PolymarketPredictiveEngine(
-        min_edge_threshold=min_edge_threshold
+        min_edge_threshold=min_edge_threshold,
+        feature_store=feature_store
     )
 
     if load_models:

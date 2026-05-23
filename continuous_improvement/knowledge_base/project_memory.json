@@ -52,6 +52,16 @@
       "details": "",
       "tags": ["docs", "context"],
       "source": "manual"
+    },
+    {
+      "timestamp": 1779642000.0,
+      "date": "2026-05-23T17:00:00",
+      "kind": "refactor",
+      "component": "modularisation",
+      "summary": "Phase 1: extrait ledger.schema, core.training.prediction, core.swarm. Phase 2: supprime shims auto_repair_agent.py & autonomic_healer.py. 47/47 tests pass.",
+      "details": "ledger_db._initialize_database delegue à ledger.schema. training_pipeline.predict/latest_features_as_vector déléguent à core.training.prediction. swarm_supervisor importe depuis core.swarm. Callers mis à jour pour importer depuis core.healing.*.",
+      "tags": ["refactoring", "modularisation", "ledger", "training", "swarm"],
+      "source": "manual"
     }
   ]
 }

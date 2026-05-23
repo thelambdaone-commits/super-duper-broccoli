@@ -48,8 +48,11 @@ class HelpManager:
                 "• <code>/paper [ticker]</code> ↳ Paper engine\n"
                 "• <code>/clob [ticker]</code> ↳ Statut CLOB\n"
                 "• <code>/ai [prompt]</code> ↳ Assistant IA\n\n"
+                "• <code>/btc5</code>, <code>/btc15</code> ↳ Launch BTC directionnel\n"
+                "• <code>/launchbtc5up</code>, <code>/launchbtc5down</code> ↳ Launch BTC 5m direct\n"
+                "• <code>/launchbtc15up</code>, <code>/launchbtc15down</code> ↳ Launch BTC 15m direct\n"
                 "• <code>/btc15</code>, <code>/eth1h</code> ↳ Crypto intel\n"
-                "• <code>/crypto</code> ↳ Menu interactif\n"
+                "• <code>/crypto</code> ↳ Menu interactif avec boutons BTC / assets / horizons\n"
             )
         },
         4: {

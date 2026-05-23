@@ -115,7 +115,7 @@ class FreqAIEngine:
         """Taker execution via create_and_post_order."""
         def _create_order_sync() -> Dict[str, Any]:
             order_side = "BUY" if side in ("YES", "BUY", "LONG") else "SELL"
-            validated_size, validated_price = self._normalize_and_validate(ticker, price, size)
+            validated_size, validated_price = self.normalize_and_validate(ticker, price, size)
             order_args = OrderArgs(
                 price=validated_price,
                 size=validated_size,
@@ -157,7 +157,7 @@ class FreqAIEngine:
         """Maker execution with post-only options."""
         def _post_order_sync() -> Dict[str, Any]:
             order_side = "BUY" if side in ("YES", "BUY", "LONG") else "SELL"
-            validated_size, validated_price = self._normalize_and_validate(ticker, price, size)
+            validated_size, validated_price = self.normalize_and_validate(ticker, price, size)
             order_args = OrderArgs(
                 price=validated_price,
                 size=validated_size,
@@ -204,6 +204,21 @@ class FreqAIEngine:
         except Exception as e:
             logger.error(f"Cancel failed for {order_id}: {e}")
             return {"status": "CANCEL_FAILED", "error": str(e)}
+
+    async def get_midpoint(self, token_id: str) -> float:
+        """Return the current midpoint price for a token via the CLOB client."""
+        try:
+            midpoint = await asyncio.wait_for(
+                asyncio.to_thread(self.client.get_midpoint, token_id),
+                timeout=5.0,
+            )
+            return float(midpoint)
+        except TimeoutError:
+            logger.error(f"Timed out while fetching midpoint for {token_id}")
+            return 0.0
+        except Exception as e:
+            logger.error(f"Failed to fetch midpoint for {token_id}: {e}")
+            return 0.0
 
     async def stream_ticks_to_duckdb(self) -> None:
         """

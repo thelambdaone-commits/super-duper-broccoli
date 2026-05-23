@@ -14,6 +14,9 @@ class FakeClient:
     def create_and_post_order(self, order_args, options=None):
         return {"status": "FILLED", "orderID": "ord-1"}
 
+    def get_midpoint(self, token_id: str):
+        return 0.42
+
 
 def _build_engine() -> FreqAIEngine:
     engine = object.__new__(FreqAIEngine)
@@ -92,4 +95,21 @@ async def test_get_order_status_runs_blocking_client_call_in_thread(monkeypatch)
     result = await engine.get_order_status("ord-1")
 
     assert result == {"id": "ord-1", "status": "LIVE"}
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_midpoint_runs_blocking_client_call_in_thread(monkeypatch) -> None:
+    engine = _build_engine()
+    calls = []
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        calls.append((fn, args))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("core.freqai_engine.asyncio.to_thread", fake_to_thread)
+
+    result = await engine.get_midpoint("0xabc")
+
+    assert result == 0.42
     assert len(calls) == 1

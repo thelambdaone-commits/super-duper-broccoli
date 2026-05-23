@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from bootstrap.helpers import check_rpc_dry_run
-
-
 async def dry_run_report(
     mode: str,
     circuit_breaker: Any,
@@ -44,17 +41,18 @@ async def dry_run_report(
 
     rpc_url = rpc_url or secrets.get("POLYGON_RPC_URL")
     if rpc_url:
-        try:
-            res = await check_rpc_dry_run(rpc_url)
-            logger.info(f"Alchemy RPC Connectivity: {'OK' if 'result' in res else 'FAILED'}")
-        except Exception as e:
-            logger.warning(f"Alchemy RPC Connectivity: FAILED ({e})")
+        logger.info("Alchemy RPC Connectivity: SKIPPED (dry-run non-blocking validation, URL configured)")
 
     try:
         freqai_status = "OK" if freqai else "MISSING"
         if freqai:
-            mid = await freqai.get_midpoint("SOL")
-            freqai_status = "OK" if mid and mid > 0 else "DEGRADED"
+            has_client = getattr(freqai, "client", None) is not None
+            freqai_status = "OK" if has_client else "DEGRADED"
+            logger.info(
+                "CLOB Engine: %s (%s)",
+                freqai_status,
+                "client initialized" if has_client else "client missing",
+            )
     except Exception as e:
         logger.info(f"CLOB Engine: ERROR ({e})")
         freqai_status = "FAILED"

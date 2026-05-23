@@ -5,7 +5,7 @@ import asyncio
 from unittest.mock import AsyncMock
 import pytest
 from pathlib import Path
-from core.autonomic_healer import LobstarAutonomicHealer
+from core.healing.autonomic_healer import LobstarAutonomicHealer
 
 
 class FakeBroadcaster:

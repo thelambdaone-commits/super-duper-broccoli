@@ -90,8 +90,6 @@ class PositionReconciliationService:
                     filled_qty=size,
                     execution_price=price,
                     notional_usd=size * price,
-                    status="OPEN",
-                    notes="RECONCILED_FROM_API"
                 )
                 summary["new_external"] += 1
 

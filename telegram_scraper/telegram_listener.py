@@ -122,6 +122,7 @@ class TelegramListener:
         self._wallet_vault = None
         self._market_reader = None
         self.command_router = LobstarCommandRouter(platform_core=self)
+        self.ui_router = None
         self.passive_executor_allowed = True
         self._high_value_trade_approval_until: float = 0.0
         self._high_value_trade_approved_by: Optional[int] = None
@@ -130,10 +131,6 @@ class TelegramListener:
 
     def _get_btc_launch_service(self):
         from core.services.btc_launch_service import BTCDirectionLaunchService
-
-        router = getattr(self, "command_router", None)
-        if router is not None and hasattr(router, "_get_btc_launch_service"):
-            return router._get_btc_launch_service()
 
         service = getattr(self, "_btc_launch_service", None)
         if service is None:
@@ -2059,7 +2056,7 @@ class TelegramListener:
             await query.answer()
             asset_key = query.data.split(":", 1)[1].lower()
             context.args = [asset_key]
-            await self.command_router._cmd_crypto_markets(update, context)
+            await self.ui_router._cmd_crypto_markets(update, context)
             return
 
         elif query.data.startswith("crypto_horizon:"):
@@ -2068,14 +2065,14 @@ class TelegramListener:
             if len(parts) == 3:
                 asset, horizon = parts[1].lower(), parts[2]
                 context.args = [asset, horizon]
-                await self.command_router._cmd_crypto_horizon(update, context)
+                await self.ui_router._cmd_crypto_horizon(update, context)
             return
 
         elif query.data.startswith("btc_launch:"):
             interval = query.data.split(":", 1)[1]
             await query.answer(f"Training BTC {interval}...")
             try:
-                text, reply_markup = await self.command_router.render_btc_launch(interval, force_refresh=True)
+                text, reply_markup = await self.ui_router.render_btc_launch(interval, force_refresh=True)
                 text = await self._augment_btc_tracking_text(interval, text)
                 await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except Exception as exc:
@@ -2087,7 +2084,7 @@ class TelegramListener:
             interval = query.data.split(":", 1)[1]
             await query.answer(f"Tracking BTC {interval}...")
             try:
-                text, reply_markup = await self.command_router.render_btc_launch(interval, force_refresh=True)
+                text, reply_markup = await self.ui_router.render_btc_launch(interval, force_refresh=True)
                 text = await self._augment_btc_tracking_text(interval, text)
                 await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except Exception as exc:
@@ -2191,7 +2188,12 @@ class TelegramListener:
 
         elif query.data == "crypto_menu":
             await query.answer()
-            await self.command_router._cmd_crypto(update, context)
+            try:
+                text, reply_markup = await self.ui_router.render_crypto_menu()
+                await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            except Exception as exc:
+                logger.exception("Crypto menu callback failed")
+                await safe_edit_callback(query, f"❌ Menu crypto indisponible: {exc}", parse_mode=ParseMode.HTML)
             return
 
         await query.answer()
@@ -2330,8 +2332,8 @@ class TelegramListener:
                 self.application.add_handler(CommandHandler("wallet", self._cmd_wallet_cockpit))
 
                 # Register new institutional command router
-                router = CommandRouter(self, market_reader=self._market_reader, order_manager=getattr(self, '_order_manager', None))
-                router.register_all()
+                self.ui_router = CommandRouter(self, market_reader=self._market_reader, order_manager=getattr(self, '_order_manager', None))
+                self.ui_router.register_all()
 
                 # Register new Lobstar Command Router MessageHandler
                 self.application.add_handler(

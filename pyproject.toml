@@ -41,6 +41,10 @@ exclude = [
     "^agent_skills/.*/entrypoint\\.py$",
     "^agents/gitagent/",
     "^agents/mirothinker/",
+    "^agents/polymarket_lp_tool/",
+    "^agents/polybot/",
+    "^utils/polymarket_data/",
+    "^engine/backtest/nautilus_backtest/",
 ]
 
 [tool.coverage.run]

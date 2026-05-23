@@ -170,6 +170,164 @@
       "status": "external_reference"
     }
   ],
+  "prediction_market_trading": [
+    {
+      "name": "Pydantic AI",
+      "repo": "https://github.com/pydantic/pydantic-ai",
+      "package": "pydantic-ai",
+      "purpose": "Production-grade Python agent framework with structured outputs, dependency injection, multi-agent, and graph-based workflows. Replaces the ad-hoc LLM council with typed agents.",
+      "status": "core_dependency",
+      "integration_state": "phase_1a",
+      "local_entrypoints": [
+        "core/pydantic_agent_factory.py",
+        "requirements.txt#pydantic-ai"
+      ],
+      "capabilities": [
+        "structured-output-agent",
+        "multi-agent-delegation",
+        "graph-based-workflows",
+        "dependency-injection",
+        "durable-execution",
+        "model-agnostic-llm"
+      ]
+    },
+    {
+      "name": "Polymarket LP Tool",
+      "repo": "https://github.com/lihanyu81/polymarket_lp_tool",
+      "purpose": "Passive liquidity provision monitoring and order-repricing tool for Polymarket CLOB. Implements SimplePricePolicy (coarse/fine tick repricing) based on liquidity reward delta.",
+      "status": "submodule",
+      "integration_state": "phase_1b",
+      "local_entrypoints": [
+        "agents/polymarket_lp_tool/",
+        "agent_skills/polymarket_market_making_skill/adapter_lp_tool.py",
+        "config/lp_custom_pricing_rules.json"
+      ],
+      "capabilities": [
+        "passive-liquidity-provision",
+        "order-repricing",
+        "liquidity-reward-optimization",
+        "custom-pricing-rules"
+      ],
+      "tech_stack": "Python + Rust",
+      "guardrails": [
+        "Do NOT run LP tool and core concurrently on same API key without coordination",
+        "LP tool never creates initial orders — only manages manually-placed ones"
+      ]
+    },
+    {
+      "name": "Polymarket On-chain Data",
+      "repo": "https://github.com/SII-WANGZJ/Polymarket_data",
+      "purpose": "Complete data infrastructure for on-chain Polymarket data: Polygon RPC LogFetcher, EventDecoder (OrderFilled events), GammaApiClient, 107GB+ dataset (1.1B+ records).",
+      "status": "submodule",
+      "integration_state": "phase_2a",
+      "local_entrypoints": [
+        "utils/polymarket_data/",
+        "utils/polymarket_data/polymarket/fetchers/rpc.py",
+        "utils/polymarket_data/polymarket/processors/decoder.py"
+      ],
+      "capabilities": [
+        "on-chain-event-fetching",
+        "order-filled-decoding",
+        "gamma-api-metadata",
+        "data-cleaning-pipeline",
+        "historical-trades-dataset"
+      ],
+      "tech_stack": "Python 3.12+, web3, pandas, pyarrow, parquet",
+      "guardrails": [
+        "Requires Python >=3.12 — run in separate env or upgrade project",
+        "~100GB+ storage for full dataset"
+      ]
+    },
+    {
+      "name": "Prediction Market Backtesting",
+      "repo": "https://github.com/evan-kolberg/prediction-market-backtesting",
+      "purpose": "Professional-grade backtesting framework for prediction markets on NautilusTrader. Supports historical L2 order book replay (PMXT/Telonex), parameter optimization (Optuna), and rich charting.",
+      "status": "submodule",
+      "integration_state": "phase_2b",
+      "local_entrypoints": [
+        "engine/backtest/nautilus_backtest/",
+        "engine/backtest/nautilus_backtest/prediction_market_extensions/",
+        "engine/backtest/nautilus_backtest/strategies/"
+      ],
+      "capabilities": [
+        "historical-order-book-replay",
+        "multi-market-backtesting",
+        "parameter-optimization",
+        "strategy-validation",
+        "live-sandbox-mode"
+      ],
+      "tech_stack": "Python 3.12+, Rust (native ext), NautilusTrader 1.226.0",
+      "guardrails": [
+        "Requires Python >=3.12 + Rust toolchain + separate environment",
+        "LGPL-3.0 licensed — check copyleft obligations before commercial use"
+      ]
+    },
+    {
+      "name": "CloddsBot",
+      "repo": "https://github.com/alsk1992/CloddsBot",
+      "package": "clodds",
+      "purpose": "Open-source AI trading terminal — 119 skills, 21 messaging channels, 10 prediction market platforms, 7 perp exchanges. Integrates via MCP server sidecar.",
+      "status": "docker_sidecar",
+      "integration_state": "phase_3a",
+      "local_entrypoints": [
+        "docker-compose.integrations.yml#clodds",
+        "mcp_agents/mcp_server.py"
+      ],
+      "capabilities": [
+        "119-trading-skills",
+        "21-messaging-channels",
+        "cross-platform-trading",
+        "whale-tracking",
+        "risk-engine",
+        "mcp-server"
+      ],
+      "tech_stack": "TypeScript/Node.js >= 22",
+      "guardrails": [
+        "Requires Node.js >=22 — run in Docker sidecar",
+        "Heavy dependency tree (70+ direct deps)"
+      ]
+    },
+    {
+      "name": "Polybot",
+      "repo": "https://github.com/ent0n29/polybot",
+      "purpose": "Polymarket trading infrastructure with 5 microservices (executor, strategy, analytics, ingestor, orchestrator), Gabagool strategy engine, ClickHouse analytics, and replication scoring research toolkit.",
+      "status": "submodule",
+      "integration_state": "phase_3b",
+      "local_entrypoints": [
+        "agents/polybot/",
+        "agents/polybot/research/"
+      ],
+      "capabilities": [
+        "order-execution",
+        "strategy-runtime",
+        "data-ingestion",
+        "analytics",
+        "replication-scoring",
+        "gabagool-strategy"
+      ],
+      "tech_stack": "Java 21 + Spring Boot + Redpanda Kafka + ClickHouse",
+      "guardrails": [
+        "Java 21+ required — run microservices in Docker sidecar",
+        "Research scripts (Python) can be imported directly"
+      ]
+    }
+  ],
+  "awesome_reference_lists": [
+    {
+      "name": "Awesome Polymarket Tools",
+      "repo": "https://github.com/harish-garg/Awesome-Polymarket-Tools",
+      "purpose": "Curated list of Polymarket tools, libraries, bots, and resources for traders, developers, and researchers.",
+      "status": "reference",
+      "local_entrypoints": ["docs/ecosystem_reference.md#awesome-polymarket-tools"]
+    },
+    {
+      "name": "Awesome Prediction Market Tools",
+      "repo": "https://github.com/aarora4/Awesome-Prediction-Market-Tools",
+      "purpose": "Most comprehensive prediction market tool directory — 22 categories, 100+ tools across Polymarket, Kalshi, Manifold, Hyperliquid, Limitless.",
+      "status": "reference",
+      "local_entrypoints": ["docs/ecosystem_reference.md#awesome-prediction-market-tools"]
+    }
+  ],
   "autonomous_problem_solving": [
     {
       "name": "AI-Problem-Solver",

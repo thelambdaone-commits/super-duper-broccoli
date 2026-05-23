@@ -52,9 +52,19 @@ class FeatureStore:
             raise ValueError(f"Unsupported table: {table}")
         return table
 
+    @property
+    def is_fallback(self) -> bool:
+        return self.db_path == ":memory:" or (hasattr(self, "_is_memory") and self._is_memory)
+
+    @property
+    def is_read_only(self) -> bool:
+        return getattr(self, "_is_read_only", False)
+
     def _connect(self) -> None:
         try:
             import duckdb
+            self._is_read_only = False
+            self._is_memory = False
             try:
                 # Try standard connection (R/W)
                 self._conn = duckdb.connect(self.db_path)
@@ -64,10 +74,12 @@ class FeatureStore:
                         # Fallback 1: Read-only connection (allows multi-reader)
                         logger.info(f"🔗 Attempting read-only connection to {self.db_path} due to lock conflict.")
                         self._conn = duckdb.connect(self.db_path, read_only=True)
+                        self._is_read_only = True
                     except Exception as e2:
                         # Fallback 2: In-memory (prevent crash)
                         logger.warning(f"⚠️ DuckDB lock conflict on {self.db_path} and read-only failed. Falling back to in-memory database (:memory:): {e2}")
                         self._conn = duckdb.connect(":memory:")
+                        self._is_memory = True
                 else:
                     raise
             self._conn.execute("SET memory_limit = '2GB'")
@@ -374,6 +386,19 @@ class FeatureStore:
                     "price", "sized", "executed_size", "kelly_pct",
                     "regime_label", "net_beta_pct", "authorized", "reason"]
         return [dict(zip(columns, row)) for row in rows]
+
+    def get_latest_microstructure(self, ticker: str) -> Optional[dict]:
+        """Get the absolute latest tick for a ticker."""
+        rows = self._conn.execute("""
+            SELECT * FROM market_microstructure
+            WHERE ticker = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """, (ticker,)).fetchall()
+        if not rows:
+            return None
+        columns = ["ticker", "timestamp", "bid_volume", "ask_volume", "spread", "mid_price", "order_imbalance"]
+        return dict(zip(columns, rows[0]))
 
     def get_microstructure_range(
         self, start_ts: float, end_ts: float, ticker: Optional[str] = None

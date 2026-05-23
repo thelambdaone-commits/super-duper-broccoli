@@ -42,7 +42,7 @@ class SelfImprovementAgent:
             return []
 
         try:
-            from core.autonomic_healer import LobstarAutonomicHealer
+            from core.healing.autonomic_healer import LobstarAutonomicHealer
             healer = LobstarAutonomicHealer(log_file_path=log_file)
             incident_ids = healer.analyser_nouveaux_logs()
             # Convert incident IDs to the same format used by generate_improvement_report()

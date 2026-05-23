@@ -163,18 +163,41 @@ class MarketScanLoop:
                                 sent = await self.listener.send_message(intelligence_text, parse_mode="HTML")
                                 if sent:
                                     last_crypto_intelligence_at = now
-                    if result.winning_bets:
-                        alert = format_winning_bets_alert(result.winning_bets[:3])
-                        if alert and should_broadcast_message("winning_bets_alert", alert):
-                            await self.listener.send_message(alert, parse_mode="HTML")
-                        for bet in result.winning_bets:
+                    all_signals = (
+                        result.winning_bets
+                        + result.trending_markets
+                        + result.competitive_markets
+                        + result.arbitrage_opportunities
+                    )
+
+                    if all_signals:
+                        # Alert for winning bets (highest priority)
+                        if result.winning_bets:
+                            alert = format_winning_bets_alert(result.winning_bets[:3])
+                            if alert and should_broadcast_message("winning_bets_alert", alert):
+                                await self.listener.send_message(alert, parse_mode="HTML")
+                        
+                        # Process all signals
+                        for bet in all_signals:
                             try:
                                 if self.clob_listener:
                                     self.clob_listener.subscribe([bet.ticker])
-                                signal = {"ticker": bet.ticker, "side": bet.side, "price": bet.price, "confidence": bet.confidence, "reason": bet.reason, "market_question": bet.market_question, "market_slug": bet.market_slug, "source": "market_scanner", "token_id": bet.ticker, "size": 0.0}
+                                signal = {
+                                    "ticker": bet.ticker,
+                                    "side": bet.side,
+                                    "price": bet.price,
+                                    "confidence": bet.confidence,
+                                    "reason": bet.reason,
+                                    "market_question": bet.market_question,
+                                    "market_slug": bet.market_slug,
+                                    "source": "market_scanner",
+                                    "token_id": bet.ticker,
+                                    "size": 0.0,
+                                    "market_features": getattr(bet, "market_features", {}),
+                                }
                                 await self.orchestrator.on_signal(signal)
                             except Exception as e:
-                                logger.warning(f"Failed to auto-trade winning bet {bet.ticker}: {e}")
+                                logger.warning(f"Failed to auto-trade signal {bet.ticker}: {e}")
                 else:
                     logger.warning("Scan returned 0 markets — check API connectivity")
             except Exception as e:

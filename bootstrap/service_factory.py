@@ -30,7 +30,7 @@ def build_runtime_services(container: ServiceContainer, execution_mode: str) -> 
         validation_split=0.2,
     )
     wallet_flow_service = WalletFlowService()
-    market_scanner = MarketScanner(wallet_flow_service=wallet_flow_service)
+    market_scanner = MarketScanner(wallet_flow_service=wallet_flow_service, store=store)
     snapshot_mgr = get_snapshot_manager()
     model_validator = ModelValidator(snapshot_manager=snapshot_mgr)
     self_improver = SelfImprovementAgent()

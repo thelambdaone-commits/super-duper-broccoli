@@ -1,9 +1,9 @@
 {
   "server": {
     "name": "quant-agentic-mcp",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "transport": "stdio",
-    "description": "MCP server for quant-agentic-trading-core. Exposes ledger state, HMM market regime, and emergency circuit breaker."
+    "description": "MCP server for quant-agentic-trading-core. Exposes ledger state, HMM market regime, emergency circuit breaker, LP tool repricing, Pydantic AI agents, and on-chain Polymarket data."
   },
   "tools": [
     {
@@ -377,6 +377,61 @@
         },
         "required": ["ohlcv_json"]
       }
+    },
+    {
+      "name": "clodds_lp_repricing",
+      "description": "Decides whether to keep, cancel, or reprice a Polymarket limit order based on CLOB liquidity reward delta (SimplePricePolicy).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "token_id": { "type": "string", "description": "Polymarket CLOB token ID" },
+          "side": { "type": "string", "enum": ["BUY", "SELL"], "description": "Order side" },
+          "current_price": { "type": "number", "description": "Current limit order price" },
+          "mid_price": { "type": "number", "description": "Current market mid price" },
+          "delta": { "type": "number", "description": "Liquidity reward half-width delta (default: 0.03)" }
+        },
+        "required": ["token_id", "side", "current_price", "mid_price"]
+      }
+    },
+    {
+      "name": "clodds_lp_set_custom_rule",
+      "description": "Sets a persistent custom pricing rule for a token+side, overriding the default SimplePricePolicy.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "token_id": { "type": "string", "description": "Polymarket CLOB token ID" },
+          "side": { "type": "string", "enum": ["BUY", "SELL"], "description": "Order side" },
+          "target_price": { "type": "number", "description": "Target limit price for repricing decisions" }
+        },
+        "required": ["token_id", "side", "target_price"]
+      }
+    },
+    {
+      "name": "pydantic_agent_analyze",
+      "description": "Runs a Pydantic AI agent to analyze a market query and return a structured MarketAnalysis (fair price, edge, regime, recommendation).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "market_query": { "type": "string", "description": "Natural language market analysis query" }
+        },
+        "required": ["market_query"]
+      }
+    },
+    {
+      "name": "polymarket_data_fetch_onchain",
+      "description": "Fetches recent on-chain Polymarket OrderFilled events from Polygon RPC using the Polymarket_data submodule.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "blocks": { "type": "integer", "description": "Number of recent blocks to scan (default: 100)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "clodds_mcp_health",
+      "description": "Checks if the CloddsBot MCP sidecar is reachable at localhost:18789.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
     }
   ]
 }

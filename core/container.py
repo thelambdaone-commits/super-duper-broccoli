@@ -75,8 +75,10 @@ class ServiceContainer:
         self.store = FeatureStore(db_path=api_store_path)
         self.history = HistoryAccessService(self.store, self.ledger)
         self.store.history_access = self.history
+        from utils.config_loader import TRADING_PARAMS
+        min_edge = float(TRADING_PARAMS.get("min_edge_threshold", 0.02))
         self.predictive_gate_service = PredictiveGateService(
-            config=PredictiveGateConfig(min_edge_threshold=0.07),
+            config=PredictiveGateConfig(min_edge_threshold=min_edge),
             feature_store=self.store,
         )
 

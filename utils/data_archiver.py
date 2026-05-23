@@ -3,6 +3,7 @@ import os
 import tarfile
 import time
 from datetime import datetime
+from typing import Any, Optional
 
 logger = logging.getLogger("DataArchiver")
 
@@ -27,26 +28,42 @@ class DataArchiver:
         log_dir: str = LOG_DIR,
         hot_retention_days: int = 2,
         warm_retention_days: int = 30,
+        feature_store: Optional[Any] = None,
     ) -> None:
         self.db_path = db_path
         self.archive_dir = archive_dir
         self.log_dir = log_dir
         self.hot_retention = hot_retention_days
         self.warm_retention = warm_retention_days
+        self._fs_instance = feature_store
         os.makedirs(self.archive_dir, exist_ok=True)
 
     def _get_feature_store(self):
+        if self._fs_instance:
+            return self._fs_instance
         from utils.feature_store import FeatureStore
         return FeatureStore(db_path=self.db_path)
 
     def archive_microstructure(self) -> dict:
-        if not os.path.exists(self.db_path):
+        if not os.path.exists(self.db_path) and not self._fs_instance:
             logger.warning(f"Feature store not found: {self.db_path}")
             return {"status": "SKIPPED", "reason": "db_not_found"}
 
+        fs = self._get_feature_store()
+        
+        # Security check: don't archive if we are on a fallback or read-only DB
+        if fs.is_fallback:
+            logger.warning("Archiving skipped: FeatureStore is in fallback (memory) mode.")
+            return {"status": "SKIPPED", "reason": "db_fallback_mode"}
+            
+        # If we are read-only, we can export but NOT purge. 
+        # For safety, we skip the whole cycle unless we have R/W access.
+        if fs.is_read_only:
+            logger.warning("Archiving skipped: FeatureStore is in read-only mode.")
+            return {"status": "SKIPPED", "reason": "db_read_only"}
+
         cutoff = time.time() - self.hot_retention * 86400
         date_str = datetime.fromtimestamp(cutoff).strftime("%Y%m%d")
-        fs = self._get_feature_store()
         tables = ["market_microstructure", "features_computed", "signals_ingested", "decisions_log"]
         total_rows = 0
         exported = []
@@ -60,8 +77,12 @@ class DataArchiver:
                 total_rows += rows
                 exported.append(table)
 
-        fs.purge_before(cutoff)
-        fs.close()
+        if total_rows > 0:
+            fs.purge_before(cutoff)
+        
+        # Don't close if it was passed externally
+        if not self._fs_instance:
+            fs.close()
 
         result = {
             "status": "OK",

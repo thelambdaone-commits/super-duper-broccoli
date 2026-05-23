@@ -87,3 +87,9 @@ scratch/
 .vscode/
 .idea/
 .antigravity/
+
+# Submodule data directories (not to be tracked)
+agents/polymarket_lp_tool/data/
+utils/polymarket_data/data/
+engine/backtest/nautilus_backtest/data/
+agents/polybot/data/

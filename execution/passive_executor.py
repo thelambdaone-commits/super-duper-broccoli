@@ -359,7 +359,26 @@ class PassiveExecutor:
                 size=size,
                 price=execution_price,
             )
-            order_id = resp.get("orderID") or resp.get("id", "unknown")
+            status = str(resp.get("status", "")).upper()
+            order_id = resp.get("orderID") or resp.get("id")
+            if status in {
+                "REJECTED",
+                "LOCAL_REJECT_MIN_NOTIONAL",
+                "POST_ONLY_REJECTED",
+                "ERROR",
+                "CANCEL_FAILED",
+            } or not order_id:
+                return {
+                    "status": "TAKER_FAILED",
+                    "error": resp.get("error", f"Rejected with status {status or 'UNKNOWN'}"),
+                    "ticker": ticker,
+                    "side": side,
+                    "price": execution_price,
+                    "target_price": price,
+                    "size": size,
+                    "execution_path": "taker",
+                    "raw": resp,
+                }
             return {
                 "status": "TAKER_FILLED",
                 "order_id": order_id,

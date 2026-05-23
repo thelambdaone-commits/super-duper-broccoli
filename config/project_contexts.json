@@ -770,6 +770,121 @@
         "utils/feature_factory.py",
         "user_data/strategies/feature_pipeline.py"
       ]
+    },
+    {
+      "id": "pydantic_ai",
+      "name": "Pydantic AI Agent Framework",
+      "category": "agent_framework",
+      "status": "core_dependency",
+      "repo": "https://github.com/pydantic/pydantic-ai",
+      "use_for": [
+        "Structured output agents with validated TradeSignal models",
+        "Multi-agent delegation (analysis → risk → execution)",
+        "Graph-based trading workflow state machines",
+        "Dependency injection via RunContext for market/portfolio/risk services"
+      ],
+      "avoid_for": [
+        "Replacing proven deterministic code (HMM filter, circuit breaker, Kelly sizing)"
+      ],
+      "local_entrypoints": [
+        "core/pydantic_agent_factory.py"
+      ]
+    },
+    {
+      "id": "polymarket_lp_tool",
+      "name": "Polymarket LP Tool",
+      "category": "execution",
+      "status": "submodule",
+      "repo": "https://github.com/lihanyu81/polymarket_lp_tool",
+      "use_for": [
+        "Passive limit order repricing based on CLOB liquidity reward delta",
+        "Custom pricing rules per token+side (persisted JSON)"
+      ],
+      "avoid_for": [
+        "Initial order creation (LP tool only manages manually-placed orders)"
+      ],
+      "local_entrypoints": [
+        "agents/polymarket_lp_tool/passive_liquidity/",
+        "agent_skills/polymarket_market_making_skill/adapter_lp_tool.py"
+      ]
+    },
+    {
+      "id": "polymarket_onchain_data",
+      "name": "Polymarket On-chain Data",
+      "category": "data_ingestion",
+      "status": "submodule",
+      "repo": "https://github.com/SII-WANGZJ/Polymarket_data",
+      "use_for": [
+        "Fetching and decoding OrderFilled events from Polygon RPC",
+        "Gamma API metadata for market discovery",
+        "Quant-ready cleaned datasets (quant.parquet, users.parquet)"
+      ],
+      "avoid_for": [
+        "Real-time order book data (use CLOB WebSocket instead)"
+      ],
+      "local_entrypoints": [
+        "utils/polymarket_data/polymarket/",
+        "utils/polymarket_data/polymarket/fetchers/rpc.py",
+        "utils/polymarket_data/polymarket/processors/decoder.py"
+      ]
+    },
+    {
+      "id": "nautilus_backtest",
+      "name": "Prediction Market Backtesting (NautilusTrader)",
+      "category": "backtesting",
+      "status": "submodule",
+      "repo": "https://github.com/evan-kolberg/prediction-market-backtesting",
+      "use_for": [
+        "Historical L2 order book replay (PMXT/Telonex data vendors)",
+        "Multi-market joint portfolio backtesting",
+        "Parameter optimization via Optuna (random grid + TPE)"
+      ],
+      "avoid_for": [
+        "Quick vectorized backtests (use existing engine/backtest/ instead)"
+      ],
+      "local_entrypoints": [
+        "engine/backtest/nautilus_backtest/prediction_market_extensions/",
+        "engine/backtest/nautilus_backtest/strategies/"
+      ]
+    },
+    {
+      "id": "clodds_bot",
+      "name": "CloddsBot AI Trading Terminal",
+      "category": "external_sidecar",
+      "status": "docker_sidecar",
+      "repo": "https://github.com/alsk1992/CloddsBot",
+      "use_for": [
+        "119 trading skills via MCP protocol",
+        "21 messaging channel adapters",
+        "Cross-platform prediction market trading",
+        "Whale tracking and risk engine"
+      ],
+      "avoid_for": [
+        "Core deterministic trading logic (keep in Python)"
+      ],
+      "local_entrypoints": [
+        "docker-compose.integrations.yml#clodds",
+        "mcp_agents/mcp_server.py (clodds_* tools)"
+      ]
+    },
+    {
+      "id": "polybot",
+      "name": "Polybot Trading Infrastructure",
+      "category": "external_sidecar",
+      "status": "submodule",
+      "repo": "https://github.com/ent0n29/polybot",
+      "use_for": [
+        "Gabagool directional engine strategy reference",
+        "Replication scoring and backtesting research scripts (Python/research/)",
+        "Reference architecture for microservice-based trading"
+      ],
+      "avoid_for": [
+        "Direct dependency (Java stack requires Docker sidecar)"
+      ],
+      "local_entrypoints": [
+        "agents/polybot/polybot-core/",
+        "agents/polybot/research/"
+      ]
     }
   ]
 }

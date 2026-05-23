@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from core.autonomic_healer import LobstarAutonomicHealer
+from core.healing.autonomic_healer import LobstarAutonomicHealer
 from utils.config_loader import get_health_config
 
 logger = logging.getLogger("HealthMonitorAgent")

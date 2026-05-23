@@ -27,16 +27,12 @@ async def test_btc_paper_callback_records_paper_trade() -> None:
         private_chat_ids={123},
         admin_chat_ids={123},
     )
-    listener.command_router = SimpleNamespace(
-        _get_btc_launch_service=MagicMock(
+    listener._btc_launch_service = SimpleNamespace(
+        get_or_launch=MagicMock(
             return_value=SimpleNamespace(
-                get_or_launch=MagicMock(
-                    return_value=SimpleNamespace(
-                        prob_up=0.72,
-                        prob_down=0.28,
-                        strongest_probability=0.72,
-                    )
-                )
+                prob_up=0.72,
+                prob_down=0.28,
+                strongest_probability=0.72,
             )
         )
     )
