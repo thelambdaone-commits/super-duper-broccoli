@@ -60,6 +60,7 @@ module.exports = {
         env: {
             NODE_ENV: "production",
             PYTHONUNBUFFERED: "1",
+            PYTHONPATH: ".:src",
             CHAT_ID: env("CHAT_ID"),
             TARGET_CHANNEL: env("TARGET_CHANNEL", "Lobstar"),
             TELEGRAM_CHANNEL_CHAT_ID: env("TELEGRAM_CHANNEL_CHAT_ID"),
@@ -121,6 +122,7 @@ module.exports = {
         env: {
             NODE_ENV: "production",
             PYTHONUNBUFFERED: "1",
+            PYTHONPATH: ".:src",
             SECRET_SOURCE: env("SECRET_SOURCE", "auto"),
             VAULT_ADDR: env("VAULT_ADDR", "false"),
             VAULT_TOKEN: env("VAULT_TOKEN"),
