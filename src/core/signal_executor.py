@@ -284,19 +284,19 @@ async def _execute_guarded(
 
     # Now authorized: record to paper and proceed
     final_size = validation["size"]
-    paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
-    try:
-        ledger.record_paper_order(
-            ticker=ticker, side=side, price=normalized_price, size=final_size,
-            confidence=confidence, regime_label=regime, signal_source=signal_source,
-            tenant_wallet=tenant_wallet,
-        )
-        if risk and mode == "PAPER":
-            risk.book_exposure(ticker, final_size, side)
-    except Exception as e:
-        logger.error(f"Concurrent Paper recording failed: {e}")
 
     if mode == "PAPER":
+        paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
+        try:
+            ledger.record_paper_order(
+                ticker=ticker, side=side, price=normalized_price, size=final_size,
+                confidence=confidence, regime_label=regime, signal_source=signal_source,
+                tenant_wallet=tenant_wallet,
+            )
+            if risk:
+                risk.book_exposure(ticker, final_size, side)
+        except Exception as e:
+            logger.error(f"Concurrent Paper recording failed: {e}")
         report_data["status"] = "SUCCESS"
         report_data["executed_size"] = final_size
         report_data["trade_id"] = paper_order_id

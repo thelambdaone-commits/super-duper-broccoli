@@ -120,3 +120,15 @@ data/*wallet*
 data/*state*.json
 data/last_broadcast_hashes.json
 data/ml_weights.json
+
+# Runtime dashboard / reports
+STRATEGY_AUTONOMOUS_DASHBOARD.md
+*.dashboard.md
+
+# PMXT adapter runtime state
+src/data/pmxt/
+src/data/wallet_flow_scores.json
+src/scripts/__pycache__/
+
+# PyCharm IDE
+.idea/

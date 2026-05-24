@@ -155,7 +155,7 @@ def extract_patch_from_ai(output: str) -> str:
         if isinstance(j, dict) and 'patch' in j:
             return j['patch']
     except Exception:
-        pass
+        pass  # Not a JSON patch; use raw output below
     # Otherwise return entire output as patch content (best-effort)
     return output
 

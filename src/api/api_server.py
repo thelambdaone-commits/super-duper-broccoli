@@ -38,15 +38,40 @@ from utils.feature_store import FeatureStore
 from utils.polymarket_client import PolymarketClient
 from utils.regime_utils import get_regime_label
 
-# New module imports
-from models.volatility_surface import VolSurfaceAdapter
-from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline
-from utils.chart_pattern_detector import ChartPatternDetector
-from utils.sentiment_ensemble import SentimentEnsemble
-from models.portfolio import PortfolioOptimizer
-from utils.macro_intelligence import MacroIntelligence
-from engine.backtest import Backtester, CostModel
-from utils.feature_factory import FeatureFactory
+# New module imports (optional - gracefully degrade if missing)
+try:
+    from models.volatility_surface import VolSurfaceAdapter
+except ImportError:
+    VolSurfaceAdapter = None  # type: ignore[assignment]
+try:
+    from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline
+except ImportError:
+    EarningsSentimentPipeline = None  # type: ignore[assignment]
+try:
+    from utils.chart_pattern_detector import ChartPatternDetector
+except ImportError:
+    ChartPatternDetector = None  # type: ignore[assignment]
+try:
+    from utils.sentiment_ensemble import SentimentEnsemble
+except ImportError:
+    SentimentEnsemble = None  # type: ignore[assignment]
+try:
+    from models.portfolio import PortfolioOptimizer
+except ImportError:
+    PortfolioOptimizer = None  # type: ignore[assignment]
+try:
+    from utils.macro_intelligence import MacroIntelligence
+except ImportError:
+    MacroIntelligence = None  # type: ignore[assignment]
+try:
+    from engine.backtest import Backtester, CostModel
+except ImportError:
+    Backtester = None  # type: ignore[assignment]
+    CostModel = None  # type: ignore[assignment]
+try:
+    from utils.feature_factory import FeatureFactory
+except ImportError:
+    FeatureFactory = None  # type: ignore[assignment]
 
 logger = logging.getLogger("APIServer")
 

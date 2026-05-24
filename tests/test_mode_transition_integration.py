@@ -60,7 +60,6 @@ def _signal() -> StrategySignal:
 async def test_ledger_mode_transition_controls_execution_path(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("REAL", "true")
-    monkeypatch.setenv("PROD_SECOND_FACTOR_SECRET", "integration-secret")
 
     ledger = _ledger(tmp_path)
     lifecycle = _lifecycle(tmp_path)

@@ -248,8 +248,8 @@ class LobstarOrchestrator:
             if self.ledger and hasattr(self.ledger, "get_execution_mode"):
                 try:
                     live_mode = self.ledger.get_execution_mode()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to read execution mode from ledger, using fallback: %s", exc)
             await self.post_trade_service.finalize(signal, result, live_mode)
         except Exception as e:
             logger.error(f"Signal execution failed: {e}")

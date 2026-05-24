@@ -190,6 +190,22 @@ class TestTakerOnly:
         assert result["error"] == "below min notional"
 
     @pytest.mark.asyncio
+    async def test_maker_local_reject_does_not_fallback_to_taker(
+        self, executor: PassiveExecutor, mock_freqai: AsyncMock,
+    ) -> None:
+        mock_freqai.post_order.return_value = {
+            "status": "REJECTED",
+            "error": "token_id invalide ou marché indisponible",
+        }
+
+        result = await executor.execute("SOL", "BUY", 0.50, 1.0)
+
+        assert result["status"] == "REJECTED"
+        assert result["execution_path"] == "maker"
+        assert "marché indisponible" in result["error"]
+        mock_freqai.create_order.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_taker_returns_executed_price(
         self, executor: PassiveExecutor, mock_freqai: AsyncMock,
     ) -> None:
@@ -346,6 +362,38 @@ class TestEdgeCases:
         wallet_manager_mock.ensure_usdc_allowance.assert_awaited_once()
         kwargs = wallet_manager_mock.ensure_usdc_allowance.await_args.kwargs
         assert kwargs["required_amount"] == pytest.approx(5.0)
+
+    @pytest.mark.asyncio
+    async def test_unverified_usdc_approval_does_not_log_failure(
+        self, mock_freqai: AsyncMock, caplog,
+    ) -> None:
+        caplog.set_level("INFO")
+        wallet_manager = AsyncMock()
+        wallet_manager.ensure_usdc_allowance = AsyncMock(
+            return_value={
+                "approved": True,
+                "action": "approved_unverified",
+                "tx_hash": "0xtx",
+                "allowance": 0.0,
+                "required_amount": 5.0,
+            }
+        )
+        executor = PassiveExecutor(
+            freqai=mock_freqai,
+            ledger=Mock(),
+            wallet_manager=wallet_manager,
+            wallet_private_key="0x0000000000000000000000000000000000000000000000000000000000000001",
+            usdc_spender_address="0x000000000000000000000000000000000000dEaD",
+            maker_timeout_seconds=0.2,
+            poll_interval=0.05,
+            post_only=True,
+        )
+        mock_freqai.post_order.return_value = {"status": "REJECTED", "error": "market unavailable"}
+
+        await executor.execute("SOL", "BUY", 0.50, 10.0)
+
+        assert "USDC allowance check failed" not in caplog.text
+        assert "allowance is not yet visible via RPC" in caplog.text
 
     @pytest.mark.asyncio
     async def test_concurrent_orders(

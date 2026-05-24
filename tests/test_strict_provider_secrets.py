@@ -14,7 +14,6 @@ def test_validate_runtime_env_accepts_openrouter_from_secrets(monkeypatch: pytes
     monkeypatch.setenv("ENCRYPTION_KEY", "key")
     monkeypatch.setenv("CLOB_PRIVATE_KEY", "0x" + "a" * 64)
     monkeypatch.setenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
-    monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "confirm")
     monkeypatch.setenv("TELEGRAM_ADMIN_CHAT_IDS", "123")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     validate_runtime_env(

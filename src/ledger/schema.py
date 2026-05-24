@@ -74,7 +74,7 @@ def seed_performance_metrics_modes(conn: sqlite3.Connection) -> None:
                 (mode,),
             )
         except Exception:
-            pass
+            logger.debug("Performance metrics row for %s already exists", mode)
 
 
 def ensure_execution_columns(conn: sqlite3.Connection) -> None:

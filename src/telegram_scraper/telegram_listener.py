@@ -843,18 +843,13 @@ class TelegramListener:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         wallet_addr = "UNKNOWN"
-        wallet_label = "Unresolved"
+        wallet_label = "ACTIVE"
         try:
-            from utils.credential_manager import CredentialManager
-            mgr = CredentialManager()
-            pk = mgr.get_or_generate_private_key()
-            if pk:
-                from eth_account import Account
-                wallet_addr = Account.from_key(pk).address
-                try:
-                    wallet_label = mgr.get_active_wallet_type(str(getattr(update.effective_chat, "id", ""))).upper()
-                except Exception:
-                    wallet_label = "ACTIVE"
+            chat_id = getattr(getattr(update, "effective_chat", None), "id", None)
+            wallet_name, resolved_wallet_addr, _proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
+            if resolved_wallet_addr:
+                wallet_addr = resolved_wallet_addr
+                wallet_label = wallet_name.upper()
         except Exception as exc:
             logger.debug("Unable to resolve active wallet for /start: %s", exc)
             wallet_label = "ACTIVE"
@@ -2020,32 +2015,33 @@ class TelegramListener:
                     closed_sign = "+" if total_realized_pnl > 0 else ""
                     net_emoji = "🟢" if (net_capital_pnl or 0.0) >= 0 else "🔴"
                     net_sign = "+" if net_capital_pnl is not None and net_capital_pnl > 0 else ""
+                    wallet_display_name = wallet_name.lower() if wallet_name else "default"
 
                     lines = [
                         "<b>🎯 Polymarket Cockpit</b>",
                         "───────────────────",
                         "💰 <b>PnL Metrics (Real-Time)</b>:",
-                        f"• Wallet: <code>{self._html(wallet_name)}</code>",
-                        f"• EOA: <code>{self._html(active_address)}</code>",
-                        f"• Proxy: <code>{self._html(proxy_address or target_address)}</code>",
+                        f"• Wallet: {self._html(wallet_display_name)}",
+                        f"• EOA: {self._html(active_address)}",
+                        f"• Proxy: {self._html(proxy_address or target_address)}",
                         "",
-                        f"• USDC Direct: <code>{usdc_direct:.2f}</code>",
-                        f"• Polymarket pUSD: <code>{usdc_proxy:.2f}</code>",
-                        f"• Open Value: <code>${open_current_value:.2f}</code>",
+                        f"• USDC Direct: {usdc_direct:.2f}",
+                        f"• Polymarket pUSD: {usdc_proxy:.2f}",
+                        f"• Open Value: ${open_current_value:.2f}",
                         f"• Total Capital: <b>${total_capital:.2f}</b>",
                         "───────────────────"
                     ]
                     if net_capital_pnl is not None:
                         lines.extend([
-                            f"• Capital Basis: <code>${reference_capital:.2f}</code>",
+                            f"• Capital Basis: ${reference_capital:.2f}",
                             f"• Net Gain: {net_emoji} <b>{net_sign}${net_capital_pnl:.2f}</b>",
                             "───────────────────"
                         ])
                     else:
-                        lines.append("• Net Gain: <code>N/A (reference missing)</code>")
+                        lines.append("• Net Gain: N/A (reference missing)")
 
                     lines.extend([
-                        f"• Trades: <code>{total_trades}</code> (WR: <code>{win_rate:.1f}%</code>)",
+                        f"• Trades: {total_trades} (WR: {win_rate:.1f}%)",
                         f"• Realized: {closed_emoji} <b>{closed_sign}${total_realized_pnl:.2f}</b>",
                         f"• Floating: <b>{'+' if open_cash_pnl > 0 else ''}${open_cash_pnl:.2f}</b>",
                         "───────────────────"

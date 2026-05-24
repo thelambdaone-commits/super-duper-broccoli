@@ -393,6 +393,8 @@ class MarketScanner:
                 "market_slug": sig.market_slug,
                 "known_wallet_flow_score": self._wallet_flow_scores.get(sig.market_slug.lower() if sig.market_slug else "", 0.0),
                 "token_id": sig.token_id,
+                "yes_token_id": sig.token_id if sig.side.upper() in {"BUY", "YES", "LONG"} else "",
+                "no_token_id": sig.token_id if sig.side.upper() in {"SELL", "NO", "SHORT"} else "",
                 "source": "market_scanner_signal",
             }
         }
@@ -418,6 +420,8 @@ class MarketScanner:
             "metadata": {
                 "market_question": market.question,
                 "market_slug": market.slug,
+                "yes_token_id": getattr(market, "yes_token_id", ""),
+                "no_token_id": getattr(market, "no_token_id", ""),
                 "source": "market_scanner_raw",
             }
         }

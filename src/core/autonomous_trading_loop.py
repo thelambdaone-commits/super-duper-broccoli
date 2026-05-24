@@ -440,7 +440,16 @@ class AutonomousTradingLoop:
         )
 
     async def _open_real_position(self, signal: StrategySignal, size: float, sizing: Mapping[str, Any]) -> AutonomousAction:
-        logger.info(f"🚀 [REAL TRADE] Attempting to open position for {signal.ticker} ({signal.side} @ {signal.price:.4f}) size={size:.4f}")
+        mode_label = str(self.ledger.get_execution_mode() or self.config.mode or "UNKNOWN").upper()
+        execution_ticker = self._resolve_execution_ticker(signal)
+        logger.info(
+            "🚀 [%s TRADE] Attempting to open position for %s (%s @ %.4f) size=%.4f",
+            mode_label,
+            execution_ticker,
+            signal.side,
+            signal.price,
+            size,
+        )
         minimum_notional = _minimum_polymarket_notional(self.executor or self.order_manager)
         if signal.price <= 0:
             return AutonomousAction("open", "REJECTED", signal.strategy_id, signal.ticker, reason="invalid price")
@@ -456,7 +465,7 @@ class AutonomousTradingLoop:
                 signal.ticker,
                 reason=f"live notional {size * signal.price:.2f} < Polymarket minimum {minimum_notional:.2f}",
             )
-        validation = self.ledger.validate_and_reserve(signal.ticker, signal.side, signal.price, size)
+        validation = self.ledger.validate_and_reserve(execution_ticker, signal.side, signal.price, size)
         if not validation.get("authorized"):
             return AutonomousAction("open", "REJECTED", signal.strategy_id, signal.ticker, reason=str(validation.get("reason", "risk rejected")))
 
@@ -466,16 +475,16 @@ class AutonomousTradingLoop:
         if self.executor:
             try:
                 exec_result = await self.executor.execute(
-                    ticker=signal.ticker,
+                    ticker=execution_ticker,
                     side=signal.side,
                     price=signal.price,
                     size=final_size
                 )
                 if exec_result.get("status") in {"FILLED", "TAKER_FILLED"}:
-                    position_id = f"{signal.ticker}-{signal.side}-{int(time.time())}"
+                    position_id = f"{execution_ticker}-{signal.side}-{int(time.time())}"
                     self.ledger.record_order(
                         position_id=position_id,
-                        ticker=signal.ticker,
+                        ticker=execution_ticker,
                         side=signal.side,
                         price=signal.price,
                         size=final_size,
@@ -499,7 +508,7 @@ class AutonomousTradingLoop:
 
         order = await self.order_manager.place_order(
             market_id=signal.market_id,
-            token_id=signal.ticker,
+            token_id=execution_ticker,
             outcome="YES" if signal.side.upper() in {"BUY", "YES", "LONG"} else "NO",
             side=signal.side,
             price=signal.price,
@@ -510,10 +519,10 @@ class AutonomousTradingLoop:
         if status not in {"PENDING", "FILLED"}:
             return AutonomousAction("open", "FAILED", signal.strategy_id, signal.ticker, reason=getattr(order, "error_message", "order failed"))
 
-        position_id = f"{signal.ticker}-{signal.side}-{int(time.time())}"
+        position_id = f"{execution_ticker}-{signal.side}-{int(time.time())}"
         self.ledger.record_order(
             position_id=position_id,
-            ticker=signal.ticker,
+            ticker=execution_ticker,
             side=signal.side,
             price=signal.price,
             size=final_size,
@@ -525,6 +534,16 @@ class AutonomousTradingLoop:
         )
         self.ledger.set_position_sltp(position_id, self._stop_loss_for_signal(signal), self._take_profit_for_signal(signal))
         return AutonomousAction("open", "OPENED", signal.strategy_id, signal.ticker, position_id=position_id, reason=signal.reason)
+
+    @staticmethod
+    def _resolve_execution_ticker(signal: StrategySignal) -> str:
+        metadata = signal.metadata or {}
+        side = str(signal.side).upper()
+        if side in {"BUY", "YES", "LONG"}:
+            token_id = metadata.get("yes_token_id") or metadata.get("token_id")
+        else:
+            token_id = metadata.get("no_token_id") or metadata.get("token_id")
+        return str(token_id or signal.ticker)
 
     def _compute_sizing(self, signal: StrategySignal) -> dict[str, Any]:
         mode = self.ledger.get_execution_mode().upper()

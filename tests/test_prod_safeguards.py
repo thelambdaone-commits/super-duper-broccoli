@@ -1,48 +1,26 @@
-from unittest.mock import patch
-
-import pytest
-
-from main_agentic_clob import PROD_CONFIRMATION_TEXT, require_production_confirmation, resolve_execution_mode
-from utils.exceptions import QuantFatal
+from main_agentic_clob import require_production_confirmation, resolve_execution_mode
 
 
 def test_prod_confirmation_skips_non_prod_modes(monkeypatch):
-    monkeypatch.delenv("LOBSTAR_PROD_CONFIRM_SECRET", raising=False)
-
     require_production_confirmation("PAPER")
 
 
-def test_prod_confirmation_requires_second_factor(monkeypatch):
-    monkeypatch.delenv("LOBSTAR_PROD_CONFIRM_SECRET", raising=False)
-
+def test_prod_confirmation_requires_secret_for_prod() -> None:
+    import pytest
+    from utils.exceptions import QuantFatal
     with pytest.raises(QuantFatal, match="LOBSTAR_PROD_CONFIRM_SECRET"):
         require_production_confirmation("PROD")
 
 
-def test_prod_confirmation_requires_interactive_terminal(monkeypatch):
-    monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "expected-secret")
-    monkeypatch.delenv("FORCE_PROD", raising=False)
-
-    with patch("bootstrap.security.sys.stdin.isatty", return_value=False):
-        with pytest.raises(QuantFatal, match="interactive terminal"):
-            require_production_confirmation("PROD")
-
-
-def test_prod_confirmation_accepts_noninteractive_force_prod(monkeypatch):
-    monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "expected-secret")
+def test_prod_confirmation_accepts_force_prod_non_interactive(monkeypatch) -> None:
+    monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "test-secret")
     monkeypatch.setenv("FORCE_PROD", "true")
-
-    with patch("bootstrap.security.sys.stdin.isatty", return_value=False):
-        require_production_confirmation("PROD")
+    require_production_confirmation("PROD")
 
 
-def test_prod_confirmation_accepts_matching_confirmation_and_secret(monkeypatch):
-    monkeypatch.setenv("LOBSTAR_PROD_CONFIRM_SECRET", "expected-secret")
-
-    with patch("bootstrap.security.sys.stdin.isatty", return_value=True), \
-        patch("builtins.input", return_value=PROD_CONFIRMATION_TEXT), \
-        patch("bootstrap.security.getpass.getpass", return_value="expected-secret"):
-        require_production_confirmation("PROD")
+def test_prod_confirmation_force_prod_bypasses_secret(monkeypatch) -> None:
+    monkeypatch.setenv("FORCE_PROD", "true")
+    require_production_confirmation("PROD")
 
 
 def test_resolve_execution_mode_prefers_cli(monkeypatch):

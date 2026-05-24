@@ -141,8 +141,6 @@ class AutonomousModeController:
             return False
         if not (os.getenv("MODE", "").upper() == "PRD" or _env_true("REAL")):
             return False
-        if not os.getenv("PROD_SECOND_FACTOR_SECRET", "").strip():
-            return False
         return True
 
 

@@ -12,6 +12,9 @@ def test_wallet_cockpit_prefers_env_private_key_without_generating_wallet(monkey
     expected_address = Account.from_key(private_key).address
 
     monkeypatch.delenv("POLYMARKET_WALLET_ADDRESS", raising=False)
+    monkeypatch.delenv("WALLET_ADDRESS", raising=False)
+    monkeypatch.delenv("POLYMARKET_PROXY_WALLET_ADDRESS", raising=False)
+    monkeypatch.delenv("PROXY_WALLET_ADDRESS", raising=False)
     monkeypatch.setenv("CLOB_PRIVATE_KEY", private_key)
 
     listener = TelegramListener(

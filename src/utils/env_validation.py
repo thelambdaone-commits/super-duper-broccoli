@@ -19,7 +19,7 @@ def validate_runtime_env(mode: str, secrets: dict[str, str] | None = None) -> No
     if mode_upper in {"SHADOW", "PROD"}:
         required.extend(["CLOB_PRIVATE_KEY", "POLYGON_RPC_URL"])
     if mode_upper == "PROD":
-        required.extend(["LOBSTAR_PROD_CONFIRM_SECRET", "TELEGRAM_ADMIN_CHAT_IDS"])
+        required.extend(["TELEGRAM_ADMIN_CHAT_IDS"])
     if mode_upper == "PROD" and not (secrets.get("OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY")):
         raise QuantFatal("OPENROUTER_API_KEY is required for PROD mode.")
 

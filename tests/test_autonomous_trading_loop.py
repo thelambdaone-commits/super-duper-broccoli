@@ -23,7 +23,11 @@ class _StubRiskEngine:
 
 
 class _StubExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
     async def execute(self, ticker: str, side: str, price: float, size: float) -> dict[str, float | str]:
+        self.calls.append({"ticker": ticker, "side": side, "price": price, "size": size})
         return {
             "status": "FILLED",
             "filled_size": size,
@@ -302,3 +306,39 @@ async def test_live_autonomous_loop_rejects_sub_minimum_notional_before_executor
     assert action.status == "REJECTED"
     assert "Polymarket minimum" in action.reason
     assert ledger.get_open_positions() == []
+
+
+@pytest.mark.asyncio
+async def test_live_autonomous_loop_prefers_metadata_token_id_for_execution(ledger, lifecycle):
+    ledger.set_execution_mode("PROD")
+    ledger.conn.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) VALUES (20.0, 20.0, 90)"
+    )
+    ledger.conn.commit()
+    executor = _StubExecutor()
+    loop = AutonomousTradingLoop(
+        ledger=ledger,
+        lifecycle=lifecycle,
+        risk_engine=_StubRiskEngine(size=12.0, capital_at_risk=6.0),
+        executor=executor,
+        config=AutonomousTradingConfig(allow_real_execution=True),
+    )
+
+    action = await loop.open_position(
+        StrategySignal(
+            strategy_id="live_token_id",
+            market_id="market-slug",
+            ticker="market-slug",
+            side="BUY",
+            price=0.50,
+            confidence=0.90,
+            edge=0.50,
+            reason="live token routing",
+            suggested_capital=6.0,
+            metadata={"spread": 0.0, "yes_token_id": "real-token-id"},
+        )
+    )
+
+    assert action.status == "OPENED"
+    assert executor.calls
+    assert executor.calls[0]["ticker"] == "real-token-id"

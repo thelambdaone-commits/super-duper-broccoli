@@ -223,6 +223,8 @@ class PolymarketWalletManager:
         approval_buffer_multiplier: float = 10.0,
         approval_min_buffer_usdc: float = 100.0,
         wait_timeout_seconds: float = 180.0,
+        post_receipt_retry_count: int = 5,
+        post_receipt_retry_delay_seconds: float = 1.0,
     ) -> dict[str, Any]:
         """Lazy allowance check: approve only when the remaining allowance is insufficient."""
         if required_amount <= 0:
@@ -280,14 +282,20 @@ class PolymarketWalletManager:
                     "required_amount": required_amount,
                 }
 
-            updated_allowance = await self.get_erc20_allowance(
-                self.usdc_native_contract,
-                owner_address,
-                spender_address,
-            )
+            updated_allowance = current_allowance
+            for attempt in range(max(1, int(post_receipt_retry_count))):
+                updated_allowance = await self.get_erc20_allowance(
+                    self.usdc_native_contract,
+                    owner_address,
+                    spender_address,
+                )
+                if updated_allowance >= required_amount:
+                    break
+                if attempt < max(1, int(post_receipt_retry_count)) - 1:
+                    await asyncio.sleep(max(0.0, float(post_receipt_retry_delay_seconds)))
             return {
-                "approved": updated_allowance >= required_amount,
-                "action": "approved",
+                "approved": True,
+                "action": "approved" if updated_allowance >= required_amount else "approved_unverified",
                 "tx_hash": tx_hash,
                 "allowance": updated_allowance,
                 "required_amount": required_amount,

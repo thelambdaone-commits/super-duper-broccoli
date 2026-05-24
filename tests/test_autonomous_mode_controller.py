@@ -59,7 +59,6 @@ def test_mode_promotes_to_prod_only_with_real_prerequisites(tmp_path, monkeypatc
     monkeypatch.delenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", raising=False)
     monkeypatch.delenv("REAL", raising=False)
     monkeypatch.delenv("MODE", raising=False)
-    monkeypatch.delenv("PROD_SECOND_FACTOR_SECRET", raising=False)
 
     ledger = _ledger(tmp_path)
     lifecycle = _lifecycle(tmp_path)
@@ -74,7 +73,6 @@ def test_mode_promotes_to_prod_only_with_real_prerequisites(tmp_path, monkeypatc
 
     monkeypatch.setenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("REAL", "true")
-    monkeypatch.setenv("PROD_SECOND_FACTOR_SECRET", "test-secret")
 
     decision = AutonomousModeController(ledger, lifecycle, config).decide()
 
@@ -86,7 +84,6 @@ def test_force_prod_bypasses_profitability_gates_but_keeps_prerequisites(tmp_pat
     monkeypatch.setenv("AUTONOMOUS_FORCE_PROD", "true")
     monkeypatch.setenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("REAL", "true")
-    monkeypatch.setenv("PROD_SECOND_FACTOR_SECRET", "test-secret")
 
     ledger = _ledger(tmp_path)
     lifecycle = _lifecycle(tmp_path)
@@ -102,7 +99,6 @@ def test_force_prod_still_requires_prod_prerequisites(tmp_path, monkeypatch):
     monkeypatch.delenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", raising=False)
     monkeypatch.delenv("REAL", raising=False)
     monkeypatch.delenv("MODE", raising=False)
-    monkeypatch.delenv("PROD_SECOND_FACTOR_SECRET", raising=False)
 
     ledger = _ledger(tmp_path)
     lifecycle = _lifecycle(tmp_path)

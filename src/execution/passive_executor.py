@@ -145,7 +145,13 @@ class PassiveExecutor:
                 approval_buffer_multiplier=self.usdc_approval_buffer_multiplier,
                 approval_min_buffer_usdc=self.usdc_approval_min_buffer_usdc,
             )
-            if not result.get("approved"):
+            if result.get("action") == "approved_unverified":
+                logger.info(
+                    "USDC approval submitted for %s but allowance is not yet visible via RPC: %s",
+                    ticker,
+                    result,
+                )
+            elif not result.get("approved"):
                 logger.warning(
                     "USDC allowance check failed for %s: %s",
                     ticker,
@@ -164,8 +170,8 @@ class PassiveExecutor:
                 flags = self.ledger.get_safety_flags()
                 if flags and flags.get("strict_maker_only"):
                     return bool(flags["strict_maker_only"])
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read safety flags from ledger: %s", exc)
         return False
 
     async def _maker_first(
@@ -227,6 +233,23 @@ class PassiveExecutor:
             logger.info(f"Maker rejected for {ticker} (would match immediately), trying taker")
             self._reject_count += 1
             return await self._taker(ticker, side, price, size)
+
+        if post_result.get("status") in {
+            "REJECTED_SIZING",
+            "REJECTED",
+            "LOCAL_REJECT_MIN_NOTIONAL",
+        }:
+            self._reject_count += 1
+            return {
+                "status": post_result.get("status", "REJECTED"),
+                "error": post_result.get("error", "Maker order rejected locally."),
+                "ticker": ticker,
+                "side": side,
+                "price": price,
+                "size": size,
+                "execution_path": "maker",
+                "raw": post_result,
+            }
 
         order_id = post_result.get("orderID") or post_result.get("id")
         if not order_id:
@@ -346,13 +369,13 @@ class PassiveExecutor:
         if self.ledger:
             try:
                 mode = self.ledger.get_execution_mode()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read execution mode from ledger, defaulting to PAPER: %s", exc)
         mode = str(mode or "PAPER").upper()
 
         execution_price = price
         slippage_pct = 0.0
-        if mode != "PROD":
+        if mode == "PAPER":
             spread_multiplier = 1 + (self.spread_bps / 10000.0) if side == "BUY" else 1 - (self.spread_bps / 10000.0)
             execution_price = price * spread_multiplier
             spread_cost = abs(execution_price - price) * size
@@ -367,10 +390,14 @@ class PassiveExecutor:
             slippage_cost = abs(execution_price - (price * spread_multiplier)) * size
             self._metrics["simulated_slippage_usd"] += slippage_cost
 
-        logger.info(
-            f"[{mode}] Executing {side} {ticker} {size} @ {execution_price:.4f} "
-            f"(Spread: {self.spread_bps}bps, Slippage: {slippage_pct*100:.2f}%)"
-        )
+            logger.info(
+                f"[{mode}] Simulating {side} {ticker} {size} @ {execution_price:.4f} "
+                f"(Spread: {self.spread_bps}bps, Slippage: {slippage_pct*100:.2f}%)"
+            )
+        else:
+            logger.info(
+                f"[{mode}] Executing {side} {ticker} {size} @ {execution_price:.4f}"
+            )
 
         try:
             # Send to freqai (which handles PAPER/PROD internally)
