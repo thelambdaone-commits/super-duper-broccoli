@@ -35,6 +35,9 @@ class FakeClient:
     def list_markets(self, limit=150, sort_by="volume"):
         return self.markets[:limit]
 
+    def get_order_book(self, token_id):
+        return {"active": True, "closed": False, "archived": False, "token_id": token_id}
+
 
 def test_normalize_horizon() -> None:
     assert normalize_horizon("5m") == "5"
@@ -183,6 +186,7 @@ def test_market_scanner_prefers_high_quality_non_proxy_signals() -> None:
             "winning_bets": [
                 MarketSignal(
                     ticker="eth-above-4000",
+                    token_id="eth-above-4000-yes",
                     side="BUY",
                     price=0.61,
                     confidence=0.92,
@@ -199,6 +203,7 @@ def test_market_scanner_prefers_high_quality_non_proxy_signals() -> None:
             "competitive_markets": [
                 MarketSignal(
                     ticker="composite",
+                    token_id="composite-yes",
                     side="BUY",
                     price=0.52,
                     confidence=0.75,
@@ -218,3 +223,67 @@ def test_market_scanner_prefers_high_quality_non_proxy_signals() -> None:
     best = scanner.best_tradeable_signals(limit=1)
     assert best
     assert best[0].market_slug == "eth-above-4000"
+
+
+def test_market_scanner_scan_markets_populates_token_ids() -> None:
+    market = make_market("btc-above-100k", "Will BTC be above 100k?", 0.55, 0.45, volume=50_000)
+    scanner = MarketScanner(client=FakeClient([market]))
+
+    result = scanner.scan_markets()
+
+    signals = result.trending_markets + result.competitive_markets + result.winning_bets + result.arbitrage_opportunities
+    assert signals
+    assert all(sig.token_id for sig in signals)
+
+
+def test_best_tradeable_signals_skips_inactive_orderbooks() -> None:
+    class _BookClient(FakeClient):
+        def get_order_book(self, token_id):
+            if token_id == "dead-token":
+                return {"active": False, "closed": True, "archived": False}
+            return {"active": True, "closed": False, "archived": False}
+
+    scanner = MarketScanner(client=_BookClient([]))
+    scanner._last_scan = type(
+        "Scan",
+        (),
+        {
+            "winning_bets": [
+                MarketSignal(
+                    ticker="dead-market",
+                    token_id="dead-token",
+                    side="BUY",
+                    price=0.75,
+                    confidence=0.99,
+                    reason="Imminent resolution",
+                    market_question="Dead market?",
+                    market_slug="dead-market",
+                    current_prob=75.0,
+                    volume=300_000,
+                    sentiment="BULLISH",
+                    direction="📈 UP",
+                ),
+                MarketSignal(
+                    ticker="live-market",
+                    token_id="live-token",
+                    side="BUY",
+                    price=0.71,
+                    confidence=0.90,
+                    reason="Imminent resolution",
+                    market_question="Live market?",
+                    market_slug="live-market",
+                    current_prob=71.0,
+                    volume=250_000,
+                    sentiment="BULLISH",
+                    direction="📈 UP",
+                ),
+            ],
+            "trending_markets": [],
+            "competitive_markets": [],
+            "arbitrage_opportunities": [],
+        },
+    )()
+
+    best = scanner.best_tradeable_signals(limit=2)
+
+    assert [sig.market_slug for sig in best] == ["live-market"]

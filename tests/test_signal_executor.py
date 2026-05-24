@@ -186,6 +186,51 @@ class TestExecuteRegexSignal:
         assert ledger.recorded_orders[0]["price"] == 0.50
 
     @pytest.mark.asyncio
+    async def test_prod_mode_prefers_signal_token_id_over_scanner_resolution(self) -> None:
+        ledger = MockLedger(mode="PROD")
+        signal = {
+            "asset": "SOL",
+            "action": "BUY",
+            "price": 0.50,
+            "timestamp": 123,
+            "token_id": "token-from-signal",
+        }
+        freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
+        freqai.clob_execute = AsyncMock(return_value={
+            "status": "FILLED", "orderID": "ord-1", "filled_size": 7.0, "price": 0.50,
+        })
+        scanner = MagicMock()
+
+        await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai, scanner=scanner)
+
+        scanner.resolve_ticker_to_token_id.assert_not_called()
+        args = freqai.clob_execute.await_args
+        assert args.kwargs["ticker"] == "token-from-signal"
+
+    @pytest.mark.asyncio
+    async def test_prod_mode_accepts_scanner_ticker_side_aliases(self) -> None:
+        ledger = MockLedger(mode="PROD")
+        signal = {
+            "ticker": "SOL",
+            "side": "BUY",
+            "price": 0.50,
+            "timestamp": 123,
+            "token_id": "token-from-scanner",
+        }
+        freqai = AsyncMock()
+        _attach_benign_order_book(freqai)
+        freqai.clob_execute = AsyncMock(return_value={
+            "status": "FILLED", "orderID": "ord-1", "filled_size": 7.0, "price": 0.50,
+        })
+
+        result = await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
+
+        assert result["status"] == "SUCCESS"
+        args = freqai.clob_execute.await_args
+        assert args.kwargs["ticker"] == "token-from-scanner"
+
+    @pytest.mark.asyncio
     async def test_prod_blocked_by_ledger(self) -> None:
         ledger = MockLedger(mode="PROD")
         signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}

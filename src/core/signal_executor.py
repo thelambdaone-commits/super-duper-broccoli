@@ -394,15 +394,25 @@ async def _execute_guarded(
 async def execute_regex_signal(
     signal: dict, ledger: Ledger, freqai: FreqAIEngine, **kwargs
 ) -> Dict[str, Any]:
-    ticker, side, price = signal["asset"], signal["action"], signal["price"]
+    ticker = signal.get("asset") or signal.get("ticker")
+    side = signal.get("action") or signal.get("side")
+    price = signal.get("price")
+    if ticker is None or side is None or price is None:
+        return {
+            "status": "FAILED",
+            "reason": "Signal missing required keys: asset/ticker, action/side, or price",
+        }
+    provided_token_id = signal.get("token_id")
 
-    # Resolve ticker to Token ID if scanner is available
-    scanner = kwargs.get("scanner")
-    if scanner:
-        token_id = scanner.resolve_ticker_to_token_id(ticker, side)
-        if token_id:
-            logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
-            ticker = token_id
+    if provided_token_id:
+        ticker = provided_token_id
+    else:
+        scanner = kwargs.get("scanner")
+        if scanner:
+            token_id = scanner.resolve_ticker_to_token_id(ticker, side)
+            if token_id:
+                logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
+                ticker = token_id
 
     mode = ledger.get_execution_mode()
     regime = get_regime_label(kwargs.get("hmm"), ticker)
@@ -452,13 +462,16 @@ async def execute_lobstar_signal(
         regime_label=regime,
     ) if risk else {"size": size}
 
-    # Resolve ticker to Token ID if scanner is available
-    scanner = kwargs.get("scanner")
-    if scanner:
-        token_id = scanner.resolve_ticker_to_token_id(ticker, side)
-        if token_id:
-            logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
-            ticker = token_id
+    provided_token_id = signal.get("token_id")
+    if provided_token_id:
+        ticker = provided_token_id
+    else:
+        scanner = kwargs.get("scanner")
+        if scanner:
+            token_id = scanner.resolve_ticker_to_token_id(ticker, side)
+            if token_id:
+                logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
+                ticker = token_id
 
     return await _execute_guarded(
         ticker, side, price, sizing["size"], confidence, regime, sizing,

@@ -39,6 +39,7 @@ class MarketSignal:
     volume: float
     sentiment: str  # BULLISH or BEARISH
     direction: str  # 📈 UP or 📉 DOWN
+    token_id: str = ""
     fee_rate_bps: int = 0
     market_features: dict[str, Any] = field(default_factory=dict)
 
@@ -172,19 +173,27 @@ class MarketScanner:
                 "known_wallet_flow_score": self._wallet_flow_scores.get(slug.lower(), 0.0),
             }
 
-            # Check for winning bets (imminent resolution)
-            winning = market.winning_outcome
-            if winning:
-                confidence = min(0.85 + market.probability_pct / 1000, 0.99)
-                price = market.yes_price if winning == "YES" else market.no_price
-                sentiment = self._get_sentiment(market)
-                direction = "📈 UP" if winning == "YES" else "📉 DOWN"
-                result.winning_bets.append(MarketSignal(
+            def _build_signal(
+                *,
+                side: str,
+                price: float,
+                confidence: float,
+                reason: str,
+                sentiment: str,
+                direction: str,
+            ) -> MarketSignal | None:
+                try:
+                    outcome = "YES" if side.upper() in {"BUY", "YES", "LONG"} else "NO"
+                    token_id = market.get_token_id(outcome)
+                except ValueError:
+                    return None
+                return MarketSignal(
                     ticker=slug,
-                    side="BUY" if winning == "YES" else "SELL",
+                    token_id=token_id,
+                    side=side,
                     price=round(price, 4),
                     confidence=round(confidence, 4),
-                    reason=f"Imminent resolution: {winning} at {market.probability_pct:.0f}%",
+                    reason=reason,
                     market_question=market.question,
                     market_slug=slug,
                     current_prob=round(market.probability_pct, 1),
@@ -193,7 +202,25 @@ class MarketScanner:
                     direction=direction,
                     fee_rate_bps=getattr(market, "fee_rate_bps", 0),
                     market_features=signal_features,
-                ))
+                )
+
+            # Check for winning bets (imminent resolution)
+            winning = market.winning_outcome
+            if winning:
+                confidence = min(0.85 + market.probability_pct / 1000, 0.99)
+                price = market.yes_price if winning == "YES" else market.no_price
+                sentiment = self._get_sentiment(market)
+                direction = "📈 UP" if winning == "YES" else "📉 DOWN"
+                signal = _build_signal(
+                    side="BUY" if winning == "YES" else "SELL",
+                    price=price,
+                    confidence=confidence,
+                    reason=f"Imminent resolution: {winning} at {market.probability_pct:.0f}%",
+                    sentiment=sentiment,
+                    direction=direction,
+                )
+                if signal is not None:
+                    result.winning_bets.append(signal)
 
             # Check for trending markets (momentum moves)
             if prev_prob is not None:
@@ -202,42 +229,32 @@ class MarketScanner:
                 if prob_change >= 2.0 and market.volume >= 5000:
                     direction = "📈 UP" if market.yes_price > prev_prob / 100 else "📉 DOWN"
                     sentiment = self._get_sentiment(market)
-                    result.trending_markets.append(MarketSignal(
-                        ticker=slug,
+                    signal = _build_signal(
                         side="BUY" if direction == "📈 UP" else "SELL",
-                        price=round(market.yes_price, 4),
-                        confidence=round(0.5 + prob_change / 100, 4),
+                        price=market.yes_price,
+                        confidence=0.5 + prob_change / 100,
                         reason=f"Momentum: {prob_change:.1f}% change in probability",
-                        market_question=market.question,
-                        market_slug=slug,
-                        current_prob=round(market.probability_pct, 1),
-                        volume=market.volume,
                         sentiment=sentiment,
                         direction=direction,
-                        fee_rate_bps=getattr(market, "fee_rate_bps", 0),
-                        market_features=signal_features,
-                    ))
+                    )
+                    if signal is not None:
+                        result.trending_markets.append(signal)
 
             # Check for competitive markets (tight spreads)
             if market.is_competitive and market.volume >= 5000:
                 spread_pct = market.spread * 100
                 sentiment = self._get_sentiment(market)
                 direction = "📈 UP" if market.yes_price <= 0.5 else "📉 DOWN"
-                result.competitive_markets.append(MarketSignal(
-                    ticker=slug,
+                signal = _build_signal(
                     side="BUY" if direction == "📈 UP" else "SELL",
-                    price=round(market.yes_price, 4),
-                    confidence=round(0.5 + (50 - spread_pct) / 100, 4),
+                    price=market.yes_price,
+                    confidence=0.5 + (50 - spread_pct) / 100,
                     reason=f"Competitive market: range {market.yes_price:.2f}, vol ${market.volume:,.0f}",
-                    market_question=market.question,
-                    market_slug=slug,
-                    current_prob=round(market.probability_pct, 1),
-                    volume=market.volume,
                     sentiment=sentiment,
                     direction=direction,
-                    fee_rate_bps=getattr(market, "fee_rate_bps", 0),
-                    market_features=signal_features,
-                ))
+                )
+                if signal is not None:
+                    result.competitive_markets.append(signal)
 
             # Check for arbitrage opportunities (surebets)
             if market.outcomes and len(market.outcomes) == 2:
@@ -247,21 +264,16 @@ class MarketScanner:
                     # Check for arbitrage: sum of inverse prices < 1
                     arb = (1 / yes_price) + (1 / no_price)
                     if arb < 1.0:
-                        result.arbitrage_opportunities.append(MarketSignal(
-                            ticker=slug,
+                        signal = _build_signal(
                             side="BUY" if yes_price < no_price else "SELL",
-                            price=round(min(yes_price, no_price), 4),
+                            price=min(yes_price, no_price),
                             confidence=0.99,
                             reason=f"Arbitrage opportunity: {arb:.4f} < 1.0",
-                            market_question=market.question,
-                            market_slug=slug,
-                            current_prob=round(market.probability_pct, 1),
-                            volume=market.volume,
                             sentiment="ARBITRAGE",
                             direction="📈 UP" if yes_price < no_price else "📉 DOWN",
-                            fee_rate_bps=getattr(market, "fee_rate_bps", 0),
-                            market_features=signal_features,
-                        ))
+                        )
+                        if signal is not None:
+                            result.arbitrage_opportunities.append(signal)
 
             self._known_markets[slug] = market.probability_pct
 
@@ -379,6 +391,8 @@ class MarketScanner:
             "metadata": {
                 "market_question": sig.market_question,
                 "market_slug": sig.market_slug,
+                "known_wallet_flow_score": self._wallet_flow_scores.get(sig.market_slug.lower() if sig.market_slug else "", 0.0),
+                "token_id": sig.token_id,
                 "source": "market_scanner_signal",
             }
         }
@@ -533,7 +547,34 @@ class MarketScanner:
                 score -= 10.0
             return score
 
-        return sorted(candidates, key=_score, reverse=True)[:limit]
+        ranked = sorted(candidates, key=_score, reverse=True)
+        selected: list[MarketSignal] = []
+        for sig in ranked:
+            if len(selected) >= limit:
+                break
+            token_id = sig.token_id or self.resolve_ticker_to_token_id(sig.ticker, sig.side)
+            if not token_id:
+                continue
+            try:
+                book = self.client.get_order_book(token_id)
+            except Exception:
+                continue
+            if not book:
+                continue
+            if isinstance(book, dict):
+                active = book.get("active")
+                closed = book.get("closed")
+                archived = book.get("archived")
+            else:
+                active = getattr(book, "active", None)
+                closed = getattr(book, "closed", None)
+                archived = getattr(book, "archived", None)
+            if active is False or closed is True or archived is True:
+                continue
+            if not sig.token_id:
+                sig.token_id = token_id
+            selected.append(sig)
+        return selected
 
     def resolve_ticker_to_token_id(self, ticker: str, side: str = "YES") -> Optional[str]:
         """Resolves a slug or ticker (like BTC) to a Polymarket token ID."""

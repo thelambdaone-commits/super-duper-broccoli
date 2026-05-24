@@ -181,17 +181,27 @@ class MarketScanLoop:
                         for bet in all_signals:
                             try:
                                 if self.clob_listener:
-                                    self.clob_listener.subscribe([bet.ticker])
+                                    self.clob_listener.subscribe([bet.token_id or bet.ticker])
                                 signal = {
                                     "ticker": bet.ticker,
+                                    "asset": bet.ticker,
                                     "side": bet.side,
+                                    "action": bet.side,
                                     "price": bet.price,
                                     "confidence": bet.confidence,
                                     "reason": bet.reason,
                                     "market_question": bet.market_question,
                                     "market_slug": bet.market_slug,
+                                    "current_prob": bet.current_prob,
+                                    "volume": bet.volume,
+                                    "sentiment": bet.sentiment,
+                                    "direction": bet.direction,
+                                    "fee_rate_bps": bet.fee_rate_bps,
                                     "source": "market_scanner",
-                                    "token_id": bet.ticker,
+                                    "strategy_id": "market_scanner",
+                                    "kelly_fraction": 0.0,
+                                    "regime_label": bet.sentiment or "NEUTRAL",
+                                    "token_id": bet.token_id or bet.ticker,
                                     "size": 0.0,
                                     "market_features": getattr(bet, "market_features", {}),
                                 }
