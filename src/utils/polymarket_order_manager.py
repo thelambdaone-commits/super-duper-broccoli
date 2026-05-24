@@ -122,6 +122,48 @@ class PolymarketOrderManager:
             "roi_percent": (profit_if_right / total_cost * 100) if side.upper() == "BUY" and total_cost > 0 else 0,
         }
 
+    def _validate_market_is_tradeable(self, market_id: str, token_id: str) -> None:
+        if not self._clob_client:
+            return
+
+        try:
+            book = self._clob_client.get_order_book(token_id)
+        except Exception as exc:
+            raise ValueError(f"token_id invalide ou marché indisponible: {exc}") from exc
+
+        if book is None:
+            raise ValueError("Carnet introuvable pour ce token.")
+
+        active = None
+        closed = None
+        archived = None
+
+        try:
+            market = self._clob_client.get_market(market_id)
+        except Exception:
+            market = None
+
+        if isinstance(book, dict):
+            active = book.get("active")
+            closed = book.get("closed")
+            archived = book.get("archived")
+        else:
+            active = getattr(book, "active", None)
+            closed = getattr(book, "closed", None)
+            archived = getattr(book, "archived", None)
+
+        if isinstance(market, dict):
+            active = market.get("active", active)
+            closed = market.get("closed", closed)
+            archived = market.get("archived", archived)
+            if market.get("resolved") is True:
+                closed = True
+
+        if active is False or closed is True or archived is True:
+            raise ValueError(
+                f"Marché inactif/résolu (active={active}, closed={closed}, archived={archived})"
+            )
+
     async def place_order(
         self,
         market_id: str,
@@ -144,6 +186,7 @@ class PolymarketOrderManager:
         try:
             order_side = "BUY" if side.upper() in ("BUY", "YES", "LONG") else "SELL"
             cost_est = self.estimate_bet_cost(amount, price, side)
+            self._validate_market_is_tradeable(market_id, token_id)
 
             if dry_run:
                 logger.info(f"DRY RUN: {side} {amount}x {outcome} @ {price}")

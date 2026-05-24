@@ -711,7 +711,8 @@ class Ledger:
         Retourne une valeur <= 0 (ex: -0.10 pour -10%).
         """
         try:
-            with self._transaction() as cursor:
+            with self._lock:
+                cursor = self.conn.cursor()
                 cursor.execute("SELECT total_capital FROM capital_allocation ORDER BY id DESC LIMIT 1")
                 row = cursor.fetchone()
                 if not row:

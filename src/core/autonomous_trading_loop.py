@@ -293,6 +293,10 @@ class AutonomousTradingLoop:
 
         if mode == "PROD" and self.config.allow_real_execution:
             return await self._open_real_position(signal, size, sizing)
+        if mode == "SHADOW" and self.config.allow_real_execution:
+            shadow_multiplier = float(TRADING_PARAMS.get("SHADOW_SIZE_MULTIPLIER", 0.01))
+            shadow_size = max(1.0, size * shadow_multiplier)
+            return await self._open_real_position(signal, shadow_size, sizing)
         return self._open_paper_position(signal, size)
 
     async def manage_open_positions(self, current_prices: dict[str, float]) -> list[AutonomousAction]:
@@ -619,11 +623,22 @@ class AutonomousTradingLoop:
         return prices
 
     def _open_position_count(self) -> int:
-        return len(self.ledger.get_paper_positions("OPEN")) + len(self.ledger.get_open_positions())
+        mode = self.ledger.get_execution_mode().upper()
+        if mode == "PROD":
+            return len(self.ledger.get_open_positions())
+        if mode == "SHADOW":
+            return len(self.ledger.get_paper_positions("OPEN")) + len(self.ledger.get_open_positions())
+        return len(self.ledger.get_paper_positions("OPEN"))
 
     def _open_count_for_strategy(self, strategy_id: str) -> int:
         count = 0
         needle = f"autonomous:{strategy_id}"
+        mode = self.ledger.get_execution_mode().upper()
+        if mode == "PROD":
+            for position in self.ledger.get_open_positions():
+                if str(position.get("signal_source", "")).startswith(needle):
+                    count += 1
+            return count
         for position in self.ledger.get_paper_positions("OPEN"):
             if str(position.get("signal_source", "")).startswith(needle):
                 count += 1
@@ -631,7 +646,15 @@ class AutonomousTradingLoop:
 
     def _current_exposure_by_market(self) -> dict[str, float]:
         exposure: dict[str, float] = {}
-        for position in self.ledger.get_paper_positions("OPEN") + self.ledger.get_open_positions():
+        mode = self.ledger.get_execution_mode().upper()
+        positions: list[Mapping[str, Any]] = []
+        if mode == "PROD":
+            positions = self.ledger.get_open_positions()
+        elif mode == "SHADOW":
+            positions = self.ledger.get_paper_positions("OPEN") + self.ledger.get_open_positions()
+        else:
+            positions = self.ledger.get_paper_positions("OPEN")
+        for position in positions:
             market_id = str(position.get("market_id") or position.get("ticker") or "")
             if not market_id:
                 continue

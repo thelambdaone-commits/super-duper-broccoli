@@ -33,6 +33,8 @@ class ServiceContainer:
     def __init__(self) -> None:
         self.vault = VaultHandler()
         self.secrets = self.vault.fetch_quantum_secrets()
+        # Merge all env vars into secrets to ensure everything is visible
+        self.secrets.update(os.environ)
 
         self.ledger = Ledger()
 

@@ -184,19 +184,29 @@ class LobstarCommandRouter:
         """
         /positions /p: Scrape l'état des positions ouvertes et le PnL latent.
         """
-        positions_msg = (
-            "<b>📊 OPEN EXPOSURE</b>\n"
-            "───────────────────\n"
-            "• Ticker : <code>FED_MAY_2026</code>\n"
-            "• Side   : <b>YES</b>\n"
-            "• Size   : <code>7 Contracts</code>\n"
-            "• Entry  : <code>0.77</code>\n"
-            "• Mark   : <code>0.79</code>\n"
-            "• PnL    : <b>+0.14 USD</b> (📈 +2.5%)\n"
-            "───────────────────"
-        )
-        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
-        await msg.reply_text(positions_msg, parse_mode="HTML")
+        positions = self.core.ledger.get_open_positions()
+        if not positions:
+            await update.message.reply_text("<b>📊 OPEN EXPOSURE</b>\n───────────────────\nNo active positions found.", parse_mode="HTML")
+            return
+
+        lines = ["<b>📊 OPEN EXPOSURE</b>", "───────────────────"]
+        for p in positions:
+            ticker = p.get('ticker', 'N/A')
+            side = p.get('side', 'N/A')
+            size = p.get('size', 0)
+            entry = float(p.get('entry_price', 0))
+            mark = float(p.get('current_price', entry))
+            pnl = (mark - entry) * size if side == 'BUY' else (entry - mark) * size
+            pct = ((mark - entry) / entry * 100) if side == 'BUY' else ((entry - mark) / entry * 100)
+            lines.append(f"• Ticker : <code>{ticker}</code>")
+            lines.append(f"• Side   : <b>{side}</b>")
+            lines.append(f"• Size   : <code>{size} Contracts</code>")
+            lines.append(f"• Entry  : <code>{entry:.4f}</code>")
+            lines.append(f"• Mark   : <code>{mark:.4f}</code>")
+            lines.append(f"• PnL    : <b>{pnl:+.2f} USD</b> (📈 {pct:+.1f}%)")
+            lines.append("───────────────────")
+
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 🚀 CATEGORY 2: HARDWARE CIRCUIT BREAKERS & PANIC MACROS

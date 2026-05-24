@@ -124,6 +124,7 @@ class BinanceWebSocketListener:
         return snapshots
 
     async def run(self, callback: Optional[SnapshotCallback] = None) -> None:
+        import asyncio as _asyncio
         import websockets
 
         self._running = True
@@ -136,11 +137,11 @@ class BinanceWebSocketListener:
                 ) as websocket:
                     async for message in websocket:
                         await self.handle_message(message, callback=callback)
-            except asyncio.CancelledError:
+            except _asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning("Binance websocket disconnected: %s", exc)
-                await asyncio.sleep(self.config.reconnect_delay_seconds)
+                await _asyncio.sleep(self.config.reconnect_delay_seconds)
 
     def stop(self) -> None:
         self._running = False
