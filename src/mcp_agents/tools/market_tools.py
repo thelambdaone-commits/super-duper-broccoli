@@ -1,8 +1,8 @@
 import json
 import numpy as np
 from typing import Optional
-from user_data.strategies.hmm_filter import HMMRegimeFilter
-from user_data.strategies.arbitrage_scanner import ArbitrageScanner
+from strategies.hmm_filter import HMMRegimeFilter
+from strategies.arbitrage_scanner import ArbitrageScanner
 
 def get_market_tools(mcp, hmm: Optional[HMMRegimeFilter], arb_scanner: Optional[ArbitrageScanner]):
     @mcp.tool(

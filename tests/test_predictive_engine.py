@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from models.predictive_engine import PolymarketPredictiveEngine
+from schemas.prediction import PolymarketPredictiveEngine
 
 
 class StaticModel:

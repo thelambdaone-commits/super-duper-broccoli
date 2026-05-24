@@ -27,11 +27,11 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from ledger.ledger_db import Ledger, SCHEMA_PATH
+from database.ledger_db import Ledger, SCHEMA_PATH
 from utils.signal_parser import SignalParser
-from user_data.strategies.hmm_filter import HMMRegimeFilter
-from user_data.strategies.probability_calibrator import ProbabilityCalibrator
-from execution.passive_executor import PassiveExecutor
+from strategies.hmm_filter import HMMRegimeFilter
+from strategies.probability_calibrator import ProbabilityCalibrator
+from polymarket.execution.passive_executor import PassiveExecutor
 from core.freqai_engine import FreqAIEngine
 from core.portfolio_risk_engine import PortfolioRiskEngine
 from utils.config_loader import get_health_config

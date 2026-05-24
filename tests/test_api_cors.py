@@ -1,4 +1,4 @@
-from api.api_server import app
+from app.api_server import app
 
 
 def test_api_cors_does_not_allow_credentials_with_wildcard_origin() -> None:

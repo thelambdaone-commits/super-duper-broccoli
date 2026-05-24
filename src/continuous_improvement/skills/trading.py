@@ -18,11 +18,11 @@ class TradingSkill(Skill):
     @property
     def priority_files(self) -> list[str]:
         return [
-            "core/signal_executor.py",
-            "core/portfolio_risk_engine.py",
+            "polymarket/execution/signal_executor.py",
+            "services/portfolio_risk_engine.py",
             "utils/signal_parser.py",
-            "user_data/strategies/arbitrage_scanner.py",
-            "user_data/strategies/sentiment_nlp.py",
+            "strategies/arbitrage_scanner.py",
+            "strategies/sentiment_nlp.py",
         ]
 
     def detect_issues(self, paths: Optional[list[str]] = None) -> list[dict[str, Any]]:
@@ -71,7 +71,7 @@ class TradingSkill(Skill):
     def generate_tests(self, paths: Optional[list[str]] = None) -> list[dict[str, Any]]:
         return [
             {
-                "target": "core/signal_executor.py",
+                "target": "polymarket/execution/signal_executor.py",
                 "test_file": "tests/test_signal_executor.py",
                 "description": "Integration test: execute_regex_signal with mocked FreqAIEngine and Ledger",
                 "test_cases": [

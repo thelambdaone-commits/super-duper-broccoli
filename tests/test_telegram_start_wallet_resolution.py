@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from telegram_scraper.telegram_listener import TelegramListener
+from interface.telegram_listener import TelegramListener
 
 
 @pytest.mark.asyncio

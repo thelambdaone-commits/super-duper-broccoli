@@ -35,8 +35,8 @@ except ImportError:
 logger = logging.getLogger("RufloSwarmSupervisor")
 
 
-_BASE_DIR = Path(__file__).resolve().parent.parent.parent
-TELEMETRY_DIR = _BASE_DIR / "data"
+_BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+TELEMETRY_DIR = Path(os.getenv("DATA_PATH", _BASE_DIR / "data"))
 TELEMETRY_DIR.mkdir(parents=True, exist_ok=True)
 SWARM_STATE_PATH = TELEMETRY_DIR / "swarm_state.json"
 

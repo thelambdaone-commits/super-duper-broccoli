@@ -11,7 +11,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 import httpx
 
-from core.wallet_manager import PolymarketWalletManager
+from polymarket.execution.wallet_manager import PolymarketWalletManager
 
 logger = logging.getLogger("PolymarketWalletJournal")
 

@@ -2,27 +2,27 @@ import logging
 import os
 from typing import Optional, TYPE_CHECKING
 
-from core.freqai_engine import FreqAIEngine
-from core.portfolio_risk_engine import PortfolioRiskEngine
-from core.services.metrics_exporter import ExecutionMetricsExporter
-from core.services.history_access_service import HistoryAccessService
-from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
-from core.services.trade_notification_service import TradeNotificationService
-from execution.passive_executor import PassiveExecutor
-from ledger.ledger_db import Ledger
-from user_data.strategies.hmm_filter import HMMRegimeFilter
+from polymarket.execution.freqai_engine import FreqAIEngine
+from services.portfolio_risk_engine import PortfolioRiskEngine
+from services.metrics_exporter import ExecutionMetricsExporter
+from services.history_access_service import HistoryAccessService
+from services.predictive_gate import PredictiveGateConfig, PredictiveGateService
+from services.trade_notification_service import TradeNotificationService
+from polymarket.execution.passive_executor import PassiveExecutor
+from database.ledger_db import Ledger
+from strategies.hmm_filter import HMMRegimeFilter
 from utils.feature_store import FeatureStore
 from utils.notifier import TelegramNotifier
 from utils.vault_handler import VaultHandler
 
 if TYPE_CHECKING:
-    from models.volatility_surface import VolSurfaceAdapter
+    from schemas.volatility import VolSurfaceAdapter
     from utils.earnings_sentiment_pipeline import EarningsSentimentPipeline
     from utils.chart_pattern_detector import ChartPatternDetector
     from utils.sentiment_ensemble import SentimentEnsemble
-    from models.portfolio import PortfolioOptimizer
+    from schemas.optimization import PortfolioOptimizer
     from utils.macro_intelligence import MacroIntelligence
-    from engine.backtest import Backtester
+    from core.backtest import Backtester
     from utils.feature_factory import FeatureFactory
 
 logger = logging.getLogger("ServiceContainer")
@@ -89,7 +89,7 @@ class ServiceContainer:
             chat_id=os.getenv("TRADE_ALERT_CHAT_ID") or os.getenv("CHAT_ID"),
         )
         self.trade_notifications = TradeNotificationService(self.notifier)
-        from core.wallet_manager import PolymarketWalletManager
+        from polymarket.execution.wallet_manager import PolymarketWalletManager
         self.wallet_manager = PolymarketWalletManager(
             self.vault,
             polygon_rpc_url=self.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL", ""),
@@ -123,11 +123,11 @@ class ServiceContainer:
         self.feature_factory: Optional["FeatureFactory"] = None
         self._init_new_modules()
 
-        logger.info("ServiceContainer: All core services initialized.")
+        logger.info("ServiceContainer: All services initialized.")
 
     def _init_new_modules(self) -> None:
         try:
-            from models.volatility_surface import VolSurfaceAdapter
+            from schemas.volatility import VolSurfaceAdapter
             self.vol_surface = VolSurfaceAdapter()
         except Exception as e:
             logger.warning(f"VolSurfaceAdapter init failed: {e}")
@@ -150,7 +150,7 @@ class ServiceContainer:
         except Exception as e:
             logger.warning(f"SentimentEnsemble init failed: {e}")
         try:
-            from models.portfolio import PortfolioOptimizer
+            from schemas.optimization import PortfolioOptimizer
             self.portfolio_opt = PortfolioOptimizer(method="mean_variance")
         except Exception as e:
             logger.warning(f"PortfolioOptimizer init failed: {e}")
@@ -160,7 +160,7 @@ class ServiceContainer:
         except Exception as e:
             logger.warning(f"MacroIntelligence init failed: {e}")
         try:
-            from engine.backtest import Backtester
+            from core.backtest import Backtester
             self.backtester = Backtester(initial_capital=10000.0)
         except Exception as e:
             logger.warning(f"Backtester init failed: {e}")
@@ -175,7 +175,7 @@ class ServiceContainer:
 
     async def sync_real_capital(self) -> None:
         """Syncs the ledger with real-world capital if RPC is available."""
-        from core.wallet_manager import PolymarketWalletManager
+        from polymarket.execution.wallet_manager import PolymarketWalletManager
 
         wallet_address = self.secrets.get("POLYMARKET_WALLET_ADDRESS") or self.secrets.get("EOA_ADDRESS") or os.getenv("WALLET_ADDRESS")
         proxy_address = self.secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS") or os.getenv("PROXY_WALLET_ADDRESS")

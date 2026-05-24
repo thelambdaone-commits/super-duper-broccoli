@@ -20,7 +20,7 @@ SOURCE_DIRS = [
     "scrapers",
     "scrappers",
     "user_data/freqaimodels",
-    "user_data/strategies",
+    "strategies",
     "utils",
 ]
 TEST_DIR = os.path.join(PROJECT_ROOT, "tests")

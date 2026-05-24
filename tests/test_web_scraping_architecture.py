@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from scrapers.clob_listener import CLOBListener
-from scrapers.web_scraper import WebScraper, WebScraperConfig
+from polymarket.api.clob_listener import CLOBListener
+from polymarket.api.web_scraper import WebScraper, WebScraperConfig
 from utils.clob_feed_utils import extract_live_clob_token_ids
 from utils.credential_manager import CredentialManager
 from utils.feature_store import FeatureStore

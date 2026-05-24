@@ -56,7 +56,7 @@ The last 2 steps in the snippet create the directory with `user_data`, as well a
 #### Adding a custom strategy
 
 1. The configuration is now available as `user_data/config.json`
-2. Copy a custom strategy to the directory `user_data/strategies/`
+2. Copy a custom strategy to the directory `strategies/`
 3. Add the Strategy' class name to the `docker-compose.yml` file
 
 The `SampleStrategy` is run by default.

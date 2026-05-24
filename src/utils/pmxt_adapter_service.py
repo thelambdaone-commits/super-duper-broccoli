@@ -14,7 +14,8 @@ from typing import Any
 
 logger = logging.getLogger("PMXTAdapterService")
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# PROJECT_ROOT is now 3 levels up from src/utils/
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PMXT_DIR = PROJECT_ROOT / "scripts" / "pmxt_adapter"
 
 

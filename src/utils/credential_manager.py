@@ -40,7 +40,6 @@ class CredentialManager:
         allowed_roots = {
             Path(DEFAULT_DATA_DIR).resolve(),
             Path("data").resolve(),
-            Path("runtime/data").resolve(),
         }
         if not any(str(resolved).startswith(str(root)) for root in allowed_roots):
             raise ValueError(f"Encrypted path must be within one of {[str(root) for root in sorted(allowed_roots)]}: {path}")
@@ -52,7 +51,6 @@ class CredentialManager:
         candidates: List[Path] = []
         if requested.name:
             candidates.append(Path("data") / requested.name)
-            candidates.append(Path("runtime/data") / requested.name)
         return [candidate.resolve() for candidate in candidates]
 
     def encrypt_and_save(self, creds: Dict[str, str], path: str = POLYMARKET_WALLET_PATH) -> None:
@@ -94,7 +92,9 @@ class CredentialManager:
         logger.info("Generating new CLOB credentials...")
         creds = derive_clob_credentials(private_key)
         creds["CLOB_PRIVATE_KEY"] = private_key
-        creds["POLYMARKET_WALLET_ADDRESS"] = os.getenv("POLYMARKET_WALLET_ADDRESS") or creds.get("address")
+        eoa_address = creds.get("address", "")
+        creds["EOA_ADDRESS"] = eoa_address
+        creds["POLYMARKET_WALLET_ADDRESS"] = os.getenv("POLYMARKET_WALLET_ADDRESS") or eoa_address
         self.encrypt_and_save(creds, path)
         return creds
 
@@ -109,8 +109,10 @@ class CredentialManager:
         private_key = validate_private_key_or_raise(private_key, source="ephemeral session")
         creds = derive_clob_credentials(private_key)
         creds["CLOB_PRIVATE_KEY"] = private_key
+        eoa_address = creds.get("address", "")
+        creds["EOA_ADDRESS"] = eoa_address
         creds["POLYMARKET_WALLET_ADDRESS"] = (
-            os.getenv("POLYMARKET_WALLET_ADDRESS") or creds.get("address", "")
+            os.getenv("POLYMARKET_WALLET_ADDRESS") or eoa_address
         )
         return creds
 
@@ -339,15 +341,18 @@ class CredentialManager:
             elif key == "CLOB_API_PASSPHRASE":
                 creds[key] = user_data.get("clob_api_passphrase", "")
 
-        # Map both EOA and Proxy
+        # Map both EOA and Proxy explicitly
         if user_data.get("address"):
-            creds["POLYMARKET_WALLET_ADDRESS"] = user_data["address"]
+            # EOA is always the signer
             creds["EOA_ADDRESS"] = user_data["address"]
+            # Legacy key often refers to the EOA
+            creds["POLYMARKET_WALLET_ADDRESS"] = user_data["address"]
         
         if user_data.get("proxy_wallet"):
+            # Proxy is the funder
             creds["POLYMARKET_PROXY_WALLET_ADDRESS"] = user_data["proxy_wallet"]
-            # Historically, some services expect the "active" address in this key
-            creds["POLYMARKET_WALLET_ADDRESS"] = user_data["proxy_wallet"]
+            # We DON'T overwrite POLYMARKET_WALLET_ADDRESS anymore to avoid confusion
+            # If a service needs the funder, it should look at POLYMARKET_PROXY_WALLET_ADDRESS
 
         return creds
 

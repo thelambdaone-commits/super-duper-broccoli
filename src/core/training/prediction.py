@@ -67,7 +67,7 @@ def predict(
         calibrator_path = os.path.join(model_dir, f"{ticker}_calibrator.pkl")
         if os.path.exists(calibrator_path):
             try:
-                from user_data.strategies.probability_calibrator import ProbabilityCalibrator
+                from strategies.probability_calibrator import ProbabilityCalibrator
                 calibrator = ProbabilityCalibrator().load(calibrator_path)
                 calibrators[ticker] = calibrator
             except Exception as e:

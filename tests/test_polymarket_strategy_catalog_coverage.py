@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from user_data.strategies.polymarket_strategy_factory import build_default_polymarket_strategies
+from strategies.polymarket_strategy_factory import build_default_polymarket_strategies
 
 
 def test_default_catalog_covers_required_polymarket_strategy_families() -> None:

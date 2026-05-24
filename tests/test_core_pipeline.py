@@ -6,8 +6,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from ledger.ledger_db import Ledger, SCHEMA_PATH
-from user_data.strategies.feature_pipeline import (
+from database.ledger_db import Ledger, SCHEMA_PATH
+from strategies.feature_pipeline import (
     compute_order_imbalance,
     compute_order_imbalance_from_frame,
     ternary_agreement_model,

@@ -19,8 +19,8 @@ class ExecutionSkill(Skill):
     def priority_files(self) -> list[str]:
         return [
             "execution/passive_executor.py",
-            "core/freqai_engine.py",
-            "core/signal_executor.py",
+            "polymarket/execution/freqai_engine.py",
+            "polymarket/execution/signal_executor.py",
         ]
 
     def detect_issues(self, paths: Optional[list[str]] = None) -> list[dict[str, Any]]:

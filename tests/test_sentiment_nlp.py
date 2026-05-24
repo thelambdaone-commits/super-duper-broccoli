@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from user_data.strategies.sentiment_nlp import SentimentAnalyzer
+from strategies.sentiment_nlp import SentimentAnalyzer
 
 
 @pytest.fixture

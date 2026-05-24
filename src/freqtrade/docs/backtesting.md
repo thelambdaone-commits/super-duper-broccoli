@@ -54,7 +54,7 @@ With 5 min candle (OHLCV) data (per default)
 freqtrade backtesting --strategy AwesomeStrategy
 ```
 
-Where `--strategy AwesomeStrategy` / `-s AwesomeStrategy` refers to the class name of the strategy, which is within a python file in the `user_data/strategies` directory.
+Where `--strategy AwesomeStrategy` / `-s AwesomeStrategy` refers to the class name of the strategy, which is within a python file in the `strategies` directory.
 
 ---
 

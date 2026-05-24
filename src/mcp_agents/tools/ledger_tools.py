@@ -1,5 +1,5 @@
 from typing import Optional
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 
 def get_ledger_tools(mcp, ledger: Optional[Ledger]):
     @mcp.tool(

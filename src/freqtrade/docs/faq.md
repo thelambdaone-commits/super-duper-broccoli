@@ -130,7 +130,7 @@ The output of this command will also include a status column, showing if the str
 Please check the following:
 
 * Are you using the correct strategy name? The strategy name is case-sensitive and must correspond to the Strategy class name (not the filename!).
-* Is the strategy in the `user_data/strategies` directory, and has the file-ending `.py`?
+* Is the strategy in the `strategies` directory, and has the file-ending `.py`?
 * Does the bot show other warnings before this error? Maybe you're missing some dependencies for the strategy - which would be highlighted in the log.
 * In case of docker - is the strategy directory mounted correctly (check the volumes part of the docker-compose file)?
 

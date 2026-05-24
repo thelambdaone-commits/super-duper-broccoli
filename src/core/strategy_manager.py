@@ -10,7 +10,7 @@ class StrategyManager:
     Orchestrates multiple independent trading strategies.
     Supports dynamic loading of projects/modules from the strategies directory.
     """
-    def __init__(self, strategies_dir: str = "user_data/strategies"):
+    def __init__(self, strategies_dir: str = "strategies"):
         self.strategies_dir = strategies_dir
         self.loaded_strategies: List[Any] = []
 

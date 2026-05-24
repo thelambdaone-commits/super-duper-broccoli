@@ -47,7 +47,7 @@ class TestImprover:
             "scrapers",
             "scrappers",
             "user_data/freqaimodels",
-            "user_data/strategies",
+            "strategies",
             "utils",
         ]
         for sd in search_dirs:

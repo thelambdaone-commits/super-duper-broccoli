@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.strategy_selector import StrategyBandit, StrategySelectionConfig, StrategySelector
-from user_data.strategies.base_strategy import MarketFeatures, StrategySignal
+from strategies.base_strategy import MarketFeatures, StrategySignal
 
 
 def _signal(strategy_id: str, edge: float, confidence: float = 0.7, price: float = 0.4) -> StrategySignal:

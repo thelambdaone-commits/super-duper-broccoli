@@ -20,8 +20,8 @@ class FreqAISkill(Skill):
         return [
             "core/training_pipeline.py",
             "user_data/freqaimodels/HybridQuantModel.py",
-            "user_data/strategies/probability_calibrator.py",
-            "user_data/strategies/feature_pipeline.py",
+            "strategies/probability_calibrator.py",
+            "strategies/feature_pipeline.py",
             "utils/feature_store.py",
         ]
 

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from ledger.ledger_db import Ledger, EXECUTION_MODES
+from database.ledger_db import Ledger, EXECUTION_MODES
 from core.signal_executor import _execute_guarded, execute_regex_signal
 
 
@@ -166,6 +166,48 @@ class TestExecuteGuarded:
         mock_freqai.clob_execute.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_prod_mode_reduces_size_to_available_collateral(
+        self, ledger: Ledger, mock_freqai: AsyncMock, mock_store: MagicMock,
+    ) -> None:
+        ledger.set_execution_mode("PROD")
+        mock_freqai.get_available_collateral_usdc.return_value = {
+            "available_balance_usdc": 5.40,
+            "total_balance_usdc": 16.74,
+            "locked_balance_usdc": 11.34,
+        }
+        result = await _execute_guarded(
+            ticker="SOL", side="BUY", price=0.50, size=100.0,
+            confidence=0.8, regime="LOW_VOLATILITY",
+            sizing={"kelly_pct": 12.5, "net_beta_exposure_pct": 3.2},
+            ledger=ledger, freqai=mock_freqai, risk=None, store=mock_store,
+            mode="PROD", signal_source="regex",
+        )
+        assert result["status"] == "SUCCESS"
+        call_args = mock_freqai.clob_execute.call_args[1]
+        assert call_args["size"] == 10.0
+
+    @pytest.mark.asyncio
+    async def test_prod_mode_skips_when_available_collateral_cannot_meet_minimum(
+        self, ledger: Ledger, mock_freqai: AsyncMock, mock_store: MagicMock,
+    ) -> None:
+        ledger.set_execution_mode("PROD")
+        mock_freqai.get_available_collateral_usdc.return_value = {
+            "available_balance_usdc": 4.90,
+            "total_balance_usdc": 16.74,
+            "locked_balance_usdc": 11.84,
+        }
+        result = await _execute_guarded(
+            ticker="SOL", side="BUY", price=0.50, size=100.0,
+            confidence=0.8, regime="LOW_VOLATILITY",
+            sizing={"kelly_pct": 12.5, "net_beta_exposure_pct": 3.2},
+            ledger=ledger, freqai=mock_freqai, risk=None, store=mock_store,
+            mode="PROD", signal_source="regex",
+        )
+        assert result["status"] == "SKIPPED"
+        assert "Insufficient available collateral" in result["reason"]
+        mock_freqai.clob_execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_zero_size_skipped(
         self, ledger: Ledger, mock_freqai: AsyncMock, mock_store: MagicMock,
     ) -> None:
@@ -188,9 +230,9 @@ class TestExecuteGuarded:
             ledger=ledger, freqai=mock_freqai, risk=None, store=mock_store,
             mode="PAPER", signal_source="regex",
         )
-        assert result["status"] == "SUCCESS"
+        assert result["status"] == "SKIPPED"
         assert not mock_freqai.clob_execute.called
-        assert len(ledger.get_paper_positions()) == 1
+        assert len(ledger.get_paper_positions()) == 0
 
 
 class TestSignalExecutorModeRouting:

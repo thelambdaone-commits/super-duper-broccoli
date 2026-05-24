@@ -270,7 +270,7 @@ def version(self) -> str:
 
 The strategies can be derived from other strategies. This avoids duplication of your custom strategy code. You can use this technique to override small parts of your main strategy, leaving the rest untouched:
 
-``` python title="user_data/strategies/myawesomestrategy.py"
+``` python title="strategies/myawesomestrategy.py"
 class MyAwesomeStrategy(IStrategy):
     ...
     stoploss = 0.13
@@ -281,7 +281,7 @@ class MyAwesomeStrategy(IStrategy):
 
 ```
 
-``` python title="user_data/strategies/MyAwesomeStrategy2.py"
+``` python title="strategies/MyAwesomeStrategy2.py"
 from myawesomestrategy import MyAwesomeStrategy
 class MyAwesomeStrategy2(MyAwesomeStrategy):
     # Override something

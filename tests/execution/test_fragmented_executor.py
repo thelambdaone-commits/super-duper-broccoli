@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from execution.fragmented_executor import FragmentedOrderConfig, FragmentedOrderExecutor
+from polymarket.execution.fragmented_executor import FragmentedOrderConfig, FragmentedOrderExecutor
 
 
 class MockImmediateExecutor:

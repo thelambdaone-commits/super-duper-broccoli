@@ -22,7 +22,17 @@ from utils.vault_handler import VaultHandler
 def _build_client(secrets: dict[str, str]) -> ClobClient:
     private_key = secrets["CLOB_PRIVATE_KEY"]
     funder = secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS") or None
+    
+    # LOBSTAR V2: Prioritize explicit signature type from environment
+    # py_clob_client_v2 supports POLY_1271=3 for deposit-wallet flows.
     signature_type = 3 if funder else 0
+    env_sig = os.getenv("POLYMARKET_SIGNATURE_TYPE")
+    if env_sig is not None:
+        try:
+            signature_type = int(env_sig)
+        except ValueError:
+            pass
+
     host = secrets.get("POLYMARKET_CLOB_HTTP_URL", "https://clob.polymarket.com")
     chain_id = int(os.getenv("CHAIN_ID", "137"))
     return ClobClient(
@@ -56,6 +66,15 @@ def main() -> int:
         PartialCreateOrderOptions(),
     )
 
+    funder = secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS")
+    sig_type = 2 if funder else 0
+    env_sig = os.getenv("POLYMARKET_SIGNATURE_TYPE")
+    if env_sig is not None:
+        try:
+            sig_type = int(env_sig)
+        except ValueError:
+            pass
+
     summary = {
         "ok": True,
         "posted": False,
@@ -64,8 +83,8 @@ def main() -> int:
         "side": args.side,
         "price": args.price,
         "size": args.size,
-        "signature_type": 3 if secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS") else 0,
-        "has_funder": bool(secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS")),
+        "signature_type": sig_type,
+        "has_funder": bool(funder),
         "signed_order_fields": sorted(list(signed.keys())) if isinstance(signed, dict) else str(type(signed)),
     }
     print(json.dumps(summary, indent=2))

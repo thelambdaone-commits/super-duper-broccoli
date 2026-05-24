@@ -10,19 +10,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from core.autonomous_mode_controller import AutonomousModeController
-from core.signal_executor import _minimum_polymarket_notional
+from services.autonomous_mode_controller import AutonomousModeController
+from polymarket.execution.signal_executor import _minimum_polymarket_notional
 from core.strategy_lifecycle_manager import StrategyLifecycleManager, StrategyPhase
 from core.strategy_selector import StrategySelectionConfig, StrategySelector
 from core.trade_objective import estimate_trade_objective
-from ledger.ledger_db import Ledger
-from user_data.strategies.base_strategy import MarketFeatures, StrategySignal
+from database.ledger_db import Ledger
+from strategies.base_strategy import MarketFeatures, StrategySignal
 from utils.feature_store import FeatureStore
 
 from utils.config_loader import TRADING_PARAMS
 
 logger = logging.getLogger("AutonomousTradingLoop")
-STRATEGY_SIGNAL_LOG = Path(os.getenv("LOG_PATH", "runtime/logs")) / "strategy_signals.log"
+STRATEGY_SIGNAL_LOG = Path(os.getenv("LOG_PATH", "logs")) / "strategy_signals.log"
 
 
 class PriceProvider(Protocol):
@@ -80,6 +80,7 @@ class AutonomousTradingLoop:
         order_manager: Any | None = None,
         config: AutonomousTradingConfig | None = None,
         executor: Any | None = None,
+        scanner: Any | None = None,
     ) -> None:
         self.ledger = ledger
         self.lifecycle = lifecycle or StrategyLifecycleManager()
@@ -88,6 +89,7 @@ class AutonomousTradingLoop:
         self.price_provider = price_provider
         self.order_manager = order_manager
         self.executor = executor
+        self.scanner = scanner
         self.config = config or AutonomousTradingConfig(mode=self.ledger.get_execution_mode())
         self.mode_controller = AutonomousModeController(self.ledger, self.lifecycle)
         self.selector = StrategySelector(
@@ -383,9 +385,27 @@ class AutonomousTradingLoop:
 
             signal = strategy.generate_signal(features)
             if signal:
+                signal_metadata = {
+                    **dict(features.metadata or {}),
+                    **dict(signal.metadata or {}),
+                }
                 # Si la stratégie est forcée, on s'assure qu'elle est traitée comme du REAL
                 if state.force_real:
-                    signal.metadata["force_real_execution"] = True
+                    signal_metadata["force_real_execution"] = True
+                signal = StrategySignal(
+                    strategy_id=signal.strategy_id,
+                    market_id=signal.market_id,
+                    ticker=signal.ticker,
+                    side=signal.side,
+                    price=signal.price,
+                    confidence=signal.confidence,
+                    edge=signal.edge,
+                    reason=signal.reason,
+                    timestamp=signal.timestamp,
+                    order_type=signal.order_type,
+                    suggested_capital=signal.suggested_capital,
+                    metadata=signal_metadata,
+                )
                 signals.append(signal)
                 log_msg = f"🎯 [STRATEGY] {strategy_id} generated signal for {features.market_id} (Side: {signal.side})\n"
                 logger.info(log_msg.strip())
@@ -441,7 +461,7 @@ class AutonomousTradingLoop:
 
     async def _open_real_position(self, signal: StrategySignal, size: float, sizing: Mapping[str, Any]) -> AutonomousAction:
         mode_label = str(self.ledger.get_execution_mode() or self.config.mode or "UNKNOWN").upper()
-        execution_ticker = self._resolve_execution_ticker(signal)
+        execution_ticker = self._resolve_execution_ticker(signal, self.scanner)
         logger.info(
             "🚀 [%s TRADE] Attempting to open position for %s (%s @ %.4f) size=%.4f",
             mode_label,
@@ -453,17 +473,28 @@ class AutonomousTradingLoop:
         minimum_notional = _minimum_polymarket_notional(self.executor or self.order_manager)
         if signal.price <= 0:
             return AutonomousAction("open", "REJECTED", signal.strategy_id, signal.ticker, reason="invalid price")
-        if size * signal.price < minimum_notional:
+        
+        # LOBSTAR V2: Smart Sizing Bump
+        current_notional = size * signal.price
+        if 0 < current_notional < minimum_notional:
             available_capital = float((self.ledger.get_capital_summary() or {}).get("available_capital", 0.0) or 0.0)
-            if available_capital >= minimum_notional:
-                size = max(size, math.ceil(minimum_notional / signal.price))
-        if size * signal.price < minimum_notional:
+            # Ensure we have at least $5.05 to avoid boundary rejections
+            target_notional = minimum_notional + 0.05
+            if available_capital >= target_notional:
+                bumped_size = math.ceil(target_notional / signal.price)
+                # Only bump if it's not an extreme jump (max 2x) or if it's a small absolute bump
+                if bumped_size <= size * 2.0 or target_notional < 10.0:
+                    logger.info(f"🚀 [LOOP BUMP] Scaling up {execution_ticker} to meet minimum: {current_notional:.2f} -> {target_notional:.2f}")
+                    size = bumped_size
+                    current_notional = size * signal.price
+
+        if current_notional < minimum_notional:
             return AutonomousAction(
                 "open",
                 "REJECTED",
                 signal.strategy_id,
                 signal.ticker,
-                reason=f"live notional {size * signal.price:.2f} < Polymarket minimum {minimum_notional:.2f}",
+                reason=f"live notional {current_notional:.2f} < Polymarket minimum {minimum_notional:.2f}",
             )
         validation = self.ledger.validate_and_reserve(execution_ticker, signal.side, signal.price, size)
         if not validation.get("authorized"):
@@ -536,14 +567,25 @@ class AutonomousTradingLoop:
         return AutonomousAction("open", "OPENED", signal.strategy_id, signal.ticker, position_id=position_id, reason=signal.reason)
 
     @staticmethod
-    def _resolve_execution_ticker(signal: StrategySignal) -> str:
+    def _resolve_execution_ticker(signal: StrategySignal, scanner: Any | None = None) -> str:
         metadata = signal.metadata or {}
         side = str(signal.side).upper()
         if side in {"BUY", "YES", "LONG"}:
             token_id = metadata.get("yes_token_id") or metadata.get("token_id")
         else:
             token_id = metadata.get("no_token_id") or metadata.get("token_id")
-        return str(token_id or signal.ticker)
+        if token_id:
+            return str(token_id)
+        ticker = str(signal.ticker)
+        if scanner and ticker:
+            try:
+                resolved = scanner.resolve_ticker_to_token_id(ticker, side)
+                if resolved:
+                    logger.info("Resolved autonomous ticker %s to token_id %s", ticker, resolved)
+                    return str(resolved)
+            except Exception as exc:
+                logger.debug("Failed to resolve autonomous ticker %s: %s", ticker, exc)
+        return ticker
 
     def _compute_sizing(self, signal: StrategySignal) -> dict[str, Any]:
         mode = self.ledger.get_execution_mode().upper()

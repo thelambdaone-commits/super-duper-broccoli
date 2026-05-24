@@ -86,13 +86,13 @@ It is recommended to use version control to keep track of changes to your strate
 This parameter will allow you to load your custom strategy class.
 To test the bot installation, you can use the `SampleStrategy` installed by the `create-userdir` subcommand (usually `user_data/strategy/sample_strategy.py`).
 
-The bot will search your strategy file within `user_data/strategies`.
+The bot will search your strategy file within `strategies`.
 To use other directories, please read the next section about `--strategy-path`.
 
 To load a strategy, simply pass the class name (e.g.: `CustomStrategy`) in this parameter.
 
 **Example:**
-In `user_data/strategies` you have a file `my_awesome_strategy.py` which has
+In `strategies` you have a file `my_awesome_strategy.py` which has
 a strategy class called `AwesomeStrategy` to load it:
 
 ```bash
@@ -117,7 +117,7 @@ freqtrade trade --strategy AwesomeStrategy --strategy-path /some/directory
 #### How to install a strategy?
 
 This is very simple. Copy paste your strategy file into the directory
-`user_data/strategies` or use `--strategy-path`. And voila, the bot is ready to use it.
+`strategies` or use `--strategy-path`. And voila, the bot is ready to use it.
 
 ### How to use **--db-url**?
 

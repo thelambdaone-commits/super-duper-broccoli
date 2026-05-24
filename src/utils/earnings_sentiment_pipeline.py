@@ -4,7 +4,7 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from user_data.strategies.sentiment_nlp import SENTIMENT_KEYWORDS
+from strategies.sentiment_nlp import SENTIMENT_KEYWORDS
 
 logger = logging.getLogger("EarningsSentimentPipeline")
 

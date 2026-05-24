@@ -1,6 +1,6 @@
 import pytest
 
-from execution.paper_engine import PolymarketPaperEngine
+from polymarket.execution.paper_engine import PolymarketPaperEngine
 
 
 @pytest.mark.asyncio

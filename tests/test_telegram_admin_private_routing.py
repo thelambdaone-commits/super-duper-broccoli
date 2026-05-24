@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from bootstrap.factories import build_telegram_listener
-from telegram_scraper.telegram_listener import TelegramListener
+from core.factories import build_telegram_listener
+from interface.telegram_listener import TelegramListener
 from utils.access_control import AccessControlManager
 
 

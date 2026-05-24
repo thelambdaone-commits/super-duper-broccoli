@@ -1,5 +1,5 @@
 import pytest
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 from utils.access_control import AccessControlManager
 
 @pytest.fixture

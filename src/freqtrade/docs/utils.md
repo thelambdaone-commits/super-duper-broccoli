@@ -88,7 +88,7 @@ Your combined configuration is:
 Creates a new strategy from a template similar to SampleStrategy.
 The file will be named inline with your class name, and will not overwrite existing files.
 
-Results will be located in `user_data/strategies/<strategyclassname>.py`.
+Results will be located in `strategies/<strategyclassname>.py`.
 
 --8<-- "commands/new-strategy.md"
 
@@ -412,7 +412,7 @@ freqtrade show-trades --db-url sqlite:///tradesv3.sqlite --trade-ids 2 3 --print
 
 Updates listed strategies or all strategies within the strategies folder to be v3 compliant.
 If the command runs without --strategy-list then all strategies inside the strategies folder will be converted.
-Your original strategy will remain available in the `user_data/strategies_orig_updater/` directory.
+Your original strategy will remain available in the `strategies_orig_updater/` directory.
 
 !!! Warning "Conversion results"
     Strategy updater will work on a "best effort" approach. Please do your due diligence and verify the results of the conversion.

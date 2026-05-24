@@ -608,6 +608,38 @@ class MarketScanner:
 
         return None
 
+    def resolve_token_id_to_ticker(self, token_id: str) -> Optional[str]:
+        """Resolves a numerical token ID back to a human-readable ticker or slug."""
+        if not token_id or not str(token_id).isdigit():
+            return None
+        
+        # 1. Try Gamma API directly via get_market_by_token (if supported by client)
+        get_market_by_token = getattr(self.client, "get_market_by_token", None)
+        if callable(get_market_by_token):
+            try:
+                market = get_market_by_token(token_id)
+                if market:
+                    # Return slug and outcome
+                    slug = market.get("slug")
+                    outcome = "UNKNOWN"
+                    for t in market.get("tokens", []):
+                        if str(t.get("token_id")) == str(token_id):
+                            outcome = t.get("outcome")
+                            break
+                    return f"{slug}:{outcome}"
+            except Exception:
+                pass
+
+        # 2. Fallback: try get_market which might handle token IDs in some implementations
+        try:
+            market = self.client.get_market(token_id)
+            if market:
+                return f"{market.slug}:{token_id[-4:]}"
+        except Exception:
+            pass
+
+        return None
+
 
 
 

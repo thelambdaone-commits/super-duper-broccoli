@@ -84,6 +84,7 @@ module.exports = {
             STAKING_SOL_RPC_URL: env("STAKING_SOL_RPC_URL"),
             SOL_RPC_FALLBACK_URLS: env("SOL_RPC_FALLBACK_URLS"),
             WS_URL: env("WS_URL"),
+            DATA_PATH: env("DATA_PATH"),
             SECRET_SOURCE: env("SECRET_SOURCE", "auto"),
             VAULT_ADDR: env("VAULT_ADDR", "false"),
             VAULT_TOKEN: env("VAULT_TOKEN"),
@@ -105,7 +106,7 @@ module.exports = {
         // Quick start: pm2 start ecosystem.config.js --only quant-agentic-api
         name: "quant-agentic-api",
         script: ".venv/bin/uvicorn",
-        args: "api.api_server:app --host 127.0.0.1 --port 8000 --log-level info",
+        args: "app.api_server:app --host 127.0.0.1 --port 8000 --log-level info",
         cwd: __dirname,
         interpreter: ".venv/bin/python",
         instances: 1,
@@ -114,8 +115,8 @@ module.exports = {
         min_uptime: "10s",
         restart_delay: 5000,
         exp_backoff_restart_delay: 1000,
-        error_file: "logs/pm2-api-error.log",
-        out_file: "logs/pm2-api-out.log",
+        error_file: "runtime/logs/pm2-api-error.log",
+        out_file: "runtime/logs/pm2-api-out.log",
         log_date_format: "YYYY-MM-DD HH:mm:ss Z",
         merge_logs: true,
         autorestart: true,
@@ -126,7 +127,7 @@ module.exports = {
             SECRET_SOURCE: env("SECRET_SOURCE", "auto"),
             VAULT_ADDR: env("VAULT_ADDR", "false"),
             VAULT_TOKEN: env("VAULT_TOKEN"),
-            API_FEATURE_STORE_PATH: "data/api_feature_store.duckdb",
+            API_FEATURE_STORE_PATH: "runtime/database/api_feature_store.duckdb",
         },
     }]
 };

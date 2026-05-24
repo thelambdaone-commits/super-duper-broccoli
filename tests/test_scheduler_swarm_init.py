@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from bootstrap import scheduler as scheduler_module
+from core import scheduler as scheduler_module
 
 
 @pytest.mark.asyncio

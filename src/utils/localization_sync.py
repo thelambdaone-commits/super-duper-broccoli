@@ -18,7 +18,7 @@ def apply_backward_compatible_aliases() -> None:
 
     # 2. Alias LobstarCognitiveBrain.synthetiser_decision_cognitive -> synthesize_cognitive_decision
     try:
-        from core.lobstar_cognitive_brain import LobstarCognitiveBrain
+        from services.lobstar_cognitive_brain import LobstarCognitiveBrain
         LobstarCognitiveBrain.synthetiser_decision_cognitive = LobstarCognitiveBrain.synthesize_cognitive_decision
         logger.info("🔗 [LOCALIZATION SYNC] Aliased LobstarCognitiveBrain.synthetiser_decision_cognitive -> synthesize_cognitive_decision")
     except Exception as e:
@@ -26,7 +26,7 @@ def apply_backward_compatible_aliases() -> None:
 
     # 3. Alias PolymarketPredictiveEngine.predire_pari_gagnant -> predict_winning_bet
     try:
-        from models.predictive_engine import PolymarketPredictiveEngine
+        from schemas.prediction import PolymarketPredictiveEngine
         PolymarketPredictiveEngine.predire_pari_gagnant = PolymarketPredictiveEngine.predict_winning_bet
         logger.info("🔗 [LOCALIZATION SYNC] Aliased PolymarketPredictiveEngine.predire_pari_gagnant -> predict_winning_bet")
     except Exception as e:

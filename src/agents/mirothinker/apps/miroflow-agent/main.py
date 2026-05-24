@@ -11,7 +11,7 @@ from src.core.pipeline import (
     create_pipeline_components,
     execute_task_pipeline,
 )
-from src.logging.task_logger import bootstrap_logger
+from src.logging.task_logger import core_logger
 
 # Configure logger and get the configured instance
 logger = bootstrap_logger()

@@ -2,8 +2,8 @@ import os
 import sqlite3
 import pytest
 from concurrent.futures import ThreadPoolExecutor
-from ledger.ledger_db import Ledger, SCHEMA_PATH
-from ledger.schema import initialize_database
+from database.ledger_db import Ledger, SCHEMA_PATH
+from database.schema import initialize_database
 from utils.exceptions import QuantFatal
 
 @pytest.fixture

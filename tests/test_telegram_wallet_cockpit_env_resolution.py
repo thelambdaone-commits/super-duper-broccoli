@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from eth_account import Account
 
-from telegram_scraper.telegram_listener import TelegramListener
+from interface.telegram_listener import TelegramListener
 
 
 def test_wallet_cockpit_prefers_env_private_key_without_generating_wallet(monkeypatch) -> None:

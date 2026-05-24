@@ -1,7 +1,7 @@
 import os
-from ledger.ledger_db import Ledger
-from core.portfolio_risk_engine import PortfolioRiskEngine
-from user_data.strategies.hmm_filter import HMMRegimeFilter
+from database.ledger_db import Ledger
+from services.portfolio_risk_engine import PortfolioRiskEngine
+from strategies.hmm_filter import HMMRegimeFilter
 
 def calculate_kelly_size(
     ticker: str,

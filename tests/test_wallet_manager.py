@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import Mock, patch
 from utils.wallet_manager import WalletManager, TokenBalance, WalletSnapshot
+from core.wallet_manager import PolymarketWalletManager
 from web3.exceptions import Web3ValidationError
 
 
@@ -125,3 +126,13 @@ def test_format_balance_report():
                 assert "Wallet Balances" in report
                 assert "MATIC" in report
                 assert "USDC" in report
+
+
+def test_polymarket_wallet_manager_uses_request_timeout_and_retry_env(monkeypatch):
+    monkeypatch.setenv("REQUEST_TIMEOUT", "10")
+    monkeypatch.setenv("RPC_RETRY_COUNT", "3")
+
+    manager = PolymarketWalletManager(vault_handler=Mock(), polygon_rpc_url="https://polygon-rpc.com")
+
+    assert manager.request_timeout == 10.0
+    assert manager.rpc_retry_count == 3

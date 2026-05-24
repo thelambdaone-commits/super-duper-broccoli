@@ -18,7 +18,7 @@ class MonitoringSkill(Skill):
     @property
     def priority_files(self) -> list[str]:
         return [
-            "core/signal_executor.py",
+            "polymarket/execution/signal_executor.py",
             "execution/passive_executor.py",
             "utils/feature_store.py",
             "api/dashboard.py",

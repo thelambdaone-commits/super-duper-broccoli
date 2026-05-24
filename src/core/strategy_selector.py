@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from user_data.strategies.base_strategy import MarketFeatures, StrategySignal
+from strategies.base_strategy import MarketFeatures, StrategySignal
 from utils.config_loader import TRADING_PARAMS
 
 SMALL_ACCOUNT_THRESHOLD_USDC = 20.0

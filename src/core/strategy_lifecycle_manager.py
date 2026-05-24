@@ -9,8 +9,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from user_data.strategies.base_strategy import MarketFeatures, StrategySignal
-from user_data.strategies.polymarket_strategy_factory import (
+from strategies.base_strategy import MarketFeatures, StrategySignal
+from strategies.polymarket_strategy_factory import (
     PolymarketStrategy,
     build_default_polymarket_strategies,
 )

@@ -8,7 +8,7 @@ from core.strategy_lifecycle_manager import (
     StrategyPhase,
 )
 from scripts.reinforcement_optimization_loop import optimize_once
-from user_data.strategies.polymarket_strategy_factory import InterMarketArbitrageStrategy
+from strategies.polymarket_strategy_factory import InterMarketArbitrageStrategy
 
 
 def _config(tmp_path: Path) -> StrategyLifecycleConfig:

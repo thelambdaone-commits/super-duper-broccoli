@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from utils.feature_factory import FeatureFactory
-from user_data.strategies.feature_pipeline import compute_advanced_features
+from strategies.feature_pipeline import compute_advanced_features
 
 
 class TestFeatureFactory:

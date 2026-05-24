@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from io import BytesIO
 from typing import Any
 
-import aiohttp
+import core.agents.http
 import numpy as np
 import pandas as pd
 from pandas import DataFrame

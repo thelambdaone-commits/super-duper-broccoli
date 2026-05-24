@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ai.agents.self_improvement_agent import SelfImprovementAgent
+from core.agents.agents.self_improvement_agent import SelfImprovementAgent
 from core.lobstar_cognitive_brain import LobstarCognitiveBrain
 
 

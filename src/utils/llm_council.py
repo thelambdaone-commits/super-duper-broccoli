@@ -110,7 +110,7 @@ class OpenRouterChatClient:
 
         # Record cost and usage
         try:
-            from monitoring.llm_cost_tracker import cost_tracker
+            from services.llm_cost_tracker import cost_tracker
             usage = getattr(response, 'usage', None)
             if usage:
                 cost_tracker.record_usage(

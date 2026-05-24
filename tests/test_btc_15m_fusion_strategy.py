@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.strategy_lifecycle_manager import StrategyLifecycleManager, StrategyPhase
-from user_data.strategies.btc_15m_fusion import Btc15MinuteFusionStrategy
+from strategies.btc_15m_fusion import Btc15MinuteFusionStrategy
 
 
 def test_btc_15m_fusion_ignores_non_btc_markets() -> None:

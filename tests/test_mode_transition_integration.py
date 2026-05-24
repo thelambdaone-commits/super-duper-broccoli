@@ -9,9 +9,9 @@ from core.autonomous_trading_loop import AutonomousTradingConfig, AutonomousTrad
 from core.swarm import supervisor as swarm_impl
 from core.strategy_lifecycle_manager import StrategyLifecycleConfig, StrategyLifecycleManager, StrategyPhase
 from core.swarm_supervisor import get_swarm_supervisor
-from ledger.ledger_db import Ledger
-from user_data.strategies.base_strategy import StrategySignal
-from user_data.strategies.polymarket_strategy_factory import MeanReversionStrategy
+from database.ledger_db import Ledger
+from strategies.base_strategy import StrategySignal
+from strategies.polymarket_strategy_factory import MeanReversionStrategy
 
 
 def _ledger(tmp_path):

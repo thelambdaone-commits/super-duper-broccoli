@@ -20,15 +20,15 @@ except Exception:  # pragma: no cover - optional dependency missing
 @dataclass(slots=True)
 class HealthSupervisorConfig:
     staleness_threshold_seconds: float = 30.0
-    memory_warning_mb: float = 1024.0
-    memory_critical_mb: float = 1536.0
+    memory_warning_mb: float = 2048.0
+    memory_critical_mb: float = 3072.0
     wallet_reconciliation_interval_seconds: float = 300.0
     maintenance_interval_seconds: float = 86400.0
-    check_interval_seconds: float = 5.0
+    check_interval_seconds: float = 10.0
     wallet_drift_tolerance_usd: float = 1.0
     disk_usage_warning_bytes: int = 5_000_000_000
     disk_usage_critical_bytes: int = 8_000_000_000
-    alert_cooldown_seconds: float = 300.0
+    alert_cooldown_seconds: float = 600.0
     maintenance_tables: tuple[str, ...] = (
         "market_microstructure",
         "features_computed",

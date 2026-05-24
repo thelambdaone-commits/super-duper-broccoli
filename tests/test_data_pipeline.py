@@ -4,9 +4,9 @@ import pytest
 import asyncio
 from unittest.mock import patch
 
-from scrapers.data_pipeline import JSONLStorageEngine, PredictiveOpinionEngine
+from polymarket.api.data_pipeline import JSONLStorageEngine, PredictiveOpinionEngine
 from scripts.rl_feedback_loop import run_rl_feedback_loop
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 
 @pytest.mark.asyncio
 async def test_jsonl_storage_engine_archives_successfully() -> None:

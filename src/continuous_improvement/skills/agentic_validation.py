@@ -17,7 +17,7 @@ class AgenticValidationSkill(Skill):
     @property
     def priority_files(self) -> list[str]:
         return [
-            "core/services/agentic_trust_layer.py",
+            "services/agentic_trust_layer.py",
             "config/trading_agents_playbook.json",
             "tests/services/test_agentic_trust_layer.py",
         ]

@@ -6,9 +6,9 @@ try:
 except ImportError:
     TORCH_AVAILABLE = False
 
-from models.hedging.bsm_pricing import bsm_call, bsm_delta, bartlett_delta
-from models.hedging.sabr_sim import SABRSimulator
-from models.hedging.envs import HedgingEnv
+from schemas.risk.bsm_pricing import bsm_call, bsm_delta, bartlett_delta
+from schemas.risk.sabr_sim import SABRSimulator
+from schemas.risk.envs import HedgingEnv
 
 
 class TestBSMPricing:
@@ -71,20 +71,20 @@ class TestHedgingEnv:
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestDDPGAgent:
     def test_agent_init(self):
-        from models.hedging.ddpg_agent import DDPGHedgingAgent
+        from schemas.risk.ddpg_agent import DDPGHedgingAgent
         agent = DDPGHedgingAgent()
         assert agent.actor is not None
         assert agent.critic is not None
 
     def test_select_action(self):
-        from models.hedging.ddpg_agent import DDPGHedgingAgent
+        from schemas.risk.ddpg_agent import DDPGHedgingAgent
         agent = DDPGHedgingAgent()
         state = np.array([100.0, 0.0, 0.5], dtype=np.float32)
         action = agent.select_action(state)
         assert 0 <= action <= 1.0
 
     def test_replay_buffer(self):
-        from models.hedging.ddpg_agent import ReplayBuffer
+        from schemas.risk.ddpg_agent import ReplayBuffer
         buf = ReplayBuffer(capacity=100)
         buf.push(np.array([1.0, 2.0, 3.0]), 0.5, 1.0, np.array([1.1, 2.1, 2.9]), False)
         assert len(buf) == 1
@@ -92,7 +92,7 @@ class TestDDPGAgent:
         assert len(sample) == 5
 
     def test_train_step(self):
-        from models.hedging.ddpg_agent import DDPGHedgingAgent
+        from schemas.risk.ddpg_agent import DDPGHedgingAgent
         env = HedgingEnv(T=3.0 / 252)
         agent = DDPGHedgingAgent()
         state = env.reset(seed=42)

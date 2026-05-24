@@ -8,7 +8,7 @@ import numpy as np
 # Ensure the root package is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 from utils.feature_store import FeatureStore
 from core.training_pipeline import TrainingPipeline
 

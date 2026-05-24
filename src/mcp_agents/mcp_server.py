@@ -5,11 +5,11 @@ from typing import Any, Optional
 import numpy as np
 from mcp.server.fastmcp import FastMCP
 
-from core.portfolio_risk_engine import PortfolioRiskEngine
-from execution.passive_executor import PassiveExecutor
-from ledger.ledger_db import Ledger
-from user_data.strategies.arbitrage_scanner import ArbitrageScanner
-from user_data.strategies.hmm_filter import HMMRegimeFilter
+from services.portfolio_risk_engine import PortfolioRiskEngine
+from polymarket.execution.passive_executor import PassiveExecutor
+from database.ledger_db import Ledger
+from strategies.arbitrage_scanner import ArbitrageScanner
+from strategies.hmm_filter import HMMRegimeFilter
 
 from mcp_agents.tools.ledger_tools import get_ledger_tools
 from mcp_agents.tools.market_tools import get_market_tools
@@ -107,7 +107,7 @@ def _get_adapter(module_name: str):
     global _portfolio_opt, _macro, _backtester
     if module_name == "vol_surface":
         if _vol_surface is None:
-            from models.volatility_surface import VolSurfaceAdapter
+            from schemas.volatility import VolSurfaceAdapter
             _vol_surface = VolSurfaceAdapter()
         return _vol_surface
     elif module_name == "earnings":
@@ -127,7 +127,7 @@ def _get_adapter(module_name: str):
         return _sentiment_ensemble
     elif module_name == "portfolio_opt":
         if _portfolio_opt is None:
-            from models.portfolio import PortfolioOptimizer
+            from schemas.optimization import PortfolioOptimizer
             _portfolio_opt = PortfolioOptimizer(method="mean_variance")
         return _portfolio_opt
     elif module_name == "macro":
@@ -137,7 +137,7 @@ def _get_adapter(module_name: str):
         return _macro
     elif module_name == "backtester":
         if _backtester is None:
-            from engine.backtest import Backtester
+            from core.backtest import Backtester
             _backtester = Backtester(initial_capital=10000.0)
         return _backtester
     raise ValueError(f"Unknown module: {module_name}")
@@ -193,7 +193,7 @@ def _register_new_module_tools(mcp):
     @mcp.tool(name="hedge_simulate_rl")
     def hedge_simulate_rl_tool(n_episodes: int = 20, s0: float = 100.0, sigma: float = 0.2) -> dict:
         """Simulates option hedging using a DDPG reinforcement learning agent."""
-        from models.hedging import HedgingEnv, DDPGHedgingAgent
+        from schemas.risk import HedgingEnv, DDPGHedgingAgent
         env = HedgingEnv(S0=s0, sigma=sigma)
         agent = DDPGHedgingAgent()
         results = []
@@ -236,7 +236,7 @@ def _register_new_module_tools(mcp):
         """Runs a vectorized backtest on price/signal dataframes with cost model."""
         import json
         import pandas as pd
-        from engine.backtest import CostModel
+        from core.backtest import CostModel
         prices = pd.DataFrame(json.loads(prices_json))
         signals = pd.DataFrame(json.loads(signals_json))
         bt = _get_adapter("backtester")

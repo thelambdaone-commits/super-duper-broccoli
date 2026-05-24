@@ -18,7 +18,7 @@ class RiskSkill(Skill):
     @property
     def priority_files(self) -> list[str]:
         return [
-            "core/portfolio_risk_engine.py",
+            "services/portfolio_risk_engine.py",
             "ledger/ledger_db.py",
             "mcp_agents/mcp_server.py",
         ]

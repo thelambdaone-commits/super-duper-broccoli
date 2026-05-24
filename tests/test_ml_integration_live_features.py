@@ -7,7 +7,7 @@ import pytest
 from core.ml_bridge import TrainingPipelinePredictiveAdapter
 from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
 from core.training_pipeline import TrainingPipeline
-from scrapers.clob_listener import CLOBListener
+from polymarket.api.clob_listener import CLOBListener
 from utils.feature_store import FeatureStore
 
 

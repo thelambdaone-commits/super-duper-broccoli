@@ -4,7 +4,7 @@
 import base64
 import os
 
-import aiohttp
+import core.agents.http
 import requests
 from fastmcp import FastMCP
 

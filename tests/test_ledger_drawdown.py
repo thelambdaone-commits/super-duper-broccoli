@@ -1,6 +1,6 @@
 import sqlite3
 
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 
 
 def test_get_global_drawdown_inside_existing_transaction(tmp_path) -> None:

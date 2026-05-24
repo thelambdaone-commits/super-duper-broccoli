@@ -35,6 +35,12 @@ OPTIONAL_SECRET_KEYS = [
     "POLYMARKET_GAMMA_API_URL",
     "POLYMARKET_CLOB_HTTP_URL",
     "POLYMARKET_CLOB_WS_URL",
+    "POLYMARKET_WALLET_ADDRESS",
+    "EOA_ADDRESS",
+    "POLYMARKET_PROXY_WALLET_ADDRESS",
+    "PROXY_WALLET_ADDRESS",
+    "POLYMARKET_FUNDER",
+    "POLYMARKET_SIGNATURE_TYPE",
 ]
 
 RPC_URL_ALIASES: dict[str, str] = {
@@ -106,6 +112,7 @@ class VaultHandler:
         chat_key = str(chat_id)
         VaultHandler._session_wallets[chat_key] = {
             "POLYMARKET_WALLET_ADDRESS": public_address,
+            "EOA_ADDRESS": public_address,
             "CLOB_PRIVATE_KEY": private_key,
         }
         logger.info("Stored ephemeral session wallet for chat_id=%s address=%s...%s", chat_key, public_address[:6], public_address[-4:])
@@ -114,6 +121,9 @@ class VaultHandler:
         chat_key = str(chat_id)
         if chat_key in VaultHandler._session_wallets:
             VaultHandler._session_wallets[chat_key]["proxy_wallet"] = proxy_address
+            VaultHandler._session_wallets[chat_key]["POLYMARKET_PROXY_WALLET_ADDRESS"] = proxy_address
+            VaultHandler._session_wallets[chat_key]["PROXY_WALLET_ADDRESS"] = proxy_address
+            VaultHandler._session_wallets[chat_key]["POLYMARKET_FUNDER"] = proxy_address
             logger.info("Associated proxy %s with session wallet for chat_id=%s", proxy_address[:10], chat_key)
 
     def obtenir_wallet_session(self, chat_id: int | str) -> Dict[str, str] | None:

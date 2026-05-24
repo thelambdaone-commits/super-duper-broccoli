@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from core.autonomous_mode_controller import AutonomousModeConfig, AutonomousModeController
 from core.strategy_lifecycle_manager import StrategyLifecycleConfig, StrategyLifecycleManager, StrategyPhase
-from ledger.ledger_db import Ledger
-from user_data.strategies.polymarket_strategy_factory import MeanReversionStrategy
+from database.ledger_db import Ledger
+from strategies.polymarket_strategy_factory import MeanReversionStrategy
 
 
 def _ledger(tmp_path):

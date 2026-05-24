@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from execution.passive_executor import PassiveExecutor
+from polymarket.execution.passive_executor import PassiveExecutor
 
 
 @pytest.fixture

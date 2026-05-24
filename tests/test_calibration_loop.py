@@ -3,7 +3,7 @@ import tempfile
 import numpy as np
 from unittest.mock import MagicMock
 
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 from core.training_pipeline import TrainingPipeline
 
 def test_online_probability_calibration_loop() -> None:

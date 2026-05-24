@@ -2,8 +2,8 @@ import inspect
 import os
 import tempfile
 
-from bootstrap.lifecycle import BotLifecycle
-from ledger.ledger_db import Ledger
+from core.lifecycle import BotLifecycle
+from database.ledger_db import Ledger
 
 
 def test_lifecycle_creates_orchestrator_before_scheduler_registration() -> None:

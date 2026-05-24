@@ -244,7 +244,7 @@ class TrainingPipeline:
         calibrated_path = ""
         if len(X_val) >= 10 and len(np.unique(y_val)) >= 2:
             try:
-                from user_data.strategies.probability_calibrator import ProbabilityCalibrator
+                from strategies.probability_calibrator import ProbabilityCalibrator
 
                 calibrator = ProbabilityCalibrator(
                     fusion_mode=os.getenv("PREDICTION_CALIBRATION_MODE", "ensemble")
@@ -485,7 +485,7 @@ class TrainingPipeline:
         calibrator_path = os.path.join(self.model_dir, f"{ticker}_calibrator.pkl")
 
         try:
-            from user_data.strategies.probability_calibrator import ProbabilityCalibrator
+            from strategies.probability_calibrator import ProbabilityCalibrator
 
             calibrator = ProbabilityCalibrator(
                 fusion_mode=os.getenv("PREDICTION_CALIBRATION_MODE", "ensemble")
@@ -675,7 +675,7 @@ class TrainingPipeline:
         calibrated_path = ""
         if len(X_val) >= 10 and len(np.unique(y_val)) >= 2:
             try:
-                from user_data.strategies.probability_calibrator import ProbabilityCalibrator
+                from strategies.probability_calibrator import ProbabilityCalibrator
 
                 calibrator = ProbabilityCalibrator(
                     fusion_mode=os.getenv("PREDICTION_CALIBRATION_MODE", "ensemble")

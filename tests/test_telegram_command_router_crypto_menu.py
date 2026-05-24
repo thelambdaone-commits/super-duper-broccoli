@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from telegram_scraper.command_router import CommandRouter
+from interface.command_router import CommandRouter
 
 
 @pytest.mark.asyncio

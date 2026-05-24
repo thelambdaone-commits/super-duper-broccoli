@@ -7,7 +7,7 @@ import logging
 # Ensure project root is in path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 from utils.config_loader import get_trading_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

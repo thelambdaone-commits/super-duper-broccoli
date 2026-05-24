@@ -4,7 +4,7 @@ import tempfile
 import pytest
 
 from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
-from models.predictive_engine import PolymarketPredictiveEngine
+from schemas.prediction import PolymarketPredictiveEngine
 from utils.exceptions import QuantFatal
 from utils.feature_store import FeatureStore
 

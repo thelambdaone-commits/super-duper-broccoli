@@ -1,7 +1,7 @@
 import logging
 from decimal import Decimal
 
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 
 logger = logging.getLogger("OrderManager")
 

@@ -25,7 +25,7 @@ To get started, you can use the command:
 freqtrade new-strategy --strategy AwesomeStrategy
 ```
 
-This will create a new strategy called `AwesomeStrategy` from a template, which will be located using the filename `user_data/strategies/AwesomeStrategy.py`.
+This will create a new strategy called `AwesomeStrategy` from a template, which will be located using the filename `strategies/AwesomeStrategy.py`.
 
 !!! Note
     There is a difference between the *name* of the strategy and the filename. In most commands, Freqtrade uses the *name* of the strategy, *not the filename*.
@@ -55,7 +55,7 @@ A strategy file contains all the information needed to build the strategy logic:
 - Pricing [optional]
 - Position adjustment [optional]
 
-The bot includes a sample strategy called `SampleStrategy` that you can use as a basis: `user_data/strategies/sample_strategy.py`.
+The bot includes a sample strategy called `SampleStrategy` that you can use as a basis: `strategies/sample_strategy.py`.
 You can test it with the parameter: `--strategy SampleStrategy`. Remember that you use the strategy class name, not the filename.
 
 Additionally, there is an attribute called `INTERFACE_VERSION`, which defines the version of the strategy interface the bot should use.
@@ -85,7 +85,7 @@ Check the [configuration documentation](configuration.md) about how to set the b
 
 ## Diving in deeper
 
-**For the following section we will use the [user_data/strategies/sample_strategy.py](https://github.com/freqtrade/freqtrade/blob/develop/freqtrade/templates/sample_strategy.py)
+**For the following section we will use the [strategies/sample_strategy.py](https://github.com/freqtrade/freqtrade/blob/develop/freqtrade/templates/sample_strategy.py)
 file as reference.**
 
 !!! Note "Strategies and Backtesting"
@@ -222,7 +222,7 @@ def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame
 ```
 
 !!! Note "Want more indicator examples?"
-    Look into the [user_data/strategies/sample_strategy.py](https://github.com/freqtrade/freqtrade/blob/develop/freqtrade/templates/sample_strategy.py).
+    Look into the [strategies/sample_strategy.py](https://github.com/freqtrade/freqtrade/blob/develop/freqtrade/templates/sample_strategy.py).
     Then uncomment indicators you need.
 
 #### Indicator libraries
@@ -287,7 +287,7 @@ This method will also define a new column, `"enter_long"` (`"enter_short"` for s
 
 You can name your entry signals by using the `"enter_tag"` column, which can help debug and assess your strategy later.
 
-Sample from `user_data/strategies/sample_strategy.py`:
+Sample from `strategies/sample_strategy.py`:
 
 ```python
 def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -358,7 +358,7 @@ This method will also define a new column, `"exit_long"` (`"exit_short"` for sho
 
 You can name your exit signals by using the `"exit_tag"` column, which can help debug and assess your strategy later.
 
-Sample from `user_data/strategies/sample_strategy.py`:
+Sample from `strategies/sample_strategy.py`:
 
 ```python
 def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -509,9 +509,9 @@ Instead, please check the [Storing information](strategy-advanced.md#storing-inf
 
 ## Strategy file loading
 
-By default, freqtrade will attempt to load strategies from all `.py` files within the `userdir` (default `user_data/strategies`).
+By default, freqtrade will attempt to load strategies from all `.py` files within the `userdir` (default `strategies`).
 
-Assuming your strategy is called `AwesomeStrategy`, stored in the file `user_data/strategies/AwesomeStrategy.py`, then you can start freqtrade in dry (or live, depending on your configuration) mode with:
+Assuming your strategy is called `AwesomeStrategy`, stored in the file `strategies/AwesomeStrategy.py`, then you can start freqtrade in dry (or live, depending on your configuration) mode with:
 
 ```bash
 freqtrade trade --strategy AwesomeStrategy

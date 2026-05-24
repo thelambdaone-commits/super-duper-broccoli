@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from user_data.strategies.probability_calibrator import (
+from strategies.probability_calibrator import (
     ProbabilityCalibrator, FUSION_MODES,
 )
 

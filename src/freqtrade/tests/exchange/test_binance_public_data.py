@@ -6,7 +6,7 @@ import sys
 import zipfile
 from datetime import timedelta
 
-import aiohttp
+import core.agents.http
 import pandas as pd
 import pytest
 

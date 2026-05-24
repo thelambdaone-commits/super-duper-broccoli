@@ -1,6 +1,6 @@
 import pandas as pd
 
-from models.portfolio.optimizer import PortfolioOptimizer
+from schemas.optimization.optimizer import PortfolioOptimizer
 
 
 class TestPortfolioOptimizer:

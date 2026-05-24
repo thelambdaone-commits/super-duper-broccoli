@@ -267,6 +267,23 @@ class PolymarketClient:
         logger.warning(f"Market not found: {slug_or_id}")
         return None
 
+    def get_market_by_token(self, token_id: str) -> Optional[dict]:
+        """Fetches market details from Gamma API using a CLOB token ID."""
+        cache_key = f"token_market:{token_id}"
+        cached = self._cache_get(cache_key)
+        if cached:
+            return cached
+            
+        try:
+            # Gamma API allows filtering by clob_token_ids
+            data = self._gamma_get("/markets", params={"clob_token_ids": token_id})
+            if isinstance(data, list) and len(data) > 0:
+                self._cache_set(cache_key, data[0])
+                return data[0]
+        except Exception as e:
+            logger.debug(f"Failed to fetch market by token {token_id}: {e}")
+        return None
+
     def get_order_book(self, token_id: str) -> OrderBook:
         data = self._clob_get("/book", params={"token_id": token_id})
         return _parse_order_book(data)

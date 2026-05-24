@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-import scrapers.telegram_broadcaster as broadcaster_mod
-from scrapers.telegram_broadcaster import (
+import polymarket.api.telegram_broadcaster as broadcaster_mod
+from polymarket.api.telegram_broadcaster import (
     BroadcastMemory,
     BroadcastSignal,
     TelegramBroadcaster,
     TokenBucketRateLimiter,
 )
-from user_data.strategies.probability_calibrator import ProbabilityCalibrator
+from strategies.probability_calibrator import ProbabilityCalibrator
 from utils.notifier import TelegramNotifier
 
 
@@ -322,7 +322,7 @@ async def test_broadcast_memory_rehydrates_from_feature_store() -> None:
 @pytest.mark.asyncio
 async def test_broadcaster_persistent_memory_save_and_rehydrate() -> None:
     from unittest.mock import MagicMock, AsyncMock
-    from scrapers.telegram_broadcaster import TelegramBroadcaster, BroadcastSignal
+    from polymarket.api.telegram_broadcaster import TelegramBroadcaster, BroadcastSignal
 
     mock_store = MagicMock()
     mock_notifier = MagicMock()

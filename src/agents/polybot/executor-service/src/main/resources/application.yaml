@@ -11,10 +11,9 @@ hft:
   polymarket:
     auth:
       private-key: ${POLYMARKET_PRIVATE_KEY:}
-      signature-type: ${POLYMARKET_SIGNATURE_TYPE:0}
-      funder-address: ${POLYMARKET_FUNDER_ADDRESS:}
+      signature-type: ${POLYMARKET_SIGNATURE_TYPE:2}
+      funder-address: ${POLYMARKET_FUNDER_ADDRESS:${POLYMARKET_PROXY_WALLET_ADDRESS:}}
       api-key: ${POLYMARKET_API_KEY:}
       api-secret: ${POLYMARKET_API_SECRET:}
       api-passphrase: ${POLYMARKET_API_PASSPHRASE:}
       nonce: ${POLYMARKET_API_NONCE:0}
-

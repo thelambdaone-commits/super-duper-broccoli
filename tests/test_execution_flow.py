@@ -1,5 +1,5 @@
 import pandas as pd
-from models.predictive_engine import PolymarketPredictiveEngine
+from schemas.prediction import PolymarketPredictiveEngine
 
 
 def test_predictive_engine_min_edge_rejection() -> None:

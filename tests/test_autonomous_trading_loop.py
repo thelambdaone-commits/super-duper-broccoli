@@ -4,9 +4,9 @@ import pytest
 
 from core.autonomous_trading_loop import AutonomousTradingConfig, AutonomousTradingLoop
 from core.strategy_lifecycle_manager import StrategyLifecycleConfig, StrategyLifecycleManager, StrategyPhase
-from ledger.ledger_db import Ledger
-from user_data.strategies.base_strategy import StrategySignal
-from user_data.strategies.polymarket_strategy_factory import MeanReversionStrategy
+from database.ledger_db import Ledger
+from strategies.base_strategy import MarketFeatures, StrategySignal
+from strategies.polymarket_strategy_factory import MeanReversionStrategy
 
 
 class _StubRiskEngine:
@@ -34,6 +34,26 @@ class _StubExecutor:
             "price": price,
             "order_id": f"oid-{ticker}-{side}",
         }
+
+
+class _StubScanner:
+    def __init__(self, resolved_token_id: str) -> None:
+        self.resolved_token_id = resolved_token_id
+        self.calls: list[tuple[str, str]] = []
+
+    def resolve_ticker_to_token_id(self, ticker: str, side: str = "YES") -> str:
+        self.calls.append((ticker, side))
+        return self.resolved_token_id
+
+
+@pytest.fixture(autouse=True)
+def disable_forced_prod(monkeypatch):
+    """Ensure tests don't run in PROD mode accidentally."""
+    monkeypatch.setenv("AUTONOMOUS_FORCE_PROD", "false")
+    monkeypatch.setenv("FORCE_PROD", "false")
+    monkeypatch.setenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("REAL", "false")
+    monkeypatch.setenv("MODE", "PAPER")
 
 
 @pytest.fixture
@@ -146,7 +166,7 @@ async def test_real_position_exit_is_blocked_without_explicit_flag(ledger, lifec
 
 @pytest.mark.asyncio
 async def test_autonomous_loop_uses_selector_top_k(ledger, tmp_path):
-    from user_data.strategies.polymarket_strategy_factory import MacroTrendMLStrategy
+    from strategies.polymarket_strategy_factory import MacroTrendMLStrategy
 
     manager = StrategyLifecycleManager(
         strategies=[MeanReversionStrategy(), MacroTrendMLStrategy()],
@@ -271,7 +291,7 @@ async def test_live_autonomous_loop_uses_risk_engine_capital_and_respects_minimu
     assert action.status == "OPENED"
     positions = ledger.get_open_positions()
     assert len(positions) == 1
-    assert positions[0]["notional_usd"] == pytest.approx(5.0)
+    assert positions[0]["notional_usd"] == pytest.approx(5.5)
 
 
 @pytest.mark.asyncio
@@ -342,3 +362,59 @@ async def test_live_autonomous_loop_prefers_metadata_token_id_for_execution(ledg
     assert action.status == "OPENED"
     assert executor.calls
     assert executor.calls[0]["ticker"] == "real-token-id"
+
+
+@pytest.mark.asyncio
+async def test_live_autonomous_loop_resolves_token_id_via_scanner_when_metadata_missing(ledger, lifecycle):
+    ledger.set_execution_mode("PROD")
+    ledger.conn.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) VALUES (20.0, 20.0, 90)"
+    )
+    ledger.conn.commit()
+    executor = _StubExecutor()
+    scanner = _StubScanner("resolved-token-id")
+    loop = AutonomousTradingLoop(
+        ledger=ledger,
+        lifecycle=lifecycle,
+        risk_engine=_StubRiskEngine(size=12.0, capital_at_risk=6.0),
+        executor=executor,
+        scanner=scanner,
+        config=AutonomousTradingConfig(allow_real_execution=True),
+    )
+
+    action = await loop.open_position(
+        StrategySignal(
+            strategy_id="live_scanner_token_id",
+            market_id="market-slug",
+            ticker="market-slug",
+            side="BUY",
+            price=0.50,
+            confidence=0.90,
+            edge=0.50,
+            reason="scanner token routing",
+            suggested_capital=6.0,
+            metadata={"spread": 0.0},
+        )
+    )
+
+    assert action.status == "OPENED"
+    assert scanner.calls == [("market-slug", "BUY")]
+    assert executor.calls
+    assert executor.calls[0]["ticker"] == "resolved-token-id"
+
+
+def test_market_features_from_mapping_preserves_polymarket_token_metadata():
+    features = MarketFeatures.from_mapping(
+        {
+            "market_id": "market-slug",
+            "ticker": "market-slug",
+            "price": 0.42,
+            "yes_token_id": "yes-123",
+            "no_token_id": "no-456",
+            "token_id": "yes-123",
+        }
+    )
+
+    assert features.metadata["yes_token_id"] == "yes-123"
+    assert features.metadata["no_token_id"] == "no-456"
+    assert features.metadata["token_id"] == "yes-123"

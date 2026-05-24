@@ -16,88 +16,98 @@ This project treats Context7 (`https://github.com/upstash/context7`) as a docume
 
 ## Architecture
 
+```mermaid
+graph TD
+    subgraph "Interface Layer"
+        T[Telegram Bot]
+        API[FastAPI REST Server]
+        TUI[Streamlit Terminal]
+    end
+
+    subgraph "Core Orchestration"
+        ORC[Bot Orchestrator]
+        SCH[Job Scheduler]
+        HMM[HMM Regime Filter]
+    end
+
+    subgraph "Execution & Liquidity"
+        EXEC[Passive Executor]
+        CLOB[Polymarket CLOB Client]
+        WALLET[Wallet Manager]
+    end
+
+    subgraph "Strategy & Intelligence"
+        STRAT[Strategy Ensemble]
+        ML[FreqAI Model Suite]
+        SENT[Sentiment NLP]
+    end
+
+    subgraph "Data & State"
+        FS[DuckDB Feature Store]
+        DB[SQLite Ledger]
+        STATE[State Persistence]
+    end
+
+    T <--> ORC
+    API <--> ORC
+    TUI <--> API
+    ORC --> SCH
+    SCH --> STRAT
+    STRAT --> EXEC
+    EXEC --> CLOB
+    EXEC --> WALLET
+    STRAT --> ML
+    STRAT --> SENT
+    ML --> FS
+    STRAT --> HMM
+    ORC --> DB
+    ORC --> STATE
 ```
-Telegram Channel / Private Chat
-       │
-       ▼
-TelegramListener ──► SignalParser.parse_deterministic() ──► execute_regex_signal()
-       │                         (regex: "BUY SOL @ 0.50")         │
-       │                                                            │
-       └──► asyncio Queue ──► LobstarAgent (Groq LLM) ──► execute_lobstar_signal()
-                                (semantic: "long SOL now")              │
-                                                                        │
-                                                                        ▼
-                                                           ┌──────────────────────┐
-                                                           │  _execute_guarded()  │
-                                                           │                      │
-                                                           │  REPLAY  → log only  │
-                                                           │  PAPER   → virtual   │
-                                                           │  SHADOW  → mini real │
-                                                           │  PROD    → full real │
-                                                           └──────────────────────┘
-                                                                        │
-                                                           ┌────────────┴────────────┐
-                                                           │                        │
-                                                    PassiveExecutor          FreqAIEngine
-                                                    (maker-first)          (direct CLOB)
-                                                           │                        │
-                                                           ▼                        ▼
-                                                    ┌──────────────────────────────────┐
-                                                    │         FastAPI / Streamlit      │
-                                                    │         MCP Server (stdio)       │
-                                                    │         CI Agent System          │
-                                                    └──────────────────────────────────┘
-```
 
-## Components
+## Project Structure
 
-### Core (`core/`)
+The project has been restructured into a modular, domain-driven architecture for institutional robustness:
 
-| File | Purpose |
+*   **`src/app/`**: Application entry points and API servers (FastAPI, Dashboard).
+*   **`src/core/`**: Central orchestration, job scheduling (`QuantumRunner`), and core lifecycle management.
+*   **`src/polymarket/`**: Domain logic for Polymarket CLOB integration, order execution, and on-chain wallet management.
+*   **`src/strategies/`**: Quantitative strategy implementations (Arbitrage, ML Forecasting, NLP Sentiment).
+*   **`src/interface/`**: High-level UI and Telegram bot handlers.
+*   **`src/services/`**: Autonomous supporting services (Risk Engine, MLOps, Health Sidecar).
+*   **`src/schemas/`**: Shared domain models and specialized mathematical implementations (VolSurface, SABR).
+*   **`src/database/`**: Persistence layer (SQLite Ledger, schema definitions).
+*   **`src/utils/`**: Shared technical utilities and helper functions.
+
+## Intelligence & Tools
+
+### AI Ensemble
+
+The bot utilizes a multi-model ensemble for high-conviction signals:
+*   **HybridQuantModel**: Stacking XGBoost, LightGBM, and RandomForest.
+*   **TimesFM**: Zero-shot time-series forecasting via Google's Foundation Model.
+*   **Sentiment NLP**: Real-time Groq/Llama-3 analysis of Telegram context.
+
+### Codebase Intelligence (`/understand`)
+
+Powered by the `understand-anything` suite, providing deep insights into the bot's own logic:
+
+| Commande | Usage |
 |---|---|
-| `freqai_engine.py` | Polymarket CLOB connector — `post_order()` (maker), `create_order()` (taker), `cancel_order()`, `get_order_status()` |
-| `signal_executor.py` | Routes signals through 4 execution modes (REPLAY/PAPER/SHADOW/PROD) with risk validation |
-| `portfolio_risk_engine.py` | Kelly sizing, regime multiplier, concentration caps, correlated drawdown, net beta exposure |
-| `training_pipeline.py` | Rolling window training, feature registry, walk-forward backtest, auto-retrain via model age |
+| `/understand` | Analyser un codebase → graphe de connaissance interactif |
+| `/understand_explain` | Explication détaillée d'un fichier/fonction/module |
+| `/understand_chat` | Poser des questions sur le code via le graphe |
+| `/understand_diff` | Analyser des diffs/PRs |
+| `/understand_dashboard` | Dashboard web interactif (FastAPI) |
+| `/understand_domain` | Extraire la connaissance métier |
+| `/understand_onboard` | Générer des guides d'onboarding |
 
-### Execution (`execution/`)
+---
 
-| File | Purpose |
-|---|---|
-| `passive_executor.py` | Maker-first order placement with queue tracking, configurable timeout, automatic taker fallback |
-
-### Scrappers (`scrappers/`)
-
-| File | Purpose |
-|---|---|
-| `mets_telegram_scraper.py` | Telegram scraper for New York Mets-related content; filters by keywords, extracts scores/odds/game mentions |
-
-### MCP (`mcp_agents/`)
-
-| File | Purpose |
-|---|---|
-| `mcp_server.py` | 29 MCP tools over stdio: ledger, regime, circuit breaker, execution mode, executor metrics, arbitrage, feature store, project contexts, AI specialists, LLM Council, MiroFish, skill contexts |
-| `lobstar_agent.py` | Groq LLM client (`llama-3.3-70b-versatile`) for semantic signal parsing |
-| `order_manager.py` | Order validation, ledger reservation, liquidity-aware size calibration |
-
-### Strategies (`user_data/strategies/`)
-
-| File | Purpose |
-|---|---|
-| `hmm_filter.py` | 3-regime Gaussian HMM (Low/High/Erratic volatility), Dissimilarity Index for OOD detection |
-| `probability_calibrator.py` | Platt Scaling + Isotonic Regression + Ensemble fusion, Brier score tracking |
-| `arbitrage_scanner.py` | Cross-market probability inefficiency (sum ≠ 1.0), conditional overpricing, IPV mispricing |
-| `feature_pipeline.py` | Order imbalance, trade imbalance, Ternary Agreement Model, time-to-resolution features |
-| `risk_validation.py` | Combinatorial purged CV, embargo, friction-adjusted returns/Sharpe/loss |
-| `sentiment_nlp.py` | NLP sentiment analyzer with keyword matching, score/magnitude/confidence output |
-
-### Models (`user_data/freqaimodels/`)
-
-| File | Purpose |
-|---|---|
-| `HybridQuantModel.py` | XGBoost + LightGBM + RandomForest stacking → LogisticRegression meta-learner, optional TFT embedding hook |
-
-### Config (`config/`)
+All volatile data and state are managed in the `runtime/` directory:
+*   `runtime/database/`: SQLite and DuckDB files.
+*   `runtime/logs/`: Detailed execution logs.
+*   `runtime/user_data/`: Model weights (.pkl), FreqAI metadata, and strategy artifacts.
+*   `runtime/agent_memory/`: Long-term agent context and semantic state.
 
 | File | Purpose |
 |---|---|

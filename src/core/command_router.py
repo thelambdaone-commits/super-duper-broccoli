@@ -93,7 +93,7 @@ class LobstarCommandRouter:
         timeframe: str,
         direction: str,
     ) -> None:
-        from core.services.btc_launch_service import BTCDirectionLaunchService
+        from services.btc_launch_service import BTCDirectionLaunchService
 
         service = getattr(self.core, "btc_launch_service", None)
         if service is None:
@@ -136,10 +136,10 @@ class LobstarCommandRouter:
         /start: Compile et génère l'affichage instantané de l'état de l'OS.
         """
         # Construction directe du package de données via la vue manager
-        text, reply_markup = self.core.wallet_manager.generer_layout_telegram(
+        text, reply_markup = self.polymarket.execution.wallet_manager.generer_layout_telegram(
             wallet_name="session",
             wallet_address=self.core.wallet_address,
-            soldes=await self.core.wallet_manager.recuperer_soldes_on_chain(self.core.wallet_address),
+            soldes=await self.polymarket.execution.wallet_manager.recuperer_soldes_on_chain(self.core.wallet_address),
             total_connections=1
         )
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
@@ -166,7 +166,7 @@ class LobstarCommandRouter:
         """
         /balance /b: Déclenche un scan de liquidité Web3 en direct.
         """
-        soldes = await self.core.wallet_manager.recuperer_soldes_on_chain(self.core.wallet_address)
+        soldes = await self.polymarket.execution.wallet_manager.recuperer_soldes_on_chain(self.core.wallet_address)
         total = soldes["usdc_direct"] + soldes["usdc_proxy"]
         balance_msg = (
             "<b>💰 LIQUIDITY PROFILE</b>\n"

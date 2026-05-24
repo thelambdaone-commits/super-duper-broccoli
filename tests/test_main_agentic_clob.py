@@ -8,7 +8,7 @@ from main_agentic_clob import (
     parse_private_chat_ids,
     telegram_single_instance_lock,
 )
-from bootstrap.factories import build_broadcaster
+from core.factories import build_broadcaster
 from utils.logging_setup import TelegramTokenRedactionFilter
 from utils.exceptions import QuantFatal
 from core.orchestrator import LobstarOrchestrator

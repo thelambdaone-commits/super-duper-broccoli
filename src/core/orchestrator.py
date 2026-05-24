@@ -8,13 +8,13 @@ from utils.presentation_formatters import (
     format_cognitive_decision_notification,
 )
 from utils.config_loader import get_trading_config
-from core.services.signal_decision_service import SignalDecisionService
-from core.services.post_trade_service import PostTradeService
+from services.signal_decision_service import SignalDecisionService
+from services.post_trade_service import PostTradeService
 from utils.telegram_channel_broadcaster import TelegramChannelBroadcaster
-from core.services.circuit_breaker import CircuitBreakerService, CircuitState
-from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
-from core.services.signal_router import SignalRouter, SignalRouterContext
-from execution.fragmented_executor import FragmentedOrderExecutor
+from services.circuit_breaker import CircuitBreakerService, CircuitState
+from services.predictive_gate import PredictiveGateConfig, PredictiveGateService
+from services.signal_router import SignalRouter, SignalRouterContext
+from polymarket.execution.fragmented_executor import FragmentedOrderExecutor
 
 logger = logging.getLogger("Orchestrator")
 
@@ -70,13 +70,14 @@ class LobstarOrchestrator:
         self.metrics_exporter = metrics_exporter
         self.wallet_manager = wallet_manager
         self.broadcaster = broadcaster or TelegramChannelBroadcaster(bot_instance)
-        from core.services.wallet_callback_handler import WalletCallbackHandler
+        from services.wallet_callback_handler import WalletCallbackHandler
         self.wallet_callback_handler = WalletCallbackHandler(
             wallet_manager=wallet_manager,
             history=self.history,
             ledger=self.ledger,
             broadcaster=self.broadcaster,
             notifier=self.notifier,
+            scanner=market_scanner,
         )
         self.circuit_breaker_service = self._normalize_circuit_breaker(circuit_breaker)
         self.predictive_gate_service = predictive_gate_service or self._normalize_predictive_gate()
@@ -249,7 +250,7 @@ class LobstarOrchestrator:
                 try:
                     live_mode = self.ledger.get_execution_mode()
                 except Exception as exc:
-                    logger.warning("Failed to read execution mode from ledger, using fallback: %s", exc)
+                    logger.warning("Failed to read execution mode from database, using fallback: %s", exc)
             await self.post_trade_service.finalize(signal, result, live_mode)
         except Exception as e:
             logger.error(f"Signal execution failed: {e}")
@@ -310,7 +311,7 @@ class LobstarOrchestrator:
             allow_simulated_gate=self._env_bool("ALLOW_SIMULATED_PREDICTIVE_GATE"),
         )
         try:
-            from models.predictive_engine import create_predictive_engine
+            from schemas.prediction import create_predictive_engine
             model_registry = create_predictive_engine(
                 min_edge_threshold=config.min_edge_threshold,
                 feature_store=self.store
@@ -386,7 +387,7 @@ class LobstarOrchestrator:
         ticker = signal.get("ticker")
         if ticker and self._env_bool("ENABLE_INLINE_SOCIAL_ENRICHMENT"):
             try:
-                from scrapers.social_scraper import social_scraper
+                from polymarket.api.social_scraper import social_scraper
                 social_context = await social_scraper.get_crypto_sentiment_context(ticker)
                 if social_context:
                     signal["metadata"] = signal.get("metadata", {})
@@ -574,7 +575,7 @@ class LobstarOrchestrator:
             )
 
     def _normalize_signal_router(self) -> SignalRouter:
-        from core.signal_executor import execute_lobstar_signal, execute_regex_signal
+        from polymarket.execution.signal_executor import execute_lobstar_signal, execute_regex_signal
 
         fragmented_executor_config = {
             "twap_default_slices": int(get_trading_config("twap_default_slices", 5, allow_env=False)),
@@ -640,12 +641,13 @@ class LobstarOrchestrator:
 
     async def handle_wallet_callback(self, update: Any, context: Any) -> None:
         if not hasattr(self, "wallet_callback_handler"):
-            from core.services.wallet_callback_handler import WalletCallbackHandler
+            from services.wallet_callback_handler import WalletCallbackHandler
             self.wallet_callback_handler = WalletCallbackHandler(
                 wallet_manager=getattr(self, "wallet_manager", None),
                 history=getattr(self, "history", None),
                 ledger=getattr(self, "ledger", None),
                 broadcaster=getattr(self, "broadcaster", None),
                 notifier=getattr(self, "notifier", None),
+                scanner=getattr(self, "market_scanner", None),
             )
         await self.wallet_callback_handler.handle_callback(update, context)

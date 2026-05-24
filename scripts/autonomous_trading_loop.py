@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.autonomous_trading_loop import AutonomousTradingConfig, AutonomousTradingLoop
 from core.autonomous_mode_controller import AutonomousModeController
 from core.strategy_lifecycle_manager import StrategyLifecycleManager, StrategyPhase
-from ledger.ledger_db import Ledger
+from database.ledger_db import Ledger
 from utils.config_loader import get_trading_config
 
 

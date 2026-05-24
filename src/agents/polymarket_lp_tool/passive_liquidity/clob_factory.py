@@ -13,7 +13,7 @@ def build_trading_client(host: str, chain_id: int):
     Authenticated CLOB client (Level 2), matching upstream usage:
 
         client = ClobClient(host, key=..., chain_id=..., signature_type=..., funder=...)
-        client.set_api_creds(client.create_or_derive_api_key())
+        client.set_api_creds(client.derive_api_key())
 
     See https://docs.polymarket.com/trading/clients/l1 and /l2.
     """
@@ -24,11 +24,15 @@ def build_trading_client(host: str, chain_id: int):
     if not key:
         raise RuntimeError("Set PRIVATE_KEY or POLYMARKET_PRIVATE_KEY in .env or environment.")
 
-    funder = os.environ.get("POLYMARKET_FUNDER")
+    funder = (
+        os.environ.get("POLYMARKET_FUNDER")
+        or os.environ.get("POLYMARKET_PROXY_WALLET_ADDRESS")
+        or os.environ.get("PROXY_WALLET_ADDRESS")
+    )
     if not funder:
-        raise RuntimeError("Set POLYMARKET_FUNDER in .env or environment.")
+        raise RuntimeError("Set POLYMARKET_FUNDER or POLYMARKET_PROXY_WALLET_ADDRESS in .env or environment.")
 
-    sig = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "0"))
+    sig = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "2" if funder else "0"))
     client = ClobClient(
         host,
         key=key,
@@ -36,10 +40,10 @@ def build_trading_client(host: str, chain_id: int):
         signature_type=sig,
         funder=funder,
     )
-    creds = client.create_or_derive_api_key()
+    creds = client.derive_api_key()
     if creds is None:
         raise RuntimeError(
-            "Failed to create or derive CLOB API credentials; check private key and chain_id."
+            "Failed to derive CLOB API credentials; check private key, funder, signature_type, and chain_id."
         )
     client.set_api_creds(creds)
     return client
@@ -47,7 +51,11 @@ def build_trading_client(host: str, chain_id: int):
 
 def funder_address() -> str:
     load_dotenv(_PROJECT_DIR / ".env", override=False)
-    a = os.environ.get("POLYMARKET_FUNDER")
+    a = (
+        os.environ.get("POLYMARKET_FUNDER")
+        or os.environ.get("POLYMARKET_PROXY_WALLET_ADDRESS")
+        or os.environ.get("PROXY_WALLET_ADDRESS")
+    )
     if not a:
-        raise RuntimeError("POLYMARKET_FUNDER is not set.")
+        raise RuntimeError("POLYMARKET_FUNDER or POLYMARKET_PROXY_WALLET_ADDRESS is not set.")
     return a

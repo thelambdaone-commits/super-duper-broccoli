@@ -7,11 +7,11 @@ try:
 except ImportError:
     TORCH_AVAILABLE = False
 
-from models.volatility_surface.ssvi import SSVIParams, sample_params, surface_grid, implied_vol
-from models.volatility_surface.synth import generate_independent_surfaces, generate_paths
-from models.volatility_surface.arbitrage import arbitrage_report
-from models.volatility_surface.metrics import surface_rmse
-from models.volatility_surface.adapter import VolSurfaceAdapter
+from schemas.volatility.ssvi import SSVIParams, sample_params, surface_grid, implied_vol
+from schemas.volatility.synth import generate_independent_surfaces, generate_paths
+from schemas.volatility.arbitrage import arbitrage_report
+from schemas.volatility.metrics import surface_rmse
+from schemas.volatility.adapter import VolSurfaceAdapter
 
 
 class TestSSVIParametrization:
@@ -97,14 +97,14 @@ class TestAdapter:
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch not installed")
 class TestTorchModels:
     def test_reconstruction_mlp_forward(self):
-        from models.volatility_surface.models import ReconstructionMLP
+        from schemas.volatility.models import ReconstructionMLP
         model = ReconstructionMLP()
         x = torch.randn(10, 4)
         out = model(x)
         assert out.shape == (10,)
 
     def test_forecast_gru_forward(self):
-        from models.volatility_surface.models import ForecastGRU
+        from schemas.volatility.models import ForecastGRU
         model = ForecastGRU()
         x = torch.randn(4, 20, 4)
         out = model(x)

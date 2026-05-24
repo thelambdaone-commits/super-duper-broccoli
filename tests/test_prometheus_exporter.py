@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from monitoring.prometheus_exporter import PrometheusExporter
+from services.prometheus_exporter import PrometheusExporter
 
 
 def test_prometheus_exporter_skips_start_when_port_in_use(monkeypatch) -> None:

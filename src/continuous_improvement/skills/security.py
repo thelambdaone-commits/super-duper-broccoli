@@ -30,7 +30,7 @@ class SecuritySkill(Skill):
     def priority_files(self) -> list[str]:
         return [
             "utils/vault_handler.py",
-            "core/freqai_engine.py",
+            "polymarket/execution/freqai_engine.py",
             "api/api_server.py",
             "mcp_agents/mcp_server.py",
             "scrappers/mets_telegram_scraper.py",
