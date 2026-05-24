@@ -725,8 +725,8 @@ class TelegramListener:
         # Resolve proxy from Gamma API if not stored locally
         if not proxy_address and wallet_address:
             try:
-                import httpx
-                r = httpx.get(f"https://gamma-api.polymarket.com/public-profile?address={wallet_address}", timeout=5.0)
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.get(f"https://gamma-api.polymarket.com/public-profile?address={wallet_address}")
                 if r.status_code == 200:
                     resolved = r.json().get("proxyWallet", "")
                     if resolved:
@@ -796,8 +796,8 @@ class TelegramListener:
             # Resolve proxy from Gamma API immediately
             proxy_address = ""
             try:
-                import httpx
-                r = httpx.get(f"https://gamma-api.polymarket.com/public-profile?address={address}", timeout=5.0)
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.get(f"https://gamma-api.polymarket.com/public-profile?address={address}")
                 if r.status_code == 200:
                     resolved = r.json().get("proxyWallet", "")
                     if resolved:
@@ -1743,8 +1743,8 @@ class TelegramListener:
                 # If proxy address not defined, attempt dynamic profile resolution from Gamma API
                 if active_address and not proxy_address:
                     try:
-                        import httpx
-                        r_prof = httpx.get(f"https://gamma-api.polymarket.com/public-profile?address={active_address}", timeout=3.0)
+                        async with httpx.AsyncClient(timeout=3.0) as client:
+                            r_prof = await client.get(f"https://gamma-api.polymarket.com/public-profile?address={active_address}")
                         if r_prof.status_code == 200:
                             pdata = r_prof.json()
                             resolved = pdata.get("proxyWallet")

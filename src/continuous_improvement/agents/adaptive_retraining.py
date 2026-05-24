@@ -12,8 +12,9 @@ class AdaptiveRetrainingAgent:
     Orchestre les sessions FreqAI glissantes et optimise les hyperparamètres.
     """
 
-    def __init__(self, mlops_engine=None):
+    def __init__(self, mlops_engine=None, swarm_supervisor=None):
         self.mlops = mlops_engine
+        self._swarm_supervisor = swarm_supervisor
         self._running = False
         self._check_interval = 120
         self._retrain_history: List[Dict] = []
@@ -42,23 +43,20 @@ class AdaptiveRetrainingAgent:
         if not self.mlops:
             return
 
-        calib_report = self.mlops.evaluer_sante_brain(
-            true_labels=self._generate_dummy_labels(100),
-            calibrated_probs=self._generate_dummy_probs(100)
-        )
-
-        if calib_report.action == "TRIGGER_RETRAIN":
-            await self._execute_retrain(calib_report)
-
-        logger.debug(f"Retrain check: {calib_report.action}")
-
-    def _generate_dummy_labels(self, n: int) -> List[int]:
-        import random
-        return [random.randint(0, 1) for _ in range(n)]
-
-    def _generate_dummy_probs(self, n: int) -> List[float]:
-        import random
-        return [random.uniform(0.3, 0.7) for _ in range(n)]
+        calib_history = self.mlops._calibration_history
+        if calib_history:
+            last_report = calib_history[-1]
+            if self._swarm_supervisor:
+                await self._swarm_supervisor.process_mlops_telemetry({
+                    "brier_score": last_report.brier_score,
+                    "action": last_report.action,
+                    "sample_size": last_report.sample_size,
+                })
+            if last_report.action == "TRIGGER_RETRAIN":
+                await self._execute_retrain(last_report)
+            logger.debug(f"Retrain check: {last_report.action}")
+        else:
+            logger.debug("No calibration data yet — skipping retrain check.")
 
     async def _execute_retrain(self, report):
         logger.warning(f"🔄 EXECUTING RETRAINING: {report.reason}")

@@ -10,14 +10,14 @@ from utils.credential_manager import CredentialManager
 logger = logging.getLogger("WalletHandler")
 
 
-def _proxy_resolver(chat_id: int, mgr: CredentialManager, wallet_type: str, address: str) -> str:
+async def _proxy_resolver(chat_id: int, mgr: CredentialManager, wallet_type: str, address: str) -> str:
     """Query Gamma API to auto-resolve Polymarket proxy wallet for the given address."""
-    import httpx
     try:
-        r = httpx.get(
-            f"https://gamma-api.polymarket.com/public-profile?address={address}",
-            timeout=5.0,
-        )
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"https://gamma-api.polymarket.com/public-profile?address={address}",
+            )
         if r.status_code == 200:
             resolved = r.json().get("proxyWallet")
             if resolved:
@@ -201,7 +201,7 @@ async def handle_wallet_add(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
         mgr.set_active_wallet_type(chat_id, "default")
         
-        proxy = _proxy_resolver(chat_id, mgr, "default", user_data["address"])
+        proxy = await _proxy_resolver(chat_id, mgr, "default", user_data["address"])
         
         proxy_line = f"\n<b>Proxy Wallet:</b> <code>{proxy}</code>" if proxy else ""
         next_steps = "" if proxy else (
@@ -271,7 +271,7 @@ async def handle_wallet_import(update: Update, context: ContextTypes.DEFAULT_TYP
         
         mgr.set_active_wallet_type(chat_id, "import")
         
-        proxy = _proxy_resolver(chat_id, mgr, "import", user_data["address"])
+        proxy = await _proxy_resolver(chat_id, mgr, "import", user_data["address"])
         
         proxy_line = f"\n<b>Proxy Wallet:</b> <code>{proxy}</code>" if proxy else ""
         next_steps = "" if proxy else (
