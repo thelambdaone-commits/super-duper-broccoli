@@ -3,15 +3,13 @@ import inspect
 
 import pytest
 
-from main_agentic_clob import (
-    build_access_control,
-    parse_private_chat_ids,
-    telegram_single_instance_lock,
-)
 from core.factories import build_broadcaster
+from core.factories import build_access_control
+from core.security import telegram_single_instance_lock
 from utils.logging_setup import TelegramTokenRedactionFilter
 from utils.exceptions import QuantFatal
 from core.orchestrator import LobstarOrchestrator
+from utils.telegram_helpers import parse_private_chat_ids
 
 
 def test_telegram_token_redaction_filter_masks_formatted_args() -> None:

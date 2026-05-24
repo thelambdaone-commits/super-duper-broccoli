@@ -4,12 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.autonomous_mode_controller import AutonomousModeConfig, AutonomousModeController
 from core.autonomous_trading_loop import AutonomousTradingConfig, AutonomousTradingLoop
 from core.swarm import supervisor as swarm_impl
 from core.strategy_lifecycle_manager import StrategyLifecycleConfig, StrategyLifecycleManager, StrategyPhase
 from core.swarm_supervisor import get_swarm_supervisor
 from database.ledger_db import Ledger
+from services.autonomous_mode_controller import AutonomousModeConfig, AutonomousModeController
 from strategies.base_strategy import StrategySignal
 from strategies.polymarket_strategy_factory import MeanReversionStrategy
 
@@ -60,6 +60,8 @@ def _signal() -> StrategySignal:
 async def test_ledger_mode_transition_controls_execution_path(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTONOMOUS_REAL_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("REAL", "true")
+    monkeypatch.setenv("MODE", "PRD")
+    monkeypatch.setenv("CLOB_PRIVATE_KEY", "0x" + "1" * 64)
 
     ledger = _ledger(tmp_path)
     lifecycle = _lifecycle(tmp_path)
@@ -122,7 +124,7 @@ async def test_ledger_mode_transition_controls_execution_path(tmp_path, monkeypa
 
     # Demotion: drawdown guard forces back to PAPER and execution path follows.
     original_drawdown = controller._global_drawdown
-    controller._global_drawdown = lambda: -0.10
+    controller._global_drawdown = lambda: -0.20
     try:
         decision = controller.apply()
     finally:

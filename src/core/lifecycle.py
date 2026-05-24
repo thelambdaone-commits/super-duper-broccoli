@@ -17,13 +17,23 @@ from core.validators import dry_run_report
 from core.health_monitor import LobstarHealthMonitor
 from core.health_supervisor_agent import HealthSupervisorAgent, HealthSupervisorConfig
 from agents.health_monitor_agent import HealthMonitorAgent, HealthMonitorConfig
+from core.lifecycle_assembly import (
+    attach_listener_runtime_components,
+    build_live_clob_feed,
+    build_redis_mode_listener,
+    build_dashboard_sender,
+    build_health_sidecar,
+    build_health_supervisor,
+    build_user_stream,
+    register_runtime_loops,
+    start_binance_listener,
+    start_price_service,
+)
 from core.orchestrator import LobstarOrchestrator
 from core.mlops_feedback_loop import LobstarMLOpsEngine
 from core.quantum_runner import LobstarQuantumRunner
 from utils.api_key_notifier import get_api_key_notifier
 from utils.config_loader import get_health_config, validate_required as validate_config_required
-from utils.data_archiver import DataArchiver
-from utils.clob_feed_utils import extract_live_clob_token_ids
 from utils.vault_handler import VaultHandler
 from core.container import ServiceContainer
 from utils.crypto_market_intelligence import CryptoMarketIntelligence
@@ -274,226 +284,66 @@ class BotLifecycle:
             f"💻 <b>System</b> : CPU <code>{cpu_usage}%</code> | RAM <code>{ram_usage}%</code> \n\n"
             f"{get_api_key_notifier().format_telegram_alert(api_check)}"
         )
-        _private_admin_ids = sorted(c for c in getattr(listener, 'admin_chat_ids', set()) if c > 0)
-        _dashboard_target = _private_admin_ids[0] if _private_admin_ids else (chat_id if chat_id and chat_id > 0 else None)
-        if _dashboard_target:
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("📖 Manuel", callback_data="help_menu"), InlineKeyboardButton("📊 Statut", callback_data="help_page_3")]])
-
-            async def _send_dashboard_when_ready() -> None:
-                if not await listener.wait_until_ready(timeout=45.0):
-                    logger.warning("Telegram listener did not become ready in time; startup dashboard skipped.")
-                    return
-                await listener.send_message(
-                    dashboard_msg,
-                    chat_id=_dashboard_target,
-                    parse_mode="HTML",
-                    reply_markup=reply_markup,
-                )
-        else:
-            _send_dashboard_when_ready = None
-        from utils.market_data_reader import MarketDataReader
-        market_reader = MarketDataReader(polymarket_client=market_scanner.client)
-        order_manager = None
-        try:
-            from utils.polymarket_order_manager import PolymarketOrderManager
-            order_manager = PolymarketOrderManager(wallet_manager=wallet_mgr, private_key=secrets.get("CLOB_PRIVATE_KEY"))
-        except Exception:
-            pass
-        if listener:
-            listener.attach_components(ledger=ledger, risk=risk, hmm=hmm, store=store, executor=passive_executor, scanner=market_scanner, copy_agent=copy_trading_agent, market_reader=market_reader, order_manager=order_manager)
-            try:
-                from utils.pmxt_adapter_service import PMXTAdapterService
-                listener._pmxt_service = PMXTAdapterService()
-            except Exception as exc:
-                logger.warning("PMXT adapter service unavailable: %s", exc)
+        _dashboard_target, _send_dashboard_when_ready = build_dashboard_sender(listener, chat_id, dashboard_msg)
+        attach_listener_runtime_components(
+            listener,
+            ledger=ledger,
+            risk=risk,
+            hmm=hmm,
+            store=store,
+            executor=passive_executor,
+            market_scanner=market_scanner,
+            copy_trading_agent=copy_trading_agent,
+            wallet_manager=wallet_mgr,
+            secrets=secrets,
+            runner=runner,
+        )
         clob_listener = None
         live_clob_feed_coro = None
-        try:
-            top_markets = await run_blocking("prime live clob token ids", market_scanner.client.list_markets, limit=25, sort_by="volume", timeout=30.0)
-            live_token_ids = extract_live_clob_token_ids(top_markets)
-            if ledger:
-                try:
-                    open_pos = ledger.get_open_positions()
-                    for pos in open_pos:
-                        tid = pos.get("ticker")
-                        if tid and tid not in live_token_ids:
-                            live_token_ids.append(tid)
-                except Exception:
-                    pass
-            if live_token_ids:
-                clob_listener = CLOBListener(token_ids=live_token_ids, store=store)
-                async def _persist_live_snapshot(snapshot: dict[str, Any]) -> None:
-                    snapshot_mgr.capture(category="SYSTEM", component="CLOB_ORDERBOOK", data=snapshot, tags=["live", "clob", snapshot.get("token_id", "unknown")])
-                    swarm = getattr(orchestrator, "_swarm", None)
-                    if swarm is not None:
-                        await swarm.record_market_tick(snapshot)
-                    if ledger:
-                        ticker = snapshot.get("token_id")
-                        mid_price = snapshot.get("mid_price")
-                        if ticker and mid_price:
-                            open_pos = [p for p in ledger.get_open_positions() if p.get("ticker") == ticker]
-                            if open_pos:
-                                due = ledger.get_positions_due_for_exit({ticker: mid_price})
-                                for pos in due:
-                                    asyncio.create_task(_execute_exit(pos))
-                async def _execute_exit(pos: dict):
-                    ticker = pos.get("ticker", "")
-                    pos_id = pos.get("position_id", "")
-                    entry = float(pos.get("entry_price", 0.0))
-                    exit_p = float(pos.get("exit_price", 0.0))
-                    entry_side = pos.get("side", "BUY").upper()
-                    exit_side = "SELL" if entry_side == "BUY" else "BUY"
-                    size = float(pos.get("size", 0.0))
-                    try:
-                        exec_res = await passive_executor.execute(ticker=ticker, side=exit_side, price=exit_p, size=size, override_strict_maker=True)
-                        if exec_res.get("status") in ("FILLED", "TAKER_FILLED"):
-                            ledger.close_position(pos_id, exit_price=exit_p)
-                            pnl_pct = ((exit_p - entry) / entry * 100) if entry > 0 else 0.0
-                            if listener:
-                                await listener.send_message(f"⏹ <b>[FAST-PATH] Position Closed</b>\nTicker: <code>{ticker}</code>\nExit: <code>{exit_p:.4f}</code>\nPnL: <b>{pnl_pct:+.2f}%</b>", parse_mode="HTML")
-                    except Exception as e:
-                        logger.error(f"Error in fast-path SL/TP execution: {e}")
-                live_clob_feed_coro = clob_listener.run(callback=_persist_live_snapshot)
-        except Exception as e:
-            logger.warning(f"Live CLOB feed disabled: failed to prime token IDs ({e})")
+        clob_listener, live_clob_feed_coro = await build_live_clob_feed(
+            market_scanner=market_scanner,
+            ledger=ledger,
+            store=store,
+            snapshot_mgr=snapshot_mgr,
+            orchestrator=orchestrator,
+            passive_executor=passive_executor,
+            listener=listener,
+            clob_listener_cls=CLOBListener,
+            run_blocking_fn=run_blocking,
+        )
         market_scan_loop = MarketScanLoop(ctx=context, listener=listener, clob_listener=clob_listener, broadcaster=broadcaster, orchestrator=orchestrator, crypto_intelligence=crypto_intelligence)
         hmm_training_loop = HMMTrainingLoop(ctx=context, market_scanner=market_scanner, hmm=hmm)
         sltp_monitoring_loop = SLTPMonitoringLoop(ctx=context, ledger=ledger, passive_executor=passive_executor, listener=listener)
         model_drift_loop = ModelDriftAndHealthLoop(ctx=context, model_validator=model_validator, training_pipeline=training_pipeline, self_improver=self_improver, listener=listener)
-        runner.register_job("Model_Health_And_Drift", model_drift_loop.run, interval_sec=14400.0)
-        runner.register_job("HMM_Training", hmm_training_loop.run, interval_sec=21600.0)
-        runner.register_job("SLTP_Monitoring", sltp_monitoring_loop.run, interval_sec=10.0)
-        if listener and getattr(listener, "_pmxt_service", None):
-            async def pmxt_monitored_job():
-                try:
-                    result = await listener._pmxt_service.run_cycle()
-                    if result.get("status") == "FAILED":
-                        reason = result.get("reason", "Unknown error")
-                        logger.error(f"🚨 [PMXT ADAPTER FAILURE] {reason}")
-                        if orchestrator and orchestrator.broadcaster:
-                            await orchestrator.broadcaster.diffuser_message_au_canal(
-                                f"🚨 <b>PMXT ADAPTER FAILURE</b>\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"Reason: <code>{reason}</code>\n"
-                                f"<i>Archival chain may be broken. Check polars/pyarrow installation.</i>"
-                            )
-                except Exception as e:
-                    logger.error(f"PMXT job error: {e}")
-
-            runner.register_job(
-                "PMXT_Auto_Cycle",
-                pmxt_monitored_job,
-                interval_sec=float(os.getenv("PMXT_ADAPTER_INTERVAL_SECONDS", "1800")),
-            )
+        register_runtime_loops(
+            runner,
+            market_scan_loop=market_scan_loop,
+            model_drift_loop=model_drift_loop,
+            hmm_training_loop=hmm_training_loop,
+            sltp_monitoring_loop=sltp_monitoring_loop,
+            listener=listener,
+            orchestrator=orchestrator,
+        )
         ws_url = secrets.get("WS_URL", "")
         polymarket_monitor = None
         onchain_monitor_enabled = _env_bool("POLYMARKET_ONCHAIN_MONITOR_ENABLED", False)
         if onchain_monitor_enabled and ws_url:
             target_wallet = secrets.get("TARGET_WALLET", "")
             polymarket_monitor = PolymarketMonitor(on_signal=orchestrator.on_signal, target_wallet=target_wallet or None, ws_url=ws_url, rpc_url=polygon_rpc)
-        health_supervisor = HealthSupervisorAgent(
-            feature_store=store,
+        health_supervisor = build_health_supervisor(store, ledger, container.vault, orchestrator, secrets, polygon_rpc)
+        health_sidecar = build_health_sidecar(store, ledger, orchestrator)
+        user_ws_coro = build_user_stream(UserCLOBListener, ApiCreds, secrets, ledger, listener)
+        redis_mode_listener = build_redis_mode_listener(
             ledger=ledger,
-            wallet_manager=__import__("polymarket.execution.wallet_manager", fromlist=["PolymarketWalletManager"]).PolymarketWalletManager(vault_handler=container.vault, polygon_rpc_url=polygon_rpc),
-            data_archiver=DataArchiver(
-                db_path=os.path.join(os.getenv("DATA_PATH", "data"), "feature_store.duckdb"),
-                feature_store=store
-            ),
-            broadcaster=orchestrator.broadcaster,
-            secrets=secrets,
-            config=HealthSupervisorConfig(
-                staleness_threshold_seconds=float(get_health_config("polymarket_staleness_seconds", 60.0, env_key="MAX_POLYMARKET_STALENESS_SECONDS")),
-                memory_warning_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")),
-                memory_critical_mb=float(get_health_config("memory_critical_mb", 1536)),
-                wallet_reconciliation_interval_seconds=300.0,
-                maintenance_interval_seconds=86400.0,
-                check_interval_seconds=5.0,
-                wallet_drift_tolerance_usd=float(get_health_config("wallet_drift_tolerance_usdc", 0.01, env_key="MAX_WALLET_DRIFT_USDC")),
-                disk_usage_warning_bytes=5_000_000_000,
-                disk_usage_critical_bytes=8_000_000_000
-            )
+            orchestrator=orchestrator,
+            broadcaster=broadcaster,
+            lifecycle=self,
         )
-        health_sidecar = HealthMonitorAgent(config=HealthMonitorConfig(heartbeat_interval_seconds=30.0, duckdb_prune_interval_seconds=86400.0, memory_check_interval_seconds=60.0, max_memory_rss_mb=float(get_health_config("memory_warning_mb", 1024, env_key="MAX_MEMORY_MB_THRESHOLD")), enable_ledger_reconciliation=_env_bool("HEALTH_SIDE_CAR_ENABLE_LEDGER_RECONCILIATION", True), enable_feature_store_maintenance=_env_bool("HEALTH_SIDE_CAR_ENABLE_FEATURE_STORE_MAINTENANCE", True)), feature_store=store, ledger=ledger, broadcaster=orchestrator.broadcaster)
-        user_ws_coro = None
-
-        # --- Dual-Mode Redis Control Listener ---
-        async def redis_mode_listener():
-            redis_url = (os.getenv("REDIS_URL", "") or "").strip()
-            if not redis_url:
-                logger.info("Redis hot-swap disabled: REDIS_URL not configured.")
-                return
-            try:
-                import redis.asyncio as aioredis
-                import json
-                r = aioredis.from_url(redis_url, decode_responses=True)
-                pubsub = r.pubsub()
-                await pubsub.subscribe("lobstar:control:mode")
-                logger.info("📡 [REDIS] Listening for hot mode swaps on 'lobstar:control:mode'")
-
-                async for message in pubsub.listen():
-                    if message["type"] == "message":
-                        data = json.loads(message["data"])
-                        if data.get("action") == "SWITCH_MODE":
-                            new_mode = data.get("mode")
-                            current_mode = ledger.get_execution_mode() if ledger else "UNKNOWN"
-                            if new_mode and ledger and current_mode != new_mode:
-                                ledger.set_execution_mode(new_mode)
-                                orchestrator.execution_mode = new_mode
-                                self.execution_mode = new_mode
-                                msg = f"🔄 <b>[HOT SWAP]</b> Mode d'exécution changé via Redis: <code>{current_mode}</code> ➡️ <code>{new_mode}</code>"
-                                logger.warning(msg)
-                                if broadcaster and broadcaster.notifier:
-                                    await broadcaster.notifier.send_async(msg, parse_mode="HTML")
-            except ImportError:
-                logger.warning("redis.asyncio not available. Redis hot-swap disabled.")
-            except Exception as e:
-                logger.info("Redis hot-swap listener unavailable: %s", e)
-
         redis_task = asyncio.create_task(redis_mode_listener())
         dashboard_task = asyncio.create_task(_send_dashboard_when_ready()) if listener and _dashboard_target else None
+        price_task = start_price_service(orchestrator)
+        binance_task = start_binance_listener(store)
 
-        # --- Aulekator: Exchange Price Service ---
-        from utils.exchange_price_service import ExchangePriceService
-        price_service = ExchangePriceService()
-        price_task = asyncio.create_task(price_service.start())
-        orchestrator.price_service = price_service
-        # ----------------------------------------
-
-        if secrets.get("CLOB_API_KEY") and secrets.get("CLOB_API_SECRET") and secrets.get("CLOB_API_PASSPHRASE"):
-            try:
-                user_creds = ApiCreds(api_key=secrets["CLOB_API_KEY"], api_secret=secrets["CLOB_API_SECRET"], api_passphrase=secrets["CLOB_API_PASSPHRASE"])
-                user_listener = UserCLOBListener(api_creds=user_creds)
-                async def on_user_event(event: dict):
-                    event_type = event.get("event_type")
-                    if event_type == "order":
-                        if event.get("status") == "CLOSED":
-                            logger.info(f"✅ Order {event.get('order_id')} fully filled/closed.")
-                    elif event_type == "trade":
-                        order_id = event.get("order_id")
-                        size = float(event.get("size", 0.0))
-                        price = float(event.get("price", 0.0))
-                        if ledger:
-                            success = ledger.update_position_fill(exchange_order_id=order_id, filled_qty=size, execution_price=price)
-                            if success and listener:
-                                await listener.send_message(f"⚡ <b>Live Fill Detected</b>\nOrder: <code>{order_id[:8]}...</code>\nSize: <code>{size}</code> @ <code>{price}</code>", parse_mode="HTML")
-                user_listener.on_event = on_user_event
-                user_ws_coro = user_listener.run()
-            except Exception as e:
-                logger.error(f"User CLOB listener initialization failed: {e}")
-        from utils.data_ingestion import BinanceWSListener
-        binance_listener = BinanceWSListener(store=store, tickers=["BTCUSDT", "ETHUSDT", "SOLUSDT"])
-        
-        # Start binance listener in a background task
-        async def run_binance():
-            try:
-                await binance_listener._run()
-            except Exception as e:
-                logger.error(f"Binance WS Listener failed: {e}")
-
-        binance_task = asyncio.create_task(run_binance())
-        
         extra_tasks = [redis_task, price_task, binance_task]
         if dashboard_task:
             extra_tasks.append(dashboard_task)

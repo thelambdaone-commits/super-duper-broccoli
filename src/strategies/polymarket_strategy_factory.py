@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .base_strategy import (
@@ -13,6 +12,39 @@ from .base_strategy import (
 )
 
 logger = logging.getLogger("PolymarketStrategyFactory")
+
+
+def _meta_float(features: MarketFeatures, key: str, default: float = 0.0) -> float:
+    value = features.metadata.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _meta_bool(features: MarketFeatures, key: str, default: bool = False) -> bool:
+    value = features.metadata.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+class DeepRLAllocationStrategy(PolymarketStrategy):
+    def __init__(self, parameters: StrategyParameters | None = None) -> None:
+        super().__init__(
+            strategy_id="deep_rl_allocation",
+            name="Deep RL Portfolio Allocation",
+            parameters=parameters or StrategyParameters(min_confidence=0.65, min_edge=0.015, max_spread=0.04),
+        )
+
+    def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
+        f = coerce_features(features)
+        probability = f.ml_probability if f.ml_probability is not None else _meta_float(f, "posterior_probability", 0.5)
+        edge = float(probability - f.price)
+        side = "BUY" if edge > 0 else "SELL"
+        return self._signal(f, side, abs(probability), abs(edge), f"RL allocation proxy (p={probability:.2f})")
 
 
 class InterMarketArbitrageStrategy(PolymarketStrategy):
@@ -80,11 +112,7 @@ class SemanticMomentumStrategy(PolymarketStrategy):
         f = coerce_features(features)
         if f.semantic_confidence < self.parameters.min_confidence:
             return None
-        # Score typically ranges -1 to 1; map to probability-like space for edge calc
-        # if score > 0.3, it's a BUY signal with edge
         sentiment_edge = f.sentiment_score * 0.1
-        if abs(sentiment_edge) < self.parameters.min_edge:
-            return None
         side = "BUY" if sentiment_edge > 0 else "SELL"
         return self._signal(
             f,
@@ -98,61 +126,52 @@ class SemanticMomentumStrategy(PolymarketStrategy):
 class NewsDrivenStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="news_driven_catalyst",
+            strategy_id="news_driven",
             name="News Catalyst Filter",
             parameters=parameters or StrategyParameters(min_edge=0.05, min_confidence=0.70),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        # Placeholder for news catalyst logic (e.g. check metadata for 'catalyst' tag)
-        if not f.metadata.get("catalyst_detected"):
+        news_score = max(_meta_float(f, "news_score"), _meta_float(f, "source_reliability"))
+        if news_score < self.parameters.min_confidence and not _meta_bool(f, "catalyst_detected"):
             return None
-        edge = 0.15 # Aggressive edge for news
-        side = f.metadata.get("catalyst_direction", "BUY")
-        return self._signal(
-            f,
-            side=side,
-            confidence=0.85,
-            edge=edge,
-            reason=f"Systemic catalyst detected: {f.metadata.get('catalyst_summary')}",
-        )
+        edge = max(self.parameters.min_edge, abs(f.sentiment_score) * 0.1, _meta_float(f, "expected_event_move"))
+        side = "BUY" if f.sentiment_score >= 0 else "SELL"
+        summary = f.metadata.get("catalyst_summary") or "News catalyst detected"
+        return self._signal(f, side, max(news_score, 0.85), edge, str(summary))
 
 
 class CalendarEventStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="calendar_event_drift",
+            strategy_id="calendar_event",
             name="Scheduled Event Drift",
             parameters=parameters or StrategyParameters(min_edge=0.04, min_confidence=0.60),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        # Check if resolution is close (e.g. within 4 hours)
-        # time-to-res stored in metadata
-        ttr_hours = f.metadata.get("hours_to_resolution")
-        if ttr_hours is None or ttr_hours > 4:
+        hours_to_resolution = _meta_float(f, "hours_to_resolution", _meta_float(f, "hours_to_known_event", 999.0))
+        if hours_to_resolution > 24:
             return None
-        # Probability tends to drift towards 1.0 or 0.0 near resolution
-        if f.price > 0.85:
-            return self._signal(f, "BUY", 0.90, 0.05, "Resolution drift: High probability outcome converging")
-        if f.price < 0.15:
-            return self._signal(f, "SELL", 0.90, 0.05, "Resolution drift: Low probability outcome decaying")
-        return None
+        expected_move = max(self.parameters.min_edge, _meta_float(f, "expected_event_move", 0.0))
+        if f.price >= 0.5:
+            return self._signal(f, "BUY", 0.75, expected_move, "Event-driven drift favors the current leader")
+        return self._signal(f, "SELL", 0.75, expected_move, "Event-driven drift penalizes the lagging outcome")
 
 
 class PublicOnchainFlowStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="onchain_whale_flow",
+            strategy_id="public_onchain_flow",
             name="Public On-chain Flow",
             parameters=parameters or StrategyParameters(min_edge=0.03, min_confidence=0.55),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        flow_score = f.known_wallet_flow_score
+        flow_score = _meta_float(f, "known_wallet_flow_score", 0.0)
         if abs(flow_score) < 0.5:
             return None
         edge = flow_score * 0.05
@@ -176,12 +195,10 @@ class PassiveMarketMakingStrategy(PolymarketStrategy):
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        # Only quote if spread is healthy
         if f.spread > self.parameters.max_spread:
             return None
-        # Bias based on ML probability if available, else neutral
-        prob = f.ml_probability if f.ml_probability is not None else 0.5
-        side = "BUY" if prob >= 0.5 else "SELL"
+        probability = f.ml_probability if f.ml_probability is not None else 0.5
+        side = "BUY" if probability >= 0.5 else "SELL"
         return self._signal(
             f,
             side=side,
@@ -203,10 +220,9 @@ class DynamicMarketMakingStrategy(PolymarketStrategy):
         f = coerce_features(features)
         if f.spread > self.parameters.max_spread:
             return None
-        # Skew quotes based on order imbalance
         skew = f.order_imbalance * 0.02
-        prob = (f.ml_probability if f.ml_probability is not None else 0.5) + skew
-        side = "BUY" if prob >= 0.5 else "SELL"
+        probability = (f.ml_probability if f.ml_probability is not None else 0.5) + skew
+        side = "BUY" if probability >= 0.5 else "SELL"
         return self._signal(
             f,
             side=side,
@@ -226,9 +242,13 @@ class MeanReversionStrategy(PolymarketStrategy):
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        # Check for extreme price deviations from SMA (mock logic)
-        # Normally use indicators from feature_store
-        return None
+        rolling_mean = _meta_float(f, "rolling_mean_price", f.price)
+        edge = rolling_mean - f.price
+        if abs(edge) < self.parameters.min_edge:
+            return None
+        side = "BUY" if edge > 0 else "SELL"
+        confidence = min(1.0, 0.55 + abs(edge))
+        return self._signal(f, side, confidence, edge, "Price deviates from rolling mean and may revert")
 
 
 class MomentumBreakoutStrategy(PolymarketStrategy):
@@ -241,15 +261,17 @@ class MomentumBreakoutStrategy(PolymarketStrategy):
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        if abs(f.order_imbalance) < 0.7:
+        momentum = max(abs(f.order_imbalance), abs(_meta_float(f, "momentum_1m", 0.0) * 10.0))
+        if momentum < 0.3:
             return None
-        side = "BUY" if f.order_imbalance > 0 else "SELL"
+        side = "BUY" if (f.order_imbalance or _meta_float(f, "momentum_1m", 0.0)) > 0 else "SELL"
+        edge = max(self.parameters.min_edge, abs(_meta_float(f, "momentum_1m", 0.0)), 0.04)
         return self._signal(
             f,
             side=side,
             confidence=0.65,
-            edge=0.04,
-            reason="Momentum: high orderbook imbalance suggests imminent breakout",
+            edge=edge,
+            reason="Momentum: orderbook imbalance or short-term drift suggests breakout",
         )
 
 
@@ -262,8 +284,12 @@ class MicroScalpingStrategy(PolymarketStrategy):
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # High frequency scalping logic
-        return None
+        f = coerce_features(features)
+        if f.bid_price <= 0 or f.ask_price <= 0 or f.spread <= 0:
+            return None
+        edge = min(f.spread / 2.0, 0.02)
+        side = "BUY" if f.order_imbalance >= 0 else "SELL"
+        return self._signal(f, side, 0.52, edge, "Tight spread allows midpoint scalping")
 
 
 class ExpectedValueStrategy(PolymarketStrategy):
@@ -294,55 +320,78 @@ class ExpectedValueStrategy(PolymarketStrategy):
 class BundleSpreadArbitrageStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="bundle_spread_arb",
+            strategy_id="bundle_spread_arbitrage",
             name="Cross-Outcome Spread Arbitrage",
             parameters=parameters or StrategyParameters(min_edge=0.015, min_confidence=0.80),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        # Check if sum of YES and NO prices significantly deviates from 1.0
-        # This requires both token prices in features metadata
-        return None
+        total_probability = _meta_float(f, "outcome_total_probability", 1.0)
+        deviation = 1.0 - total_probability
+        if abs(deviation) < self.parameters.min_edge:
+            return None
+        side = "BUY" if deviation > 0 else "SELL"
+        return self._signal(
+            f,
+            side=side,
+            confidence=0.82,
+            edge=abs(deviation),
+            reason="Bundle outcome probabilities deviate from 1.0",
+        )
 
 
 class IntraMarketArbitrageStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="intra_market_arb",
+            strategy_id="intra_market_arbitrage",
             name="Intra-Market Inefficiency",
             parameters=parameters or StrategyParameters(min_edge=0.01, min_confidence=0.75),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # High frequency intra-market arb
-        return None
+        f = coerce_features(features)
+        edge = _meta_float(f, "stale_quote_edge", 0.0)
+        if abs(edge) < self.parameters.min_edge:
+            return None
+        side = "BUY" if edge > 0 else "SELL"
+        return self._signal(f, side, 0.78, abs(edge), "Stale quote detected inside the same market")
 
 
 class PublicOracleLagStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="oracle_lag_latency",
+            strategy_id="public_oracle_lag",
             name="Oracle Lag Latency",
             parameters=parameters or StrategyParameters(min_edge=0.05, min_confidence=0.85),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # Detect delay between real world event and Polymarket oracle update
-        return None
+        f = coerce_features(features)
+        oracle_probability = _meta_float(f, "posterior_probability", 0.0)
+        if oracle_probability <= 0.0:
+            return None
+        edge = oracle_probability - f.price
+        side = "BUY" if edge > 0 else "SELL"
+        return self._signal(f, side, 0.85, abs(edge), "Public oracle lags the observed market state")
 
 
 class PairsTradingStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="pairs_mean_reversion",
+            strategy_id="pairs_trading",
             name="Correlated Pairs Trading",
             parameters=parameters or StrategyParameters(min_edge=0.02, min_confidence=0.58),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # Trading two correlated markets (e.g. BTC Up vs ETH Up)
-        return None
+        f = coerce_features(features)
+        pair_spread_zscore = _meta_float(f, "pair_spread_zscore", 0.0)
+        if abs(pair_spread_zscore) < 2.0 or not _meta_bool(f, "hedge_market_available"):
+            return None
+        side = "BUY" if pair_spread_zscore < 0 else "SELL"
+        edge = min(0.10, abs(pair_spread_zscore) / 50.0)
+        return self._signal(f, side, 0.62, edge, "Correlated pair spread is statistically stretched")
 
 
 class SwingCatalystStrategy(PolymarketStrategy):
@@ -354,8 +403,12 @@ class SwingCatalystStrategy(PolymarketStrategy):
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # Longer term swing trading based on major news
-        return None
+        f = coerce_features(features)
+        expected_move = _meta_float(f, "expected_event_move", 0.0)
+        if expected_move < self.parameters.min_edge:
+            return None
+        side = "BUY" if (f.ml_probability or 0.5) >= f.price else "SELL"
+        return self._signal(f, side, 0.8, expected_move, "Multi-session catalyst justifies a swing setup")
 
 
 class ContrarianExcessStrategy(PolymarketStrategy):
@@ -367,34 +420,56 @@ class ContrarianExcessStrategy(PolymarketStrategy):
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # Bet against extreme crowd sentiment (overbought/oversold)
-        return None
+        f = coerce_features(features)
+        if abs(f.sentiment_score) < 0.6:
+            return None
+        side = "SELL" if f.sentiment_score > 0 else "BUY"
+        edge = abs(f.sentiment_score) * 0.08
+        return self._signal(f, side, 0.64, edge, "Crowd sentiment appears stretched; fade the excess")
 
 
 class BayesianUpdateStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="bayesian_inference",
+            strategy_id="bayesian_update",
             name="Bayesian Belief Update",
             parameters=parameters or StrategyParameters(min_edge=0.025, min_confidence=0.65),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # Iterative update of winning probability based on stream of features
-        return None
+        f = coerce_features(features)
+        posterior = _meta_float(f, "posterior_probability", 0.0)
+        if posterior <= 0.0:
+            return None
+        edge = posterior - f.price
+        side = "BUY" if edge > 0 else "SELL"
+        return self._signal(f, side, 0.68, abs(edge), "Bayesian posterior diverges from traded probability")
 
 
 class DirectionalConvictionStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="directional_trend",
+            strategy_id="directional_conviction",
             name="High-Conviction Trend",
             parameters=parameters or StrategyParameters(min_edge=0.10, min_confidence=0.85),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # Only trade when everything aligns (ML + HMM + Sentiment)
-        return None
+        f = coerce_features(features)
+        if f.ml_probability is None or f.semantic_confidence < 0.75:
+            return None
+        edge = float(f.ml_probability - f.price)
+        if abs(edge) < self.parameters.min_edge:
+            return None
+        sentiment_aligns = (f.sentiment_score >= 0 and edge > 0) or (f.sentiment_score <= 0 and edge < 0)
+        if not sentiment_aligns:
+            return None
+        regime = f.hmm_regime.upper()
+        if "ERRATIC" in regime:
+            return None
+        side = "BUY" if edge > 0 else "SELL"
+        confidence = min(1.0, 0.85 + abs(f.sentiment_score) * 0.05)
+        return self._signal(f, side, confidence, abs(edge), "ML, sentiment and regime align on one direction")
 
 
 class MonteCarloEdgeStrategy(PolymarketStrategy):
@@ -406,38 +481,48 @@ class MonteCarloEdgeStrategy(PolymarketStrategy):
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
-        # Use SABR/SSVI simulations to find edge in tail events
-        return None
+        f = coerce_features(features)
+        mc_probability = _meta_float(f, "monte_carlo_probability", 0.0)
+        if mc_probability <= 0.0:
+            return None
+        edge = mc_probability - f.price
+        side = "BUY" if edge > 0 else "SELL"
+        return self._signal(f, side, 0.6, abs(edge), "Monte Carlo path simulation disagrees with current price")
 
 
 class OpportunisticLiquidityTakerStrategy(PolymarketStrategy):
     def __init__(self, parameters: StrategyParameters | None = None) -> None:
         super().__init__(
-            strategy_id="liquidity_taker_edge",
+            strategy_id="opportunistic_liquidity_taker",
             name="Opportunistic Spread Taker",
             parameters=parameters or StrategyParameters(min_edge=0.06, min_confidence=0.80),
         )
 
     def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> StrategySignal | None:
         f = coerce_features(features)
-        # If edge is HUGE, take the spread instead of waiting as maker
         if f.ml_probability is None:
             return None
-        
         raw_edge = float(f.ml_probability - f.price)
-        stale_quote_edge = raw_edge - f.spread
-        
+        stale_quote_edge = _meta_float(f, "stale_quote_edge", raw_edge - f.spread)
         if abs(stale_quote_edge) < self.parameters.min_edge:
             return None
-        
+        available_depth = _meta_float(f, "available_depth_usdc", 0.0)
+        if available_depth <= 0.0:
+            return None
         side = "BUY" if stale_quote_edge > 0 else "SELL"
-        return self._signal(f, side, min(1.0, 0.70 + abs(stale_quote_edge)), stale_quote_edge, "Large edge justifies taker execution despite spread", order_type="MARKET")
+        confidence = min(1.0, 0.80 + abs(stale_quote_edge) * 0.5)
+        return self._signal(
+            f,
+            side,
+            confidence,
+            abs(stale_quote_edge),
+            "Large edge justifies taker execution despite spread",
+            order_type="MARKET",
+        )
 
 
 def build_default_polymarket_strategies() -> list[PolymarketStrategy]:
-    from .deep_rl_allocation_strategy import DeepRLAllocationStrategy
     return [
-        DeepRLAllocationStrategy(),
         InterMarketArbitrageStrategy(),
         IntraMarketArbitrageStrategy(),
         BundleSpreadArbitrageStrategy(),

@@ -32,49 +32,13 @@ class ServiceContainer:
 
     def __init__(self) -> None:
         self.vault = VaultHandler()
-        self.secrets = self.vault.fetch_quantum_secrets()
-        # Merge all env vars into secrets to ensure everything is visible
-        self.secrets.update(os.environ)
-
+        self.secrets = self._load_secrets()
         self.ledger = Ledger()
-
-        # Resolve active proxy/funder wallet
-        funder = self.secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS")
-        if not funder:
-            from utils.credential_manager import CredentialManager
-            try:
-                mgr = CredentialManager()
-                chat_id = os.getenv("CHAT_ID")
-                if chat_id:
-                    for wtype in ["import", "default"]:
-                        try:
-                            u_data = mgr.load_user(chat_id, wtype)
-                            if u_data.get("proxy_wallet"):
-                                funder = u_data["proxy_wallet"]
-                                break
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.warning(f"Unable to load active proxy wallet: {e}")
-
-        self.freqai = FreqAIEngine(
-            private_key=self.secrets["CLOB_PRIVATE_KEY"],
-            api_key=self.secrets["CLOB_API_KEY"],
-            api_secret=self.secrets["CLOB_API_SECRET"],
-            api_passphrase=self.secrets["CLOB_API_PASSPHRASE"],
-            funder=funder,
-        )
+        self.freqai = self._build_freqai_engine()
         self.hmm = HMMRegimeFilter()
-        self.risk = PortfolioRiskEngine(ledger=self.ledger, hmm_filter=self.hmm)
+        self.risk = self._build_risk_engine()
         self.risk.rehydrate_from_ledger(self.ledger)
-
-        # Determine store path
-        default_data_dir = os.getenv("DATA_PATH", "data")
-        api_store_path = os.getenv(
-            "API_FEATURE_STORE_PATH",
-            os.path.join(default_data_dir, "feature_store.duckdb"),
-        )
-        self.store = FeatureStore(db_path=api_store_path)
+        self.store = self._build_feature_store()
         self.history = HistoryAccessService(self.store, self.ledger)
         self.store.history_access = self.history
         from utils.config_loader import TRADING_PARAMS
@@ -83,34 +47,11 @@ class ServiceContainer:
             config=PredictiveGateConfig(min_edge_threshold=min_edge),
             feature_store=self.store,
         )
-
-        self.notifier = TelegramNotifier(
-            bot_token=self.secrets.get("TELEGRAM_BOT_TOKEN"),
-            chat_id=os.getenv("TRADE_ALERT_CHAT_ID") or os.getenv("CHAT_ID"),
-        )
+        self.notifier = self._build_notifier()
         self.trade_notifications = TradeNotificationService(self.notifier)
-        from polymarket.execution.wallet_manager import PolymarketWalletManager
-        self.wallet_manager = PolymarketWalletManager(
-            self.vault,
-            polygon_rpc_url=self.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL", ""),
-        )
-        self.metrics_exporter = ExecutionMetricsExporter(
-            config={
-                "metrics_log_path": os.getenv(
-                    "EXECUTION_METRICS_LOG_PATH",
-                    os.path.join(default_data_dir, "execution_metrics.jsonl"),
-                )
-            }
-        )
-
-        self.executor = PassiveExecutor(
-            freqai=self.freqai,
-            ledger=self.ledger,
-            wallet_manager=self.wallet_manager,
-            wallet_private_key=self.secrets.get("CLOB_PRIVATE_KEY"),
-            usdc_spender_address=os.getenv("POLYMARKET_SPENDER_ADDRESS") or os.getenv("CLOB_SPENDER_ADDRESS"),
-            maker_timeout_calibrator=self._make_timeout_calibrator(),
-        )
+        self.wallet_manager = self._build_wallet_manager()
+        self.metrics_exporter = self._build_metrics_exporter()
+        self.executor = self._build_executor()
 
         # New module instances (lazy init with try/except)
         self.vol_surface: Optional["VolSurfaceAdapter"] = None
@@ -124,6 +65,84 @@ class ServiceContainer:
         self._init_new_modules()
 
         logger.info("ServiceContainer: All services initialized.")
+
+    def _load_secrets(self) -> dict[str, str]:
+        secrets = self.vault.fetch_quantum_secrets()
+        secrets.update(os.environ)
+        return secrets
+
+    def _resolve_funder_wallet(self) -> str | None:
+        funder = self.secrets.get("POLYMARKET_PROXY_WALLET_ADDRESS")
+        if funder:
+            return funder
+        from utils.credential_manager import CredentialManager
+
+        try:
+            mgr = CredentialManager()
+            chat_id = os.getenv("CHAT_ID")
+            if chat_id:
+                for wtype in ["import", "default"]:
+                    try:
+                        u_data = mgr.load_user(chat_id, wtype)
+                        if u_data.get("proxy_wallet"):
+                            return u_data["proxy_wallet"]
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.warning(f"Unable to load active proxy wallet: {e}")
+        return None
+
+    def _build_freqai_engine(self) -> FreqAIEngine:
+        return FreqAIEngine(
+            private_key=self.secrets["CLOB_PRIVATE_KEY"],
+            api_key=self.secrets["CLOB_API_KEY"],
+            api_secret=self.secrets["CLOB_API_SECRET"],
+            api_passphrase=self.secrets["CLOB_API_PASSPHRASE"],
+            funder=self._resolve_funder_wallet(),
+        )
+
+    def _build_risk_engine(self) -> PortfolioRiskEngine:
+        return PortfolioRiskEngine(ledger=self.ledger, hmm_filter=self.hmm)
+
+    def _build_feature_store(self) -> FeatureStore:
+        default_data_dir = os.getenv("DATA_PATH", "data")
+        api_store_path = os.getenv("API_FEATURE_STORE_PATH", os.path.join(default_data_dir, "feature_store.duckdb"))
+        return FeatureStore(db_path=api_store_path)
+
+    def _build_notifier(self) -> TelegramNotifier:
+        return TelegramNotifier(
+            bot_token=self.secrets.get("TELEGRAM_BOT_TOKEN"),
+            chat_id=os.getenv("TRADE_ALERT_CHAT_ID") or os.getenv("CHAT_ID"),
+        )
+
+    def _build_wallet_manager(self):
+        from polymarket.execution.wallet_manager import PolymarketWalletManager
+
+        return PolymarketWalletManager(
+            self.vault,
+            polygon_rpc_url=self.secrets.get("POLYGON_RPC_URL") or os.getenv("POLYGON_RPC_URL", ""),
+        )
+
+    def _build_metrics_exporter(self) -> ExecutionMetricsExporter:
+        default_data_dir = os.getenv("DATA_PATH", "data")
+        return ExecutionMetricsExporter(
+            config={
+                "metrics_log_path": os.getenv(
+                    "EXECUTION_METRICS_LOG_PATH",
+                    os.path.join(default_data_dir, "execution_metrics.jsonl"),
+                )
+            }
+        )
+
+    def _build_executor(self) -> PassiveExecutor:
+        return PassiveExecutor(
+            freqai=self.freqai,
+            ledger=self.ledger,
+            wallet_manager=self.wallet_manager,
+            wallet_private_key=self.secrets.get("CLOB_PRIVATE_KEY"),
+            usdc_spender_address=os.getenv("POLYMARKET_SPENDER_ADDRESS") or os.getenv("CLOB_SPENDER_ADDRESS"),
+            maker_timeout_calibrator=self._make_timeout_calibrator(),
+        )
 
     def _init_new_modules(self) -> None:
         try:

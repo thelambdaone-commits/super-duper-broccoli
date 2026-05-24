@@ -54,7 +54,10 @@ def get_liveness():
         "components": {
             "orchestrator": orchestrator_status,
             "quantum_runner": runner_status,
-        }
+        },
+        "runtime": {
+            "runner_jobs": _runner.get_job_stats() if _runner and hasattr(_runner, "get_job_stats") else {},
+        },
     }
 
     if status_dict["status"] == "DOWN":

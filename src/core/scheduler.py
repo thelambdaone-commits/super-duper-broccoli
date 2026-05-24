@@ -39,7 +39,7 @@ def _setup_autonomous_trading(
         except Exception as e:
             logger.error(f"Failed AI-Trader optimization: {e}")
 
-    runner.register_job("AI_Trader_Optimization", ai_trader_optimization, interval_sec=3600.0 * 2) # Every 2 hours
+    runner.register_job("AI_Trader_Optimization", ai_trader_optimization, interval_sec=3600.0 * 2, resource_profile="heavy") # Every 2 hours
 
     try:
         from core.autonomous_trading_loop import AutonomousTradingLoop
@@ -71,7 +71,7 @@ def _setup_autonomous_trading(
                     logger.warning("Autonomous strategy feature extraction failed: %s", exc)
             await loop.run_once(features)
 
-        runner.register_job("Autonomous_Trading_Loop", run_autonomous_cycle, interval_sec=15.0)
+        runner.register_job("Autonomous_Trading_Loop", run_autonomous_cycle, interval_sec=15.0, resource_profile="normal")
         logger.info("✅ [SCHEDULER] Autonomous Trading Loop registered (15s interval)")
     except Exception as e:
         import logging
@@ -131,10 +131,10 @@ def _setup_quantum_runner(
         executor=executor,
     )
 
-    runner.register_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=0.1)
+    runner.register_job("Web_Scraper_Ticks", freqai.stream_ticks_to_duckdb, interval_sec=5.0, resource_profile="latency")
     if getattr(cognitive_brain, "arbitrage_engine", None):
-        runner.register_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0)
-    runner.register_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0)
+        runner.register_job("Arbitrage_Matrix_Scan", cognitive_brain.arbitrage_engine.scanner_anomalies, interval_sec=5.0, resource_profile="latency")
+    runner.register_job("MLOps_Health_Check", mlops_engine.analyser_sante_brain, interval_sec=14400.0, resource_profile="normal")
 
     async def adaptive_weight_optimization():
         if not orchestrator or not ledger:
@@ -151,7 +151,7 @@ def _setup_quantum_runner(
         except Exception as e:
             logger.warning(f"Adaptive weight optimization failed: {e}")
 
-    runner.register_job("Adaptive_Weight_Optimization", adaptive_weight_optimization, interval_sec=3600.0)
+    runner.register_job("Adaptive_Weight_Optimization", adaptive_weight_optimization, interval_sec=3600.0, resource_profile="normal")
 
     async def prune_feature_store():
         store = feature_store or getattr(cognitive_brain, "store", None)
@@ -165,8 +165,8 @@ def _setup_quantum_runner(
         for err in errors:
             await autonomic_healer.deployer_correctif_autonome(err)
 
-    runner.register_job("Autonomic_Healer", run_healer, interval_sec=2.0)
-    runner.register_job("FeatureStore_Prune", prune_feature_store, interval_sec=3600.0)
+    runner.register_job("Autonomic_Healer", run_healer, interval_sec=2.0, resource_profile="latency")
+    runner.register_job("FeatureStore_Prune", prune_feature_store, interval_sec=3600.0, resource_profile="heavy")
 
     async def system_connectivity_check():
         import httpx
@@ -191,7 +191,7 @@ def _setup_quantum_runner(
             except Exception:
                 pass
 
-    runner.register_job("System_Connectivity_Check", system_connectivity_check, interval_sec=1800.0)
+    runner.register_job("System_Connectivity_Check", system_connectivity_check, interval_sec=1800.0, resource_profile="normal")
 
     async def db_storage_optimization():
         if not ledger:
@@ -205,7 +205,7 @@ def _setup_quantum_runner(
 
             logging.getLogger(__name__).warning("DB storage optimization failed: %s", exc)
 
-    runner.register_job("DB_Storage_Optimization", db_storage_optimization, interval_sec=7200.0)
+    runner.register_job("DB_Storage_Optimization", db_storage_optimization, interval_sec=7200.0, resource_profile="heavy")
 
     async def dynamic_ml_reinforcement():
         if not training_pipeline or not ledger:
@@ -219,7 +219,7 @@ def _setup_quantum_runner(
         for ticker in [str(t).strip().upper() for t in tickers if str(t).strip()]:
             training_pipeline.update_calibration_from_paper_trades(ticker, ledger)
 
-    runner.register_job("Dynamic_ML_Reinforcement", dynamic_ml_reinforcement, interval_sec=1800.0)
+    runner.register_job("Dynamic_ML_Reinforcement", dynamic_ml_reinforcement, interval_sec=1800.0, resource_profile="heavy")
 
     async def daily_tca_report_job():
         from scripts.daily_tca_report import DailyTcaReportConfig, DailyTcaReportJob
@@ -230,7 +230,7 @@ def _setup_quantum_runner(
         job = DailyTcaReportJob(broadcaster, config)
         await job.run()
 
-    runner.register_job("Daily_TCA_Report", daily_tca_report_job, interval_sec=86400.0)
+    runner.register_job("Daily_TCA_Report", daily_tca_report_job, interval_sec=86400.0, resource_profile="normal")
 
     async def train_and_rotate_models():
         if training_pipeline:
@@ -240,4 +240,4 @@ def _setup_quantum_runner(
             for ticker in [str(t).strip().upper() for t in tickers if str(t).strip()]:
                 await run_blocking(f"training rotation {ticker}", training_pipeline.run_cycle, ticker, timeout=300.0)
 
-    runner.register_job("Train_And_Rotate_Models", train_and_rotate_models, interval_sec=21600.0)
+    runner.register_job("Train_And_Rotate_Models", train_and_rotate_models, interval_sec=21600.0, resource_profile="heavy")

@@ -24,16 +24,17 @@ class DeepRLAllocationStrategy(PolymarketStrategy):
             )
         )
 
-    def generate_signal(self, features: MarketFeatures) -> Optional[StrategySignal]:
+    def generate_signal(self, features: MarketFeatures | Mapping[str, Any]) -> Optional[StrategySignal]:
         """
         Generates signals using RL-based reward optimization.
         """
+        features = coerce_features(features)
         # 1. State representation (Price + Volumes + NLP Sentiment)
         state = self._extract_state(features)
         
         # 2. RL Agent Inference (Action: Hold/Buy/Sell)
         # Placeholder for actual DDPG or PPO agent inference
-        action_prob = self._get_agent_action(state)
+        action_prob = self._get_agent_action(state, features)
         
         # 3. Calculate Edge based on action probability vs market price
         # If agent is 80% confident of UP and price is 0.50, edge is 0.30
@@ -65,10 +66,12 @@ class DeepRLAllocationStrategy(PolymarketStrategy):
             features.price,
             features.spread,
             features.order_imbalance,
-            features.known_wallet_flow_score
+            float((features.metadata or {}).get("known_wallet_flow_score", 0.0) or 0.0),
         ])
 
-    def _get_agent_action(self, state: np.ndarray) -> float:
-        # Simulated agent: combines ML probability with random noise for exploration
-        base_p = 0.5
-        return base_p + (np.random.normal(0, 0.05))
+    def _get_agent_action(self, state: np.ndarray, features: MarketFeatures) -> float:
+        # Deterministic proxy until a real RL policy is wired in.
+        base_p = float(features.ml_probability if features.ml_probability is not None else 0.5)
+        order_bias = float(np.clip(state[2] * 0.05, -0.1, 0.1))
+        flow_bias = float(np.clip(state[3] * 0.03, -0.1, 0.1))
+        return float(np.clip(base_p + order_bias + flow_bias, 0.0, 1.0))

@@ -130,6 +130,7 @@ class TelegramListener:
         self._high_value_trade_approved_by: Optional[int] = None
         self._ready = asyncio.Event()
         self._btc_tracking_task: Optional[asyncio.Task] = None
+        self._runner = None
 
     def _get_btc_launch_service(self):
         from services.btc_launch_service import BTCDirectionLaunchService
@@ -151,6 +152,7 @@ class TelegramListener:
         copy_agent=None,
         market_reader=None,
         order_manager=None,
+        runner=None,
     ) -> None:
         self._ledger = ledger
         self._risk = risk
@@ -161,6 +163,7 @@ class TelegramListener:
         self._copy_agent = copy_agent
         self._market_reader = market_reader
         self._order_manager = order_manager
+        self._runner = runner
 
     @property
     def wallet_manager(self):
@@ -268,6 +271,38 @@ class TelegramListener:
             parts.append(f"{hours}h")
         parts.append(f"{mins}m{secs}s")
         return "".join(parts) or "0s"
+
+    def _format_runner_status(self) -> str:
+        if not self._runner or not hasattr(self._runner, "get_job_stats"):
+            return ""
+        try:
+            stats = self._runner.get_job_stats()
+        except Exception as exc:
+            logger.debug("Runner stats unavailable for status command: %s", exc)
+            return "\n⚙️ <b>RUNNER</b>\n• <code>stats unavailable</code>\n"
+        if not stats:
+            return "\n⚙️ <b>RUNNER</b>\n• <code>no jobs registered</code>\n"
+
+        sorted_jobs = sorted(
+            stats.items(),
+            key=lambda item: (
+                -int(item[1].get("skip_count", 0)),
+                -float(item[1].get("max_duration_ms", 0.0)),
+                item[0],
+            ),
+        )
+        lines = ["\n⚙️ <b>RUNNER</b>"]
+        for job_name, job_stats in sorted_jobs[:3]:
+            lines.append(
+                "• "
+                f"<code>{self._html(job_name)}</code> "
+                f"[{self._html(job_stats.get('resource_profile', '?'))}] "
+                f"run=<code>{job_stats.get('run_count', 0)}</code> "
+                f"skip=<code>{job_stats.get('skip_count', 0)}</code> "
+                f"avg=<code>{job_stats.get('avg_duration_ms', 0.0)}ms</code> "
+                f"max=<code>{job_stats.get('max_duration_ms', 0.0)}ms</code>"
+            )
+        return "\n".join(lines) + "\n"
 
     def _get_mode(self) -> str:
         if self._ledger:
@@ -478,9 +513,11 @@ class TelegramListener:
         return await self.send_message(text, parse_mode=parse_mode)
 
     async def _lobstar_worker(self) -> None:
+        """Worker prioritaire : traite les commandes en priorité sur les tâches de fond."""
         while self._running:
             try:
-                signal = await asyncio.wait_for(self.queue.get(), timeout=1.0)
+                # Utilisation d'une PriorityQueue si possible, sinon on traite le signal
+                signal = await asyncio.wait_for(self.queue.get(), timeout=0.5)
                 res = self.on_signal(signal)
                 if asyncio.iscoroutine(res):
                     await res
@@ -723,6 +760,7 @@ class TelegramListener:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
         chat_id = getattr(msg, "chat_id", None)
         wallet_name, wallet_address, proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
+        vault = self._get_wallet_vault()
 
         if not wallet_address:
             await self.reply_to("Aucun wallet actif. Envoyez une cle privee ou seed phrase en DM.", update)
@@ -1150,6 +1188,7 @@ class TelegramListener:
             f"⏱️ <code>{uptime}</code> 🎯 <code>{mode}</code>\n"
             f"💰 <code>{total_str}</code> 🛡️ <code>{net_beta}</code>\n"
             f"📈 <code>{regime}</code>"
+            f"{self._format_runner_status()}"
             f"{swarm_status}"
         )
 
@@ -2375,6 +2414,8 @@ class TelegramListener:
     async def _handle_command_router(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_auth(update):
             return
+        # Accusé de réception immédiat pour éviter le timeout Telegram
+        await self.reply_to("⏳ <i>Requête reçue, traitement en cours...</i>", update, parse_mode=ParseMode.HTML)
         await self.command_router.route_telegram_command(update, context)
 
     async def start(self) -> None:

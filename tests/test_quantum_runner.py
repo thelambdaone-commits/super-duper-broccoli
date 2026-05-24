@@ -1,9 +1,9 @@
 import asyncio
 import pytest
 from core.quantum_runner import LobstarQuantumRunner
-from core.freqai_engine import FreqAIEngine
 from core.arbitrage_feedback_loop import LobstarArbitrageEngine
 from core.mlops_feedback_loop import LobstarMLOpsEngine
+from polymarket.execution.freqai_engine import FreqAIEngine
 
 
 @pytest.mark.asyncio

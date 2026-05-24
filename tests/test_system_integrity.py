@@ -32,8 +32,8 @@ from utils.signal_parser import SignalParser
 from strategies.hmm_filter import HMMRegimeFilter
 from strategies.probability_calibrator import ProbabilityCalibrator
 from polymarket.execution.passive_executor import PassiveExecutor
-from core.freqai_engine import FreqAIEngine
-from core.portfolio_risk_engine import PortfolioRiskEngine
+from polymarket.execution.freqai_engine import FreqAIEngine
+from services.portfolio_risk_engine import PortfolioRiskEngine
 from utils.config_loader import get_health_config
 
 logging.basicConfig(level=logging.INFO)

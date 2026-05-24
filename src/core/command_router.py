@@ -36,6 +36,26 @@ class LobstarCommandRouter:
             return True
         return await checker(update)
 
+    def _wallet_manager(self) -> Any:
+        getter = getattr(self.core, "_get_wallet_manager", None)
+        if callable(getter):
+            return getter()
+        return getattr(self.core, "wallet_manager")
+
+    async def _reply(self, update: Update, text: str, *, parse_mode: str = "HTML", reply_markup: Any = None) -> None:
+        reply_to = getattr(self.core, "reply_to", None)
+        if callable(reply_to):
+            await reply_to(text=text, update=update, reply_markup=reply_markup, parse_mode=parse_mode)
+            return
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+        if msg is not None:
+            kwargs: dict[str, Any] = {"text": text}
+            if parse_mode is not None:
+                kwargs["parse_mode"] = parse_mode
+            if reply_markup is not None:
+                kwargs["reply_markup"] = reply_markup
+            await msg.reply_text(**kwargs)
+
     async def route_telegram_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
         Point d'entrée principal qui intercepte les commandes et les arguments associés.
@@ -125,7 +145,7 @@ class LobstarCommandRouter:
         except Exception as exc:
             logger.exception("BTC launch command failed")
             text = f"❌ BTC launch failed for {timeframe} {direction}: {exc}"
-        await msg.reply_text(text, parse_mode="HTML")
+        await self._reply(update, text, parse_mode="HTML")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 🎮 CATEGORY 1: COCKPIT LIVE & PM2 DIAGNOSTICS
@@ -136,14 +156,17 @@ class LobstarCommandRouter:
         /start: Compile et génère l'affichage instantané de l'état de l'OS.
         """
         # Construction directe du package de données via la vue manager
-        text, reply_markup = self.polymarket.execution.wallet_manager.generer_layout_telegram(
+        mgr = self._wallet_manager()
+        addr = self.core.wallet_address
+        soldes = await mgr.recuperer_soldes_on_chain(addr)
+        
+        text, reply_markup = mgr.generer_layout_telegram(
             wallet_name="session",
-            wallet_address=self.core.wallet_address,
-            soldes=await self.polymarket.execution.wallet_manager.recuperer_soldes_on_chain(self.core.wallet_address),
+            wallet_address=addr,
+            soldes=soldes,
             total_connections=1
         )
-        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
-        await msg.reply_text(text=text, reply_markup=reply_markup, parse_mode="HTML")
+        await self._reply(update, text, reply_markup=reply_markup, parse_mode="HTML")
 
     async def system_pm2_diagnostic(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
@@ -159,14 +182,16 @@ class LobstarCommandRouter:
             "• autonomic-healer  : 🟢 <code>ONLINE</code>\n"
             "───────────────────"
         )
-        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
-        await msg.reply_text(status_report, parse_mode="HTML")
+        await self._reply(update, status_report, parse_mode="HTML")
 
     async def fetch_on_chain_balances(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
         /balance /b: Déclenche un scan de liquidité Web3 en direct.
         """
-        soldes = await self.polymarket.execution.wallet_manager.recuperer_soldes_on_chain(self.core.wallet_address)
+        mgr = self._wallet_manager()
+        addr = self.core.wallet_address
+        soldes = await mgr.recuperer_soldes_on_chain(addr)
+        
         total = soldes["usdc_direct"] + soldes["usdc_proxy"]
         balance_msg = (
             "<b>💰 LIQUIDITY PROFILE</b>\n"
@@ -177,16 +202,19 @@ class LobstarCommandRouter:
             f"• Gas (POL)   : <code>{soldes['eth_balance']:.4f}</code>\n"
             "───────────────────"
         )
-        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
-        await msg.reply_text(balance_msg, parse_mode="HTML")
+        await self._reply(update, balance_msg, parse_mode="HTML")
 
     async def fetch_active_clob_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
         /positions /p: Scrape l'état des positions ouvertes et le PnL latent.
         """
-        positions = self.core.ledger.get_open_positions()
+        if not self.core._ledger:
+            await self._reply(update, "Ledger not initialized.")
+            return
+            
+        positions = self.core._ledger.get_open_positions()
         if not positions:
-            await update.message.reply_text("<b>📊 OPEN EXPOSURE</b>\n───────────────────\nNo active positions found.", parse_mode="HTML")
+            await self._reply(update, "<b>📊 OPEN EXPOSURE</b>\n───────────────────\nNo active positions found.", parse_mode="HTML")
             return
 
         lines = ["<b>📊 OPEN EXPOSURE</b>", "───────────────────"]
@@ -197,16 +225,15 @@ class LobstarCommandRouter:
             entry = float(p.get('entry_price', 0))
             mark = float(p.get('current_price', entry))
             pnl = (mark - entry) * size if side == 'BUY' else (entry - mark) * size
-            pct = ((mark - entry) / entry * 100) if side == 'BUY' else ((entry - mark) / entry * 100)
-            lines.append(f"• Ticker : <code>{ticker}</code>")
-            lines.append(f"• Side   : <b>{side}</b>")
-            lines.append(f"• Size   : <code>{size} Contracts</code>")
-            lines.append(f"• Entry  : <code>{entry:.4f}</code>")
-            lines.append(f"• Mark   : <code>{mark:.4f}</code>")
-            lines.append(f"• PnL    : <b>{pnl:+.2f} USD</b> (📈 {pct:+.1f}%)")
+            pct = ((mark - entry) / entry * 100) if entry > 0 and side == 'BUY' else (((entry - mark) / entry * 100) if entry > 0 else 0)
+            
+            emoji = "🟢" if pnl >= 0 else "🔴"
+            lines.append(f"{emoji} <b>{ticker}</b> ({side})")
+            lines.append(f"  • Size: <code>{size}</code> | Entry: <code>{entry:.4f}</code>")
+            lines.append(f"  • Mark: <code>{mark:.4f}</code> | PnL: <b>{pnl:+.2f} USD</b> (📈 {pct:+.1f}%)")
             lines.append("───────────────────")
 
-        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        await self._reply(update, "\n".join(lines), parse_mode="HTML")
 
     # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     # 🚀 CATEGORY 2: HARDWARE CIRCUIT BREAKERS & PANIC MACROS
@@ -285,8 +312,8 @@ class LobstarCommandRouter:
         expiry_ts = self.core.authorize_high_value_trades(approver_id=approver, ttl_seconds=minutes * 60)
         expires_in = max(0, int(expiry_ts - time.time()))
 
-        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
-        await msg.reply_text(
+        await self._reply(
+            update,
             (
                 "<b>✅ HITL APPROVAL ACTIVE</b>\n"
                 "───────────────────\n"

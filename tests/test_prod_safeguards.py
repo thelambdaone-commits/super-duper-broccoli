@@ -1,4 +1,5 @@
-from main_agentic_clob import require_production_confirmation, resolve_execution_mode
+from app.main import resolve_execution_mode
+from core.security import require_production_confirmation
 
 
 def test_prod_confirmation_skips_non_prod_modes(monkeypatch):

@@ -87,6 +87,7 @@ class BTCDirectionLaunchService:
         self.cache_ttl_seconds = cache_ttl_seconds or {"5m": 240, "15m": 600}
         self._cache: dict[str, LaunchResult] = {}
         self._cache_lock = threading.Lock()
+        self.auto_train_enabled = str(os.getenv("BTC_LAUNCH_AUTO_TRAIN", "false")).strip().lower() in {"1", "true", "yes", "on"}
 
     def _history_period(self, interval: str) -> str:
         if interval == "5m":
@@ -171,11 +172,45 @@ class BTCDirectionLaunchService:
             return None
         return self._with_requested_direction(result, requested_direction)
 
+    def get_cached_stale(self, interval: str, requested_direction: str = "up") -> Optional[LaunchResult]:
+        with self._cache_lock:
+            result = self._cache.get(interval)
+        if result is None:
+            return None
+        return self._with_requested_direction(result, requested_direction)
+
+    def _fallback_result(self, interval: str, requested_direction: str, *, reason: str = "fallback") -> LaunchResult:
+        strongest_direction = requested_direction if requested_direction in {"up", "down"} else "up"
+        prob_up = 0.5
+        prob_down = 0.5
+        if strongest_direction == "down":
+            prob_up, prob_down = prob_down, prob_up
+        logger.warning("BTC launch fallback used for %s (%s): %s", interval, requested_direction, reason)
+        return LaunchResult(
+            interval=interval,
+            requested_direction=requested_direction,
+            strongest_direction=strongest_direction,
+            strongest_probability=0.5,
+            prob_up=prob_up,
+            prob_down=prob_down,
+            best_variant="fallback_neutral",
+            best_val_accuracy=0.0,
+            train_samples=0,
+            val_samples=0,
+            generated_at=time.time(),
+        )
+
     def get_or_launch(self, interval: str, requested_direction: str, force_refresh: bool = False) -> LaunchResult:
         if not force_refresh:
             cached = self.get_cached(interval, requested_direction=requested_direction)
             if cached is not None:
                 return cached
+            stale_cached = self.get_cached_stale(interval, requested_direction=requested_direction)
+            if stale_cached is not None and not self.auto_train_enabled:
+                return stale_cached
+
+        if not self.auto_train_enabled and not force_refresh:
+            return self._fallback_result(interval, requested_direction, reason="auto training disabled")
 
         fresh = self.launch(interval, requested_direction)
         with self._cache_lock:

@@ -99,6 +99,7 @@ async def test_health_monitor_check_memory_under_limit(monkeypatch: pytest.Monke
 
     import psutil
     monkeypatch.setattr(psutil, "Process", FakeProcess)
+    agent.resource_governor.sample_if_due = MagicMock(return_value=type("Snapshot", (), {"mode": "nominal", "reasons": ()})())
 
     res = await agent.check_memory()
     assert res["status"] == "ok"
@@ -121,6 +122,7 @@ async def test_health_monitor_check_memory_over_limit_triggers_gc(monkeypatch: p
 
     import psutil
     monkeypatch.setattr(psutil, "Process", FakeProcess)
+    agent.resource_governor.sample_if_due = MagicMock(return_value=type("Snapshot", (), {"mode": "nominal", "reasons": ()})())
 
     # Mock healer repair call
     agent.healer._repair_memory_leak = MagicMock(return_value={"statut": "REPAIRED"})
@@ -129,6 +131,36 @@ async def test_health_monitor_check_memory_over_limit_triggers_gc(monkeypatch: p
     assert res["status"] == "warn"
     assert res["rss_mb"] == pytest.approx(150.0)
     agent.healer._repair_memory_leak.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_health_monitor_reports_resource_governor_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = HealthMonitorAgent(config=HealthMonitorConfig(max_memory_rss_mb=1000.0))
+
+    class FakeMemoryInfo:
+        rss = 50.0 * 1024.0 * 1024.0
+
+    class FakeProcess:
+        def __init__(self, pid):
+            pass
+
+        def memory_info(self):
+            return FakeMemoryInfo()
+
+    class FakeSnapshot:
+        mode = "constrained"
+        reasons = ("cpu>=80",)
+
+    import psutil
+
+    monkeypatch.setattr(psutil, "Process", FakeProcess)
+    agent.resource_governor.sample_if_due = MagicMock(return_value=FakeSnapshot())
+
+    res = await agent.check_memory()
+
+    assert res["status"] == "warn"
+    assert res["resource_mode"] == "constrained"
+    assert res["reasons"] == ["cpu>=80"]
 
 
 @pytest.mark.asyncio

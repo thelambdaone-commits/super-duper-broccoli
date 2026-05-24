@@ -21,6 +21,16 @@ class FakeRunner:
     def __init__(self, running: bool = True):
         self._is_running = running
 
+    def get_job_stats(self) -> dict:
+        return {
+            "job_a": {
+                "run_count": 2,
+                "success_count": 2,
+                "error_count": 0,
+                "skip_count": 1,
+            }
+        }
+
 
 def test_health_monitor_endpoints_when_components_are_up() -> None:
     orchestrator = FakeOrchestrator(queue_done=False)
@@ -32,6 +42,7 @@ def test_health_monitor_endpoints_when_components_are_up() -> None:
     assert response["status"] == "UP"
     assert response["components"]["orchestrator"] == "UP"
     assert response["components"]["quantum_runner"] == "UP"
+    assert response["runtime"]["runner_jobs"]["job_a"]["skip_count"] == 1
 
 
 def test_health_monitor_endpoints_when_orchestrator_is_down() -> None:
