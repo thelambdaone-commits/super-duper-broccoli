@@ -146,6 +146,60 @@ async def test_health_monitor_run_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_health_monitor_sync_positions_skips_without_target_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = HealthMonitorAgent(ledger=MagicMock())
+    monkeypatch.delenv("POLYMARKET_TARGET_USER", raising=False)
+
+    res = await agent.sync_positions()
+
+    assert res["status"] == "skipped"
+    assert "POLYMARKET_TARGET_USER" in res["reason"]
+
+
+@pytest.mark.asyncio
+async def test_health_monitor_sync_positions_skips_missing_market_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return [
+                {"size": "2", "avgPrice": "0.4"},
+                {"market": "market-1", "size": "3", "avgPrice": "0.6"},
+            ]
+
+    class FakeConn:
+        def __init__(self):
+            self.executed = []
+            self.committed = False
+
+        def cursor(self):
+            return self
+
+        def execute(self, sql, params):
+            self.executed.append((sql, params))
+
+        def commit(self):
+            self.committed = True
+
+    ledger = MagicMock()
+    ledger.conn = FakeConn()
+    agent = HealthMonitorAgent(ledger=ledger)
+    monkeypatch.setenv("POLYMARKET_TARGET_USER", "0xabc")
+    monkeypatch.setattr(
+        "agents.health_monitor_agent.requests.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    res = await agent.sync_positions()
+
+    assert res["status"] == "ok"
+    assert res["synced"] == 1
+    assert res["skipped"] == 1
+    assert ledger.conn.committed is True
+
+
+@pytest.mark.asyncio
 async def test_health_monitor_run_forever_graceful_cancel() -> None:
     agent = HealthMonitorAgent()
 

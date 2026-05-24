@@ -28,6 +28,9 @@ class LobstarAgent:
         self._nvidia_key = os.getenv("NVIDIA_API_KEY")
         self._mistral_key = os.getenv("MISTRAL_API_KEY")
         self._deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        self._bazaarlink_key = os.getenv("BAZAARLINK_API_KEY")
+        self._unli_key = os.getenv("UNLI_API_KEY")
+        self._chimera_gateway_key = os.getenv("CHIMERA_GATEWAY_API_KEY")
 
         self.clients: Dict[str, AsyncOpenAI] = {}
 
@@ -47,6 +50,12 @@ class LobstarAgent:
             self.clients["MISTRAL"] = AsyncOpenAI(api_key=self._mistral_key, base_url="https://api.mistral.ai/v1")
         if self._deepseek_key:
             self.clients["DEEPSEEK"] = AsyncOpenAI(api_key=self._deepseek_key, base_url="https://api.deepseek.com")
+        if self._bazaarlink_key:
+            self.clients["BAZAARLINK"] = AsyncOpenAI(api_key=self._bazaarlink_key, base_url=os.getenv("BAZAARLINK_BASE_URL", "https://bazaarlink.ai/api/v1"))
+        if self._unli_key:
+            self.clients["UNLI"] = AsyncOpenAI(api_key=self._unli_key, base_url=os.getenv("UNLI_BASE_URL", "https://api.unli.dev/v1"))
+        if self._chimera_gateway_key:
+            self.clients["CHIMERA"] = AsyncOpenAI(api_key=self._chimera_gateway_key, base_url=os.getenv("CHIMERA_GATEWAY_BASE_URL", "https://ai-robot.wiki/v1"))
 
         self._cache: dict[str, tuple[float, Optional[dict]]] = {}
         self._consecutive_failures = 0
@@ -100,7 +109,10 @@ class LobstarAgent:
             "GROQ": "llama-3.3-70b-versatile",
             "NVIDIA": "meta/llama-3.1-8b-instruct",
             "MISTRAL": "mistral-tiny",
-            "DEEPSEEK": "deepseek-chat"
+            "DEEPSEEK": "deepseek-chat",
+            "BAZAARLINK": "gpt-4o-mini",
+            "UNLI": "gpt-4o-mini",
+            "CHIMERA": "gpt-4o-mini"
         }
 
         model = model_map.get(provider, "gpt-4o-mini")
@@ -218,8 +230,8 @@ class LobstarAgent:
                 self._fallback_active = False
                 self._consecutive_failures = 0
 
-        # LLM Fallback Chain: GROQ -> NVIDIA -> MISTRAL -> DEEPSEEK
-        providers_to_try = ["GROQ", "NVIDIA", "MISTRAL", "DEEPSEEK"]
+        # LLM Fallback Chain: GROQ -> NVIDIA -> MISTRAL -> DEEPSEEK -> BAZAARLINK -> UNLI -> CHIMERA
+        providers_to_try = ["GROQ", "NVIDIA", "MISTRAL", "DEEPSEEK", "BAZAARLINK", "UNLI", "CHIMERA"]
 
         for provider in providers_to_try:
             if provider not in self.clients:

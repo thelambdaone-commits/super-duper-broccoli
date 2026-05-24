@@ -26,6 +26,7 @@ from utils.telegram_helpers import split_telegram_message
 
 from config.constants import EXECUTION_MODES
 from utils.rpc_provider import get_rpc_url, resolve_rpc_with_fallback
+from utils.secret_validation import normalize_private_key
 from utils.signal_parser import SignalParser
 from utils.vault_handler import VaultHandler
 
@@ -456,9 +457,11 @@ class TelegramListener:
     async def _handle_error(self, update: object, context: object) -> None:
         error = getattr(context, "error", None)
         if isinstance(error, BadRequest) and (
-            "query is too old" in str(error).lower() or "query id is invalid" in str(error).lower()
+            "query is too old" in str(error).lower()
+            or "query id is invalid" in str(error).lower()
+            or "message is not modified" in str(error).lower()
         ):
-            logger.info("Ignoring expired Telegram callback query: %s", error)
+            logger.info("Ignoring benign Telegram error: %s", error)
             return
         logger.exception("Telegram handler failed", exc_info=error)
         if update is not None:
@@ -655,6 +658,56 @@ class TelegramListener:
                 logger.warning("Invalid reference_capital for PnL state wallet %s", key)
         return None
 
+    def _resolve_env_wallet_address(self) -> str:
+        env_address = os.getenv("POLYMARKET_WALLET_ADDRESS", "") or os.getenv("WALLET_ADDRESS", "")
+        if env_address:
+            return env_address
+
+        private_key = normalize_private_key(os.getenv("CLOB_PRIVATE_KEY"))
+        if not private_key:
+            return ""
+
+        try:
+            from eth_account import Account
+
+            return Account.from_key(private_key).address
+        except Exception as exc:
+            logger.debug("Unable to derive wallet address from CLOB_PRIVATE_KEY: %s", exc)
+            return ""
+
+    def _resolve_wallet_cockpit_identity(self, chat_id: int | str | None) -> tuple[str, str, str]:
+        vault = self._get_wallet_vault()
+        session_wallet = vault.obtenir_wallet_session(chat_id) if chat_id is not None else None
+
+        wallet_name = "default"
+        wallet_address = self._resolve_env_wallet_address()
+        proxy_address = os.getenv("POLYMARKET_PROXY_WALLET_ADDRESS", "") or os.getenv("PROXY_WALLET_ADDRESS", "") or ""
+
+        if not wallet_address and session_wallet:
+            wallet_name = "session"
+            wallet_address = session_wallet.get("POLYMARKET_WALLET_ADDRESS", "")
+            proxy_address = proxy_address or session_wallet.get("proxy_wallet", "")
+
+        if not wallet_address:
+            try:
+                from utils.credential_manager import CredentialManager
+
+                mgr = CredentialManager()
+                if chat_id is not None and mgr.user_has_any_wallet(str(chat_id)):
+                    wallet_type = mgr.get_active_wallet_type(str(chat_id))
+                    user_data = mgr.load_user(str(chat_id), wallet_type)
+                    wallet_address = user_data.get("POLYMARKET_WALLET_ADDRESS") or user_data.get("address", "")
+                    proxy_address = proxy_address or user_data.get("proxy_wallet", "")
+                    wallet_name = wallet_type
+                elif mgr.user_exists("global"):
+                    user_data = mgr.load_user("global")
+                    wallet_address = user_data.get("POLYMARKET_WALLET_ADDRESS") or user_data.get("address", "")
+                    proxy_address = proxy_address or user_data.get("proxy_wallet", "")
+            except Exception as exc:
+                logger.debug("Unable to resolve wallet cockpit address from encrypted wallet: %s", exc)
+
+        return wallet_name, wallet_address, proxy_address
+
     async def _cmd_wallet_cockpit(self, update: Update, _context) -> None:
         if not self._is_authorized_private_message(update) and not self._is_admin_chat(update):
             await self.reply_to("Unauthorized.", update)
@@ -663,29 +716,7 @@ class TelegramListener:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
         chat_id = getattr(msg, "chat_id", None)
         vault = self._get_wallet_vault()
-        session_wallet = vault.obtenir_wallet_session(chat_id) if chat_id is not None else None
-
-        wallet_name = "session"
-        wallet_address = ""
-        proxy_address = ""
-        if session_wallet:
-            wallet_address = session_wallet.get("POLYMARKET_WALLET_ADDRESS", "")
-        else:
-            try:
-                from eth_account import Account
-                from utils.credential_manager import CredentialManager
-                mgr = CredentialManager()
-                if chat_id is not None and mgr.user_has_any_wallet(str(chat_id)):
-                    wallet_type = mgr.get_active_wallet_type(str(chat_id))
-                    user_data = mgr.load_user(str(chat_id), wallet_type)
-                    wallet_address = user_data.get("address", "")
-                    proxy_address = user_data.get("proxy_wallet", "")
-                    wallet_name = wallet_type
-                if not wallet_address:
-                    wallet_address = Account.from_key(mgr.get_or_generate_private_key()).address
-                    wallet_name = "default"
-            except Exception as exc:
-                logger.debug("Unable to resolve wallet cockpit address: %s", exc)
+        wallet_name, wallet_address, proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
 
         if not wallet_address:
             await self.reply_to("Aucun wallet actif. Envoyez une cle privee ou seed phrase en DM.", update)
@@ -701,6 +732,10 @@ class TelegramListener:
                     if resolved:
                         proxy_address = resolved
                         try:
+                            from utils.credential_manager import CredentialManager
+
+                            mgr = CredentialManager()
+                            wallet_type = mgr.get_active_wallet_type(str(chat_id)) if chat_id is not None else "default"
                             mgr.set_user_proxy(chat_id, resolved, wallet_type=wallet_type)
                         except Exception:
                             pass
@@ -886,6 +921,11 @@ class TelegramListener:
                     parse_mode=ParseMode.HTML,
                 )
                 return
+            except BadRequest as exc:
+                if "message is not modified" in str(exc).lower():
+                    logger.debug("Start menu unchanged, skipping edit")
+                    return
+                logger.debug("Failed to edit start menu: %s", exc)
             except Exception as exc:
                 logger.debug("Failed to edit start menu: %s", exc)
 
@@ -1610,6 +1650,11 @@ class TelegramListener:
                         kwargs["parse_mode"] = parse_mode
                     await q.edit_message_text(text, **kwargs)
                     return
+                except BadRequest as exc:
+                    if "message is not modified" in str(exc).lower():
+                        logger.debug("Message not modified, skipping edit")
+                        return
+                    logger.debug("edit_message_text failed, falling back: %s", exc)
                 except Exception as exc:
                     logger.debug("edit_message_text failed, falling back: %s", exc)
 
@@ -1666,355 +1711,349 @@ class TelegramListener:
                 await safe_edit_callback(query, text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
                 return
             if query.data in {
-                "wallet_refresh",
                 "wallet_history",
                 "wallet_orders",
                 "wallet_positions",
                 "wallet_pnl",
             }:
                 await query.answer()
-                if query.data == "wallet_refresh":
-                    await self._cmd_wallet_cockpit(update, context)
-                else:
-                    # Fetch active wallet details exactly matching cockpit strategy
-                    vault = self._get_wallet_vault()
-                    session_wallet = vault.obtenir_wallet_session(chat_id) if chat_id is not None else None
+                # Fetch active wallet details exactly matching cockpit strategy
+                vault = self._get_wallet_vault()
+                session_wallet = vault.obtenir_wallet_session(chat_id) if chat_id is not None else None
 
+                wallet_name = "default"
+                active_address = os.getenv("POLYMARKET_WALLET_ADDRESS", "") or ""
+                proxy_address = os.getenv("POLYMARKET_PROXY_WALLET_ADDRESS", "") or os.getenv("PROXY_WALLET_ADDRESS", "") or ""
+                if not active_address:
                     wallet_name = "session"
-                    active_address = ""
-                    proxy_address = ""
-
                     if session_wallet:
                         active_address = session_wallet.get("POLYMARKET_WALLET_ADDRESS", "")
                         proxy_address = session_wallet.get("proxy_wallet", "")
-                    else:
-                        try:
-                            from utils.credential_manager import CredentialManager
-                            mgr = CredentialManager()
-                            if chat_id is not None and mgr.user_has_any_wallet(str(chat_id)):
-                                wallet_type = mgr.get_active_wallet_type(str(chat_id))
-                                user_data = mgr.load_user(str(chat_id), wallet_type)
-                                active_address = user_data.get("address", "")
-                                proxy_address = user_data.get("proxy_wallet", "")
-                                wallet_name = wallet_type
-                            if not active_address:
-                                active_address = mgr.get_active_wallet() or ""
-                                wallet_name = "Global"
-                        except Exception as exc:
-                            logger.debug("Unable to resolve active address in callbacks: %s", exc)
+                if not active_address:
+                    try:
+                        from utils.credential_manager import CredentialManager
+                        mgr = CredentialManager()
+                        if chat_id is not None and mgr.user_has_any_wallet(str(chat_id)):
+                            wallet_type = mgr.get_active_wallet_type(str(chat_id))
+                            user_data = mgr.load_user(str(chat_id), wallet_type)
+                            active_address = user_data.get("address", "")
+                            proxy_address = user_data.get("proxy_wallet", "")
+                            wallet_name = wallet_type
+                        if not active_address:
+                            active_address = mgr.get_active_wallet() or ""
+                            wallet_name = "Global"
+                    except Exception as exc:
+                        logger.debug("Unable to resolve active address in callbacks: %s", exc)
 
-                    # If proxy address not defined, attempt dynamic profile resolution from Gamma API
-                    if active_address and not proxy_address:
-                        try:
-                            import httpx
-                            r_prof = httpx.get(f"https://gamma-api.polymarket.com/public-profile?address={active_address}", timeout=3.0)
-                            if r_prof.status_code == 200:
-                                pdata = r_prof.json()
-                                resolved = pdata.get("proxyWallet")
-                                if resolved:
-                                    proxy_address = resolved
+                # If proxy address not defined, attempt dynamic profile resolution from Gamma API
+                if active_address and not proxy_address:
+                    try:
+                        import httpx
+                        r_prof = httpx.get(f"https://gamma-api.polymarket.com/public-profile?address={active_address}", timeout=3.0)
+                        if r_prof.status_code == 200:
+                            pdata = r_prof.json()
+                            resolved = pdata.get("proxyWallet")
+                            if resolved:
+                                proxy_address = resolved
+                                try:
+                                    wtype = mgr.get_active_wallet_type(chat_id)
+                                    mgr.set_user_proxy(chat_id, resolved, wallet_type=wtype)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                target_address = proxy_address if proxy_address else active_address
+
+                if not target_address:
+                    no_wallet_text = (
+                        "<b>🎯 Polymarket Cockpit</b>\n"
+                        "───────────────────\n"
+                        "⚠️ <b>No Wallet found.</b>\n"
+                        "Please import or switch to an active wallet first.\n"
+                        "───────────────────"
+                    )
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
+                    await safe_edit_callback(query, no_wallet_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    return
+
+                if query.data == "wallet_history":
+                    import httpx
+                    open_pos = []
+                    closed_pos = []
+                    activity = []
+
+                    try:
+                        async with httpx.AsyncClient(timeout=8.0) as client:
+                            r_open = await client.get(f"https://data-api.polymarket.com/positions?user={target_address}&limit=50")
+                            if r_open.status_code == 200:
+                                open_pos = r_open.json()
+                            r_closed = await client.get(f"https://data-api.polymarket.com/closed-positions?user={target_address}&limit=50")
+                            if r_closed.status_code == 200:
+                                closed_pos = r_closed.json()
+                            r_act = await client.get(f"https://data-api.polymarket.com/activity?user={target_address}&limit=50&type=TRADE")
+                            if r_act.status_code == 200:
+                                activity = r_act.json()
+                    except Exception as e:
+                        logger.error("Failed to query Polymarket API history: %s", e)
+
+                    volume_total = 0.0
+                    if isinstance(activity, list):
+                        for x in activity:
+                            try:
+                                u_sz = x.get("usdcSize")
+                                if u_sz is not None:
+                                    volume_total += float(u_sz)
+                                else:
+                                    sz = x.get("size")
+                                    pr = x.get("price")
+                                    if sz is not None and pr is not None:
+                                        volume_total += float(sz) * float(pr)
+                            except Exception:
+                                pass
+
+                    realized_pnl = 0.0
+                    if isinstance(closed_pos, list):
+                        for x in closed_pos:
+                            try:
+                                val = x.get("realizedPnl")
+                                if val is not None:
+                                    realized_pnl += float(val)
+                            except Exception:
+                                pass
+
+                    pnl_emoji = "🟢" if realized_pnl >= 0 else "🔴"
+                    pnl_sign = "+" if realized_pnl > 0 else ""
+
+                    lines = [
+                        "<b>📜 POLYMARKET HISTORY</b>",
+                        "───────────────────",
+                        f"⭐ <b>Wallet</b>: {self._html(wallet_name.capitalize())}",
+                        f"📬 <code>{self._html(target_address)}</code>",
+                        f"💵 <b>Volume Total</b>: <code>${volume_total:.2f}</code>",
+                        f"📦 <b>Open Positions</b>: <code>{len(open_pos) if isinstance(open_pos, list) else 0}</code>",
+                        f"✅ <b>Closed Positions</b>: <code>{len(closed_pos) if isinstance(closed_pos, list) else 0}</code>",
+                        f"{pnl_emoji} <b>PnL Réalisé</b>: <b>{pnl_sign}${realized_pnl:.2f}</b>",
+                        "───────────────────"
+                    ]
+
+                    if not activity or not isinstance(activity, list):
+                        lines.append("\n<i>Aucune transaction récente sur pUSD détectée.</i>")
+                    else:
+                        for act in activity[:6]:
+                            try:
+                                title = self._html(act.get("title", "Unknown Market"))
+                                side = self._html(str(act.get("side", "BUY")).upper())
+                                outcome = self._html(act.get("outcome", "YES"))
+
+                                size_val = act.get("size", 0.0)
+                                size = float(size_val) if size_val is not None else 0.0
+
+                                price_val = act.get("price", 0.0)
+                                price = float(price_val) if price_val is not None else 0.0
+
+                                ts = act.get("timestamp", 0)
+                                date_str = ""
+                                if ts:
                                     try:
-                                        wtype = mgr.get_active_wallet_type(chat_id)
-                                        mgr.set_user_proxy(chat_id, resolved, wallet_type=wtype)
+                                        from datetime import datetime
+                                        date_str = datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
                                     except Exception:
                                         pass
-                        except Exception:
-                            pass
 
-                    target_address = proxy_address if proxy_address else active_address
+                                lines.extend([
+                                    f"🎯 <b>{title}</b>",
+                                    f"• <b>{side}</b> <code>{outcome}</code>",
+                                    f"• Size: <code>{size:.2f}</code>",
+                                    f"• Price: <code>${price:.3f}</code>",
+                                ])
+                                if date_str:
+                                    lines.append(f"• Date: <code>{date_str}</code>")
+                                lines.append("───────────────────")
+                            except Exception:
+                                pass
 
-                    if not target_address:
-                        no_wallet_text = (
-                            "<b>🎯 Polymarket Cockpit</b>\n"
-                            "───────────────────\n"
-                            "⚠️ <b>No Wallet found.</b>\n"
-                            "Please import or switch to an active wallet first.\n"
-                            "───────────────────"
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
+                    await safe_edit_callback(query, "\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+                elif query.data == "wallet_orders":
+                    orders_text = (
+                        "<b>🎯 Polymarket Cockpit</b>\n"
+                        "───────────────────\n"
+                        "📋 <b>Active Orders</b>:\n"
+                        "No active pending orders detected on-chain.\n"
+                        "───────────────────"
+                    )
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
+                    await safe_edit_callback(query, orders_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+                elif query.data == "wallet_positions":
+                    import httpx
+                    open_pos = []
+                    try:
+                        async with httpx.AsyncClient(timeout=8.0) as client:
+                            r_open = await client.get(f"https://data-api.polymarket.com/positions?user={target_address}&limit=50")
+                            if r_open.status_code == 200:
+                                open_pos = r_open.json()
+                    except Exception as e:
+                        logger.error("Failed to query open positions: %s", e)
+
+                    lines = [
+                        "<b>🎯 Polymarket Cockpit</b>",
+                        "───────────────────",
+                        "📊 <b>Open Positions</b>:"
+                    ]
+
+                    if not open_pos or not isinstance(open_pos, list):
+                        lines.append("No active open positions on Polymarket found.")
+                    else:
+                        for pos in open_pos[:10]:
+                            try:
+                                title = self._html(pos.get("title", "Unknown Market"))
+                                outcome = self._html(pos.get("outcome", "YES"))
+
+                                size_val = pos.get("size", 0.0)
+                                size = float(size_val) if size_val is not None else 0.0
+
+                                avg_val = pos.get("avgPrice", 0.0)
+                                avg_price = float(avg_val) if avg_val is not None else 0.0
+
+                                cur_val = pos.get("curPrice", 0.0)
+                                cur_price = float(cur_val) if cur_val is not None else 0.0
+
+                                cash_pnl = 0.0
+                                pnl_val = pos.get("cashPnl")
+                                if pnl_val is None:
+                                    pnl_val = pos.get("unrealizedPnl")
+                                if pnl_val is not None:
+                                    cash_pnl = float(pnl_val)
+
+                                pnl_emoji = "🟢" if cash_pnl >= 0 else "🔴"
+                                pnl_sign = "+" if cash_pnl > 0 else ""
+
+                                lines.extend([
+                                    f"🎯 <b>{title}</b>",
+                                    f"• Outcome: <code>{outcome}</code>",
+                                    f"• Size: <code>{size:.2f}</code> shares",
+                                    f"• Entry: <code>${avg_price:.3f}</code>",
+                                    f"• Mark: <code>${cur_price:.3f}</code>",
+                                    f"• PnL: {pnl_emoji} <b>{pnl_sign}${cash_pnl:.2f}</b>",
+                                    "───────────────────"
+                                ])
+                            except Exception:
+                                pass
+
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
+                    await safe_edit_callback(query, "\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+                elif query.data == "wallet_pnl":
+                    import httpx
+                    closed_pos = []
+                    open_pos = []
+                    try:
+                        async with httpx.AsyncClient(timeout=8.0) as client:
+                            r_open = await client.get(f"https://data-api.polymarket.com/positions?user={target_address}&limit=500&sizeThreshold=0")
+                            if r_open.status_code == 200:
+                                open_pos = r_open.json()
+                            r_closed = await client.get(f"https://data-api.polymarket.com/closed-positions?user={target_address}&limit=50")
+                            if r_closed.status_code == 200:
+                                closed_pos = r_closed.json()
+                    except Exception as e:
+                        logger.error("Failed to query closed positions for PnL: %s", e)
+
+                    total_wins = 0
+                    total_losses = 0
+                    total_realized_pnl = 0.0
+                    open_cash_pnl = 0.0
+                    open_current_value = 0.0
+
+                    if isinstance(closed_pos, list):
+                        for x in closed_pos:
+                            try:
+                                val = x.get("realizedPnl")
+                                if val is not None:
+                                    pnl_val = float(val)
+                                    total_realized_pnl += pnl_val
+                                    if pnl_val > 0:
+                                        total_wins += 1
+                                    elif pnl_val < 0:
+                                        total_losses += 1
+                            except Exception:
+                                pass
+
+                    if isinstance(open_pos, list):
+                        for x in open_pos:
+                            try:
+                                open_cash_pnl += float(x.get("cashPnl") or 0.0)
+                                open_current_value += float(x.get("currentValue") or 0.0)
+                            except Exception:
+                                pass
+
+                    wallet_balances = {}
+                    try:
+                        manager = self._get_wallet_manager()
+                        wallet_balances = await manager.recuperer_soldes_on_chain(
+                            active_address,
+                            proxy_address=proxy_address,
                         )
-                        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-                        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text(no_wallet_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-                        return
+                    except Exception as e:
+                        logger.warning("Failed to query wallet balances for PnL: %s", e)
 
-                    if query.data == "wallet_history":
-                        import httpx
-                        open_pos = []
-                        closed_pos = []
-                        activity = []
+                    usdc_direct = float(wallet_balances.get("usdc_direct", 0.0) or 0.0)
+                    usdc_proxy = float(wallet_balances.get("usdc_proxy", 0.0) or 0.0)
+                    total_capital = usdc_direct + usdc_proxy + open_current_value
 
-                        try:
-                            async with httpx.AsyncClient(timeout=8.0) as client:
-                                r_open = await client.get(f"https://data-api.polymarket.com/positions?user={target_address}&limit=50")
-                                if r_open.status_code == 200:
-                                    open_pos = r_open.json()
-                                r_closed = await client.get(f"https://data-api.polymarket.com/closed-positions?user={target_address}&limit=50")
-                                if r_closed.status_code == 200:
-                                    closed_pos = r_closed.json()
-                                r_act = await client.get(f"https://data-api.polymarket.com/activity?user={target_address}&limit=50&type=TRADE")
-                                if r_act.status_code == 200:
-                                    activity = r_act.json()
-                        except Exception as e:
-                            logger.error("Failed to query Polymarket API history: %s", e)
+                    reference_capital = self._load_pnl_reference_capital(
+                        chat_id=chat_id,
+                        active_address=active_address,
+                        proxy_address=proxy_address or target_address,
+                    )
+                    net_capital_pnl = total_capital - reference_capital if reference_capital is not None else None
 
-                        # Compute metrics robustly to prevent crashes
-                        volume_total = 0.0
-                        if isinstance(activity, list):
-                            for x in activity:
-                                try:
-                                    u_sz = x.get("usdcSize")
-                                    if u_sz is not None:
-                                        volume_total += float(u_sz)
-                                    else:
-                                        sz = x.get("size")
-                                        pr = x.get("price")
-                                        if sz is not None and pr is not None:
-                                            volume_total += float(sz) * float(pr)
-                                except Exception:
-                                    pass
+                    total_trades = len(closed_pos) if isinstance(closed_pos, list) else 0
+                    win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0.0
+                    closed_emoji = "🟢" if total_realized_pnl >= 0 else "🔴"
+                    closed_sign = "+" if total_realized_pnl > 0 else ""
+                    net_emoji = "🟢" if (net_capital_pnl or 0.0) >= 0 else "🔴"
+                    net_sign = "+" if net_capital_pnl is not None and net_capital_pnl > 0 else ""
 
-                        realized_pnl = 0.0
-                        if isinstance(closed_pos, list):
-                            for x in closed_pos:
-                                try:
-                                    val = x.get("realizedPnl")
-                                    if val is not None:
-                                        realized_pnl += float(val)
-                                except Exception:
-                                    pass
-
-                        pnl_emoji = "🟢" if realized_pnl >= 0 else "🔴"
-                        pnl_sign = "+" if realized_pnl > 0 else ""
-
-                        # Layout exactly matching user format
-                        lines = [
-                            "<b>📜 POLYMARKET HISTORY</b>",
-                            "───────────────────",
-                            f"⭐ <b>Wallet</b>: {self._html(wallet_name.capitalize())}",
-                            f"📬 <code>{self._html(target_address)}</code>",
-                            f"💵 <b>Volume Total</b>: <code>${volume_total:.2f}</code>",
-                            f"📦 <b>Open Positions</b>: <code>{len(open_pos) if isinstance(open_pos, list) else 0}</code>",
-                            f"✅ <b>Closed Positions</b>: <code>{len(closed_pos) if isinstance(closed_pos, list) else 0}</code>",
-                            f"{pnl_emoji} <b>PnL Réalisé</b>: <b>{pnl_sign}${realized_pnl:.2f}</b>",
-                            "───────────────────"
-                        ]
-
-                        if not activity or not isinstance(activity, list):
-                            lines.append("\n<i>Aucune transaction récente sur pUSD détectée.</i>")
-                        else:
-                            # Show up to 6 trades
-                            for act in activity[:6]:
-                                try:
-                                    title = self._html(act.get("title", "Unknown Market"))
-                                    side = self._html(str(act.get("side", "BUY")).upper())
-                                    outcome = self._html(act.get("outcome", "YES"))
-
-                                    size_val = act.get("size", 0.0)
-                                    size = float(size_val) if size_val is not None else 0.0
-
-                                    price_val = act.get("price", 0.0)
-                                    price = float(price_val) if price_val is not None else 0.0
-
-                                    ts = act.get("timestamp", 0)
-                                    date_str = ""
-                                    if ts:
-                                        try:
-                                            from datetime import datetime
-                                            date_str = datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
-                                        except Exception:
-                                            pass
-
-                                    lines.extend([
-                                        f"🎯 <b>{title}</b>",
-                                        f"• <b>{side}</b> <code>{outcome}</code>",
-                                        f"• Size: <code>{size:.2f}</code>",
-                                        f"• Price: <code>${price:.3f}</code>",
-                                    ])
-                                    if date_str:
-                                        lines.append(f"• Date: <code>{date_str}</code>")
-                                    lines.append("───────────────────")
-                                except Exception:
-                                    pass
-
-                        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-                        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-
-                    elif query.data == "wallet_orders":
-                        orders_text = (
-                            "<b>🎯 Polymarket Cockpit</b>\n"
-                            "───────────────────\n"
-                            "📋 <b>Active Orders</b>:\n"
-                            "No active pending orders detected on-chain.\n"
-                            "───────────────────"
-                        )
-                        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-                        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text(orders_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-
-                    elif query.data == "wallet_positions":
-                        import httpx
-                        open_pos = []
-                        try:
-                            async with httpx.AsyncClient(timeout=8.0) as client:
-                                r_open = await client.get(f"https://data-api.polymarket.com/positions?user={target_address}&limit=50")
-                                if r_open.status_code == 200:
-                                    open_pos = r_open.json()
-                        except Exception as e:
-                            logger.error("Failed to query open positions: %s", e)
-
-                        lines = [
-                            "<b>🎯 Polymarket Cockpit</b>",
-                            "───────────────────",
-                            "📊 <b>Open Positions</b>:"
-                        ]
-
-                        if not open_pos or not isinstance(open_pos, list):
-                            lines.append("No active open positions on Polymarket found.")
-                        else:
-                            for pos in open_pos[:10]:
-                                try:
-                                    title = self._html(pos.get("title", "Unknown Market"))
-                                    outcome = self._html(pos.get("outcome", "YES"))
-
-                                    size_val = pos.get("size", 0.0)
-                                    size = float(size_val) if size_val is not None else 0.0
-
-                                    avg_val = pos.get("avgPrice", 0.0)
-                                    avg_price = float(avg_val) if avg_val is not None else 0.0
-
-                                    cur_val = pos.get("curPrice", 0.0)
-                                    cur_price = float(cur_val) if cur_val is not None else 0.0
-
-                                    cash_pnl = 0.0
-                                    pnl_val = pos.get("cashPnl")
-                                    if pnl_val is None:
-                                        pnl_val = pos.get("unrealizedPnl")
-                                    if pnl_val is not None:
-                                        cash_pnl = float(pnl_val)
-
-                                    pnl_emoji = "🟢" if cash_pnl >= 0 else "🔴"
-                                    pnl_sign = "+" if cash_pnl > 0 else ""
-
-                                    lines.extend([
-                                        f"🎯 <b>{title}</b>",
-                                        f"• Outcome: <code>{outcome}</code>",
-                                        f"• Size: <code>{size:.2f}</code> shares",
-                                        f"• Entry: <code>${avg_price:.3f}</code>",
-                                        f"• Mark: <code>${cur_price:.3f}</code>",
-                                        f"• PnL: {pnl_emoji} <b>{pnl_sign}${cash_pnl:.2f}</b>",
-                                        "───────────────────"
-                                    ])
-                                except Exception:
-                                    pass
-
-                        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-                        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-
-                    elif query.data == "wallet_pnl":
-                        import httpx
-                        closed_pos = []
-                        open_pos = []
-                        try:
-                            async with httpx.AsyncClient(timeout=8.0) as client:
-                                r_open = await client.get(f"https://data-api.polymarket.com/positions?user={target_address}&limit=500&sizeThreshold=0")
-                                if r_open.status_code == 200:
-                                    open_pos = r_open.json()
-                                r_closed = await client.get(f"https://data-api.polymarket.com/closed-positions?user={target_address}&limit=50")
-                                if r_closed.status_code == 200:
-                                    closed_pos = r_closed.json()
-                        except Exception as e:
-                            logger.error("Failed to query closed positions for PnL: %s", e)
-
-                        total_wins = 0
-                        total_losses = 0
-                        total_realized_pnl = 0.0
-                        open_cash_pnl = 0.0
-                        open_current_value = 0.0
-
-                        if isinstance(closed_pos, list):
-                            for x in closed_pos:
-                                try:
-                                    val = x.get("realizedPnl")
-                                    if val is not None:
-                                        pnl_val = float(val)
-                                        total_realized_pnl += pnl_val
-                                        if pnl_val > 0:
-                                            total_wins += 1
-                                        elif pnl_val < 0:
-                                            total_losses += 1
-                                except Exception:
-                                    pass
-
-                        if isinstance(open_pos, list):
-                            for x in open_pos:
-                                try:
-                                    open_cash_pnl += float(x.get("cashPnl") or 0.0)
-                                    open_current_value += float(x.get("currentValue") or 0.0)
-                                except Exception:
-                                    pass
-
-                        wallet_balances = {}
-                        try:
-                            manager = self._get_wallet_manager()
-                            wallet_balances = await manager.recuperer_soldes_on_chain(
-                                active_address,
-                                proxy_address=proxy_address,
-                            )
-                        except Exception as e:
-                            logger.warning("Failed to query wallet balances for PnL: %s", e)
-
-                        usdc_direct = float(wallet_balances.get("usdc_direct", 0.0) or 0.0)
-                        usdc_proxy = float(wallet_balances.get("usdc_proxy", 0.0) or 0.0)
-                        total_capital = usdc_direct + usdc_proxy + open_current_value
-
-                        reference_capital = self._load_pnl_reference_capital(
-                            chat_id=chat_id,
-                            active_address=active_address,
-                            proxy_address=proxy_address or target_address,
-                        )
-                        net_capital_pnl = total_capital - reference_capital if reference_capital is not None else None
-
-                        total_trades = len(closed_pos) if isinstance(closed_pos, list) else 0
-                        win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0.0
-                        closed_emoji = "🟢" if total_realized_pnl >= 0 else "🔴"
-                        closed_sign = "+" if total_realized_pnl > 0 else ""
-                        net_emoji = "🟢" if (net_capital_pnl or 0.0) >= 0 else "🔴"
-                        net_sign = "+" if net_capital_pnl is not None and net_capital_pnl > 0 else ""
-
-                        lines = [
-                            "<b>🎯 Polymarket Cockpit</b>",
-                            "───────────────────",
-                            "💰 <b>PnL Metrics (Real-Time)</b>:",
-                            f"• Wallet: <code>{self._html(wallet_name)}</code>",
-                            f"• EOA: <code>{self._html(active_address)}</code>",
-                            f"• Proxy: <code>{self._html(proxy_address or target_address)}</code>",
-                            "",
-                            f"• USDC Direct: <code>{usdc_direct:.2f}</code>",
-                            f"• Polymarket pUSD: <code>{usdc_proxy:.2f}</code>",
-                            f"• Open Value: <code>${open_current_value:.2f}</code>",
-                            f"• Total Capital: <b>${total_capital:.2f}</b>",
-                            "───────────────────"
-                        ]
-                        if net_capital_pnl is not None:
-                            lines.extend([
-                                f"• Capital Basis: <code>${reference_capital:.2f}</code>",
-                                f"• Net Gain: {net_emoji} <b>{net_sign}${net_capital_pnl:.2f}</b>",
-                                "───────────────────"
-                            ])
-                        else:
-                            lines.append("• Net Gain: <code>N/A (reference missing)</code>")
-
+                    lines = [
+                        "<b>🎯 Polymarket Cockpit</b>",
+                        "───────────────────",
+                        "💰 <b>PnL Metrics (Real-Time)</b>:",
+                        f"• Wallet: <code>{self._html(wallet_name)}</code>",
+                        f"• EOA: <code>{self._html(active_address)}</code>",
+                        f"• Proxy: <code>{self._html(proxy_address or target_address)}</code>",
+                        "",
+                        f"• USDC Direct: <code>{usdc_direct:.2f}</code>",
+                        f"• Polymarket pUSD: <code>{usdc_proxy:.2f}</code>",
+                        f"• Open Value: <code>${open_current_value:.2f}</code>",
+                        f"• Total Capital: <b>${total_capital:.2f}</b>",
+                        "───────────────────"
+                    ]
+                    if net_capital_pnl is not None:
                         lines.extend([
-                            f"• Trades: <code>{total_trades}</code> (WR: <code>{win_rate:.1f}%</code>)",
-                            f"• Realized: {closed_emoji} <b>{closed_sign}${total_realized_pnl:.2f}</b>",
-                            f"• Floating: <b>{'+' if open_cash_pnl > 0 else ''}${open_cash_pnl:.2f}</b>",
+                            f"• Capital Basis: <code>${reference_capital:.2f}</code>",
+                            f"• Net Gain: {net_emoji} <b>{net_sign}${net_capital_pnl:.2f}</b>",
                             "───────────────────"
                         ])
+                    else:
+                        lines.append("• Net Gain: <code>N/A (reference missing)</code>")
 
-                        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-                        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
-                        await query.edit_message_text("\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                    lines.extend([
+                        f"• Trades: <code>{total_trades}</code> (WR: <code>{win_rate:.1f}%</code>)",
+                        f"• Realized: {closed_emoji} <b>{closed_sign}${total_realized_pnl:.2f}</b>",
+                        f"• Floating: <b>{'+' if open_cash_pnl > 0 else ''}${open_cash_pnl:.2f}</b>",
+                        "───────────────────"
+                    ])
+
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Return to Cockpit", callback_data="wallet_refresh")]])
+                    await safe_edit_callback(query, "\n".join(lines), reply_markup=reply_markup, parse_mode=ParseMode.HTML)
                 return
 
         # Handle specific prefix queries first

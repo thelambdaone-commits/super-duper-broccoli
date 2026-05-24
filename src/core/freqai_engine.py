@@ -68,7 +68,31 @@ class FreqAIEngine:
             logger.debug("Unable to resolve market filters for %s: %s", token_id, exc)
         return filters
 
+    def _validate_market_is_tradeable(self, token_id: str) -> None:
+        try:
+            book = self.client.get_order_book(token_id)
+        except Exception as exc:
+            raise ValueError(f"[Market] Ordre rejeté: token_id invalide ou marché indisponible ({exc})") from exc
+
+        if book is None:
+            raise ValueError("[Market] Ordre rejeté: carnet introuvable pour ce token.")
+
+        if isinstance(book, dict):
+            active = book.get("active")
+            closed = book.get("closed")
+            archived = book.get("archived")
+        else:
+            active = getattr(book, "active", None)
+            closed = getattr(book, "closed", None)
+            archived = getattr(book, "archived", None)
+
+        if active is False or closed is True or archived is True:
+            raise ValueError(
+                f"[Market] Ordre rejeté: marché inactif/résolu (active={active}, closed={closed}, archived={archived})."
+            )
+
     def normalize_and_validate(self, ticker: str, price: float, size: float) -> tuple[int, float]:
+        self._validate_market_is_tradeable(ticker)
         market_filters = self._get_market_filters(ticker)
         min_notional = float(market_filters.get("min_notional", self.POLYMARKET_MIN_NOTIONAL) or self.POLYMARKET_MIN_NOTIONAL)
         min_order_size = float(market_filters.get("min_order_size", 1.0) or 1.0)

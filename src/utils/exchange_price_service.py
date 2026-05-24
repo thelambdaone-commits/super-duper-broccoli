@@ -21,6 +21,18 @@ class ExchangePriceService:
         }
         self._running = False
         self._closed = False
+        self._closing = False
+
+    def __del__(self) -> None:
+        if not self._closed and not self._closing:
+            self._closing = True
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._close_exchanges())
+            except RuntimeError:
+                pass
 
     async def start(self):
         self._running = True

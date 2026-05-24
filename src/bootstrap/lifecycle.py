@@ -416,10 +416,14 @@ class BotLifecycle:
 
         # --- Dual-Mode Redis Control Listener ---
         async def redis_mode_listener():
+            redis_url = (os.getenv("REDIS_URL", "") or "").strip()
+            if not redis_url:
+                logger.info("Redis hot-swap disabled: REDIS_URL not configured.")
+                return
             try:
                 import redis.asyncio as aioredis
                 import json
-                r = aioredis.Redis(host='localhost', port=6379, db=0)
+                r = aioredis.from_url(redis_url, decode_responses=True)
                 pubsub = r.pubsub()
                 await pubsub.subscribe("lobstar:control:mode")
                 logger.info("📡 [REDIS] Listening for hot mode swaps on 'lobstar:control:mode'")
@@ -441,7 +445,7 @@ class BotLifecycle:
             except ImportError:
                 logger.warning("redis.asyncio not available. Redis hot-swap disabled.")
             except Exception as e:
-                logger.debug(f"Redis mode listener error: {e}")
+                logger.info("Redis hot-swap listener unavailable: %s", e)
 
         redis_task = asyncio.create_task(redis_mode_listener())
         dashboard_task = asyncio.create_task(_send_dashboard_when_ready()) if listener and _dashboard_target else None

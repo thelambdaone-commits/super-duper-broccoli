@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import time
+import requests
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -23,6 +24,8 @@ from core.healing.autonomic_healer import LobstarAutonomicHealer
 from utils.config_loader import get_health_config
 
 logger = logging.getLogger("HealthMonitorAgent")
+
+POLYMARKET_API_BASE = "https://data-api.polymarket.com/positions"
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,10 @@ class HealthMonitorAgent:
         self._last_duckdb_maintenance = 0.0
         self._last_memory_check = 0.0
         self._last_heartbeat = 0.0
+
+    @staticmethod
+    def _resolve_target_user() -> str:
+        return (os.getenv("POLYMARKET_TARGET_USER", "") or "").strip()
 
     @property
     def is_running(self) -> bool:
@@ -115,14 +122,79 @@ class HealthMonitorAgent:
             return {"status": "warn", "rss_mb": rss_mb, "action": gc_result}
         return {"status": "ok", "rss_mb": rss_mb}
 
+    async def sync_positions(self) -> dict[str, Any]:
+        """Fetch positions from API and sync with the local ledger."""
+        if not self.ledger:
+            return {"status": "skipped", "reason": "no ledger"}
+        target_user = self._resolve_target_user()
+        if not target_user:
+            return {"status": "skipped", "reason": "POLYMARKET_TARGET_USER not configured"}
+        
+        try:
+            loop = asyncio.get_event_loop()
+            # Fetch data in a thread pool to avoid blocking the event loop
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.get(POLYMARKET_API_BASE, params={"user": target_user}, timeout=10),
+            )
+            if response.status_code != 200:
+                return {"status": "error", "code": response.status_code}
+            
+            positions = response.json()
+            
+            # Sync to ledger (assuming self.ledger supports direct cursor/connection access or an update method)
+            # We access the ledger's conn to perform the sync.
+            conn = self.ledger.conn
+            cursor = conn.cursor()
+            
+            synced_count = 0
+            skipped_count = 0
+            for pos in positions:
+                ticker = (
+                    pos.get("market")
+                    or pos.get("title")
+                    or pos.get("slug")
+                    or pos.get("conditionId")
+                    or pos.get("condition_id")
+                    or pos.get("asset")
+                    or pos.get("asset_id")
+                )
+                if ticker is None:
+                    skipped_count += 1
+                    logger.debug("Skipping position without market identifier: %s", pos)
+                    continue
+                ticker = str(ticker).strip()
+                if not ticker:
+                    skipped_count += 1
+                    logger.debug("Skipping position with blank market identifier: %s", pos)
+                    continue
+                size = float(pos.get("size", 0))
+                entry_price = float(pos.get("avgPrice", 0))
+                
+                cursor.execute("""
+                    INSERT INTO positions (position_id, ticker, side, size, entry_price, status)
+                    VALUES (?, ?, ?, ?, ?, 'OPEN')
+                    ON CONFLICT(position_id) DO UPDATE SET
+                        size=excluded.size
+                """, (f"api_{ticker}", ticker, "BUY", size, entry_price))
+                synced_count += 1
+            
+            conn.commit()
+            return {"status": "ok", "synced": synced_count, "skipped": skipped_count}
+        except Exception as e:
+            logger.error("Failed to sync positions: %s", e)
+            return {"status": "error", "message": str(e)}
+
     async def run_once(self) -> dict[str, Any]:
         result = {
             "heartbeat": await self.emit_heartbeat(),
             "memory": await self.check_memory(),
             "ledger": await self.reconcile_ledger(),
+            "positions_sync": await self.sync_positions(),
             "feature_store": await self.maintain_feature_store(),
         }
         return result
+
 
     async def run_forever(
         self,
