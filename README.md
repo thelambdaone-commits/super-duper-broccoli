@@ -578,85 +578,30 @@ make bandit
 - **Maker-First Execution** — post-only orders avoid toxic spread; taker fallback on timeout
 - **4 Execution Modes** — graduated capital deployment from REPLAY → PROD
 
-## Project Structure
+## 📂 Structure du Projet
 
-```
+Le projet suit une architecture modulaire et domaine-orientée, centralisée dans le dossier `src/`.
+
+```text
 quant-agentic-trading-core/
-├── main_agentic_clob.py       # CLI entry point
-├── api/
-│   ├── api_server.py          # FastAPI REST server
-│   └── dashboard.py           # Streamlit dashboard
-├── config/                    # Configuration
-│   ├── constants.py
-│   ├── ledger_schema.sql
-│   ├── agent_integrations.json
-│   ├── ai_specialists.json
-│   ├── free_ai_provider_sources.json
-│   ├── llm_council.json
-│   ├── mcp_tools.json
-│   ├── mirofish.json
-│   └── project_contexts.json
-├── core/                      # Core engine
-│   ├── freqai_engine.py
-│   ├── signal_executor.py
-│   ├── portfolio_risk_engine.py
-│   └── training_pipeline.py
-├── execution/                 # Order execution
-│   └── passive_executor.py
-├── ledger/                    # State persistence
-│   └── ledger_db.py
-├── scrappers/                 # Specialized scrapers
-│   └── mets_telegram_scraper.py
-├── mcp_agents/                # MCP server + agents
-│   ├── mcp_server.py
-│   ├── lobstar_agent.py
-│   └── order_manager.py
-├── user_data/
-│   ├── strategies/            # Trading strategies
-│   │   ├── hmm_filter.py
-│   │   ├── probability_calibrator.py
-│   │   ├── arbitrage_scanner.py
-│   │   ├── feature_pipeline.py
-│   │   ├── risk_validation.py
-│   │   └── sentiment_nlp.py
-│   ├── freqaimodels/          # ML models
-│   │   └── HybridQuantModel.py
-│   └── hypernetworks/
-│       └── tft_layers.py
-├── utils/                     # Infrastructure
-│   ├── vault_handler.py
-│   ├── feature_store.py
-│   ├── data_archiver.py
-│   ├── signal_parser.py
-│   ├── scrapling_adapter.py
-│   ├── derive_clob_creds.py
-│   ├── llm_council.py
-│   ├── ai_specialists.py
-│   ├── project_context.py
-│   ├── mirofish_adapter.py
-│   ├── regime_utils.py
-│   └── exceptions.py
-├── scripts/                   # Utility scripts
-│   ├── train_all.py
-│   ├── llm_council.py
-│   ├── mirofish_plan.py
-│   ├── sync_optional_vault_keys.py
-│   ├── discover_free_ai_providers.py
-│   ├── dump_project.py
-│   └── dump_project.sh
-├── continuous_improvement/    # CI agent system
-│   ├── ci_agent.py
-│   ├── knowledge_base.py
-│   ├── analyzer.py
-│   └── skills/
-├── tests/                     # 66+ test files across unit, integration, execution, and services
-├── .github/workflows/         # GitHub Actions CI
-│   └── ci.yml
-├── requirements.txt
-├── setup.sh
-├── ecosystem.config.js        # PM2 config
-├── pytest.ini
-└── quant-agentic-trading-core.service
+├── src/
+│   ├── agents/          # Personas de trading (PolyBot, etc.)
+│   ├── app/             # Entrées CLI, API FastAPI et TUI Streamlit
+│   ├── core/            # Logique d'orchestration, scheduler et sécurité
+│   ├── database/        # Moteur SQLite (Ledger)
+│   ├── interface/       # Interface Telegram et gestion des commandes
+│   ├── polymarket/      # Moteur d'exécution, SDK CLOB et Wallet Manager
+│   ├── schemas/         # Contrats de données et modèles techniques
+│   ├── services/        # Services autonomes (Risk Engine, IA, Metrics)
+│   ├── strategies/      # Algorithmes quantitatifs (Arbitrage, ML, Sentiment)
+│   └── utils/           # Utilitaires globaux (Logging, Config, Vault, Tickers)
+├── runtime/             # État volatil (Bases de données, Logs, Modèles IA)
+├── tests/               # Suite de tests complète (815 tests passés)
+├── configs/             # Configuration métier (Trading, Risk, Agents)
+├── scripts/             # Scripts d'entraînement et utilitaires CLI
+├── .env.example         # Template des variables d'environnement
+├── main_agentic_clob.py # Point d'entrée principal
+└── ecosystem.config.js  # Configuration PM2 pour le déploiement
 ```
 
 ## License

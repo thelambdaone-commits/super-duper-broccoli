@@ -1158,6 +1158,16 @@ class TelegramListener:
         chat_id = getattr(msg, "chat_id", None)
         wallet_name, wallet_address, proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
         target_address = proxy_address or wallet_address
+        
+        # Sync real capital before showing status
+        soldes = {}
+        try:
+            from core.container import ServiceContainer
+            container = ServiceContainer.get_instance()
+            soldes = await container.sync_real_capital()
+        except Exception as exc:
+            logger.debug("Real-time capital sync failed for status command: %s", exc)
+
         cap_summary = {}
         if self._ledger:
             try:
@@ -1165,12 +1175,15 @@ class TelegramListener:
             except Exception as exc:
                 logger.debug("Capital summary unavailable for status command: %s", exc)
         total = cap_summary.get("total_capital", "?")
+
         onchain_total = None
         usdc_direct = 0.0
         usdc_proxy = 0.0
         try:
-            manager = self._get_wallet_manager()
-            soldes = await manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
+            if not soldes:
+                manager = self._get_wallet_manager()
+                soldes = await manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address or "")
+            
             usdc_direct = float(soldes.get("usdc_direct", 0.0) or 0.0)
             usdc_proxy = float(soldes.get("usdc_proxy", 0.0) or 0.0)
             onchain_total = usdc_direct + usdc_proxy
@@ -1338,16 +1351,19 @@ class TelegramListener:
         target_address = proxy_address or wallet_address
 
         # Sync real capital before showing balance
+        soldes = {}
         try:
             from core.container import ServiceContainer
             container = ServiceContainer.get_instance()
-            await container.sync_real_capital()
+            soldes = await container.sync_real_capital()
         except Exception as exc:
             logger.debug("Real-time capital sync failed for balance command: %s", exc)
 
         try:
-            manager = self._get_wallet_manager()
-            soldes = await manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
+            if not soldes:
+                manager = self._get_wallet_manager()
+                soldes = await manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address or "")
+            
             cap = self._ledger.get_capital_summary()
             ledger_total = float(cap.get("total_capital", 0) if cap else 0)
             ledger_available = float(cap.get("available_capital", 0) if cap else 0)
@@ -2235,9 +2251,9 @@ class TelegramListener:
                     except Exception as e:
                         logger.warning("Failed to query wallet balances for PnL: %s", e)
 
-                    usdc_direct = float(wallet_balances.get("usdc_direct", 0.0) or 0.0)
-                    usdc_proxy = float(wallet_balances.get("usdc_proxy", 0.0) or 0.0)
-                    total_capital = usdc_direct + usdc_proxy + open_current_value
+                    usdc_wallet = float(wallet_balances.get("usdc_wallet", 0.0) or 0.0)
+                    pusd_exchange = float(wallet_balances.get("pusd_exchange", 0.0) or 0.0)
+                    total_capital = usdc_wallet + pusd_exchange + open_current_value
 
                     reference_capital = self._load_pnl_reference_capital(
                         chat_id=chat_id,
@@ -2262,8 +2278,8 @@ class TelegramListener:
                         f"• EOA: {self._html(active_address)}",
                         f"• Proxy: {self._html(proxy_address or target_address)}",
                         "",
-                        f"• USDC Direct: {usdc_direct:.2f}",
-                        f"• Polymarket pUSD: {usdc_proxy:.2f}",
+                        f"• USDC (Wallet): ${usdc_wallet:.2f}",
+                        f"• pUSD (Exchange): <b>${pusd_exchange:.2f}</b>",
                         f"• Open Value: ${open_current_value:.2f}",
                         f"• Total Capital: <b>${total_capital:.2f}</b>",
                         "───────────────────"

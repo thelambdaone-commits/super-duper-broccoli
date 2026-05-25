@@ -192,7 +192,7 @@ class ServiceContainer:
             cls._instance = cls()
         return cls._instance
 
-    async def sync_real_capital(self) -> None:
+    async def sync_real_capital(self) -> dict[str, float]:
         """Syncs the ledger with real-world capital if RPC is available."""
         from polymarket.execution.wallet_manager import PolymarketWalletManager
 
@@ -202,21 +202,27 @@ class ServiceContainer:
 
         if not wallet_address or not rpc_url:
             logger.warning("Capital sync skipped: WALLET_ADDRESS or POLYGON_RPC_URL missing.")
-            return
+            return {}
 
         try:
             mgr = PolymarketWalletManager(self.vault, polygon_rpc_url=rpc_url)
-            balances = await mgr.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
-            real_total = balances.get("usdc_balance", 0.0)
+            balances = await mgr.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address or "")
+            # IMPORTANT: For CLOB trading, we only care about the balance already in pUSD (Exchange)
+            # Raw USDC in the wallet cannot be traded until deposited.
+            real_tradable = balances.get("pusd_exchange", 0.0)
 
-            if real_total > 0:
-                self.ledger.sync_capital(real_total)
+            if real_tradable > 0:
+                self.ledger.sync_capital(real_tradable)
                 # Re-rehydrate risk to be sure
                 self.risk.rehydrate_from_ledger(self.ledger)
             else:
-                logger.warning(f"Real capital reported as 0.0 for {wallet_address}. Sync aborted to prevent safety issues.")
+                # If exchange balance is 0, we should still sync to prevent over-trading
+                self.ledger.sync_capital(0.0)
+                logger.warning(f"Tradable exchange balance is 0.0 for {wallet_address}. Trading will be blocked until USDC is deposited into Polymarket.")
+            return balances
         except Exception as e:
             logger.error(f"Failed to sync real capital: {e}")
+            return {}
 
     def _make_timeout_calibrator(self):
         from utils.regime_utils import get_regime_label

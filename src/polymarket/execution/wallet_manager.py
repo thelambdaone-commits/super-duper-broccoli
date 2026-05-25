@@ -71,78 +71,86 @@ class PolymarketWalletManager:
             raise ValueError("Seed phrase invalide ou chemin de derivation corrompu.") from exc
 
     async def recuperer_soldes_on_chain(self, wallet_address: str, proxy_address: str = "") -> Dict[str, float]:
-        if not self.rpc_url:
+        """
+        Récupère les soldes réels (POL, USDC, pUSD) sur Polygon en mode parallèle.
+        """
+        if not self.rpc_url or not wallet_address:
             return {
-                "usdc_balance": 0.0,
-                "usdc_direct": 0.0,
-                "usdc_proxy": 0.0,
-                "eth_balance": 0.0
+                "usdc_balance": 0.0, "usdc_direct": 0.0, "usdc_proxy": 0.0,
+                "usdc_wallet": 0.0, "pusd_exchange": 0.0, "eth_balance": 0.0
             }
 
-        eth_balance = 0.0
-        eoa_usdc_native = 0.0
-        eoa_usdc_e = 0.0
-        proxy_pusd = 0.0
-        proxy_usdc_native = 0.0
-        proxy_usdc_e = 0.0
-
-        # LOBSTAR V2: RPC Resilience Settings
         rpc_timeout = self.request_timeout
         rpc_retries = self.rpc_retry_count
 
-        async def _call_rpc_with_retry(method: str, params: list, retry_count: int = rpc_retries) -> Any:
+        async def _call_rpc_safe(method: str, params: list) -> Any:
             payload = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
-            last_exc = None
             async with httpx.AsyncClient(timeout=rpc_timeout) as client:
-                for attempt in range(retry_count):
+                for attempt in range(rpc_retries):
                     try:
                         resp = await client.post(self.rpc_url, json=payload)
                         resp.raise_for_status()
                         return resp.json().get("result")
                     except Exception as exc:
-                        last_exc = exc
-                        logger.debug(f"RPC {method} attempt {attempt+1} failed: {exc}")
-                        if attempt < retry_count - 1:
-                            await asyncio.sleep(0.5 * (attempt + 1))
-            raise last_exc
+                        if attempt == rpc_retries - 1:
+                            logger.debug(f"RPC {method} failed after {rpc_retries} attempts: {exc}")
+                            return None
+                        await asyncio.sleep(0.2 * (attempt + 1))
+            return None
 
-        try:
-            # 1. POL (gas) balance
-            eth_result = await _call_rpc_with_retry("eth_getBalance", [wallet_address, "latest"])
-            eth_balance = int(eth_result or "0x0", 16) / 1e18
-
-            # Helper to fetch ERC20 balance
-            async def get_erc20_balance(token_contract: str, target_address: str) -> float:
-                if not target_address:
-                    return 0.0
-                normalized = target_address.lower().replace("0x", "")
-                data = f"0x70a08231{normalized.zfill(64)}"
-                result = await _call_rpc_with_retry("eth_call", [{"to": token_contract, "data": data}, "latest"])
+        async def get_erc20_balance(token_contract: str, target_address: str) -> float:
+            if not target_address: return 0.0
+            normalized = target_address.lower().replace("0x", "")
+            data = f"0x70a08231{normalized.zfill(64)}"
+            result = await _call_rpc_safe("eth_call", [{"to": token_contract, "data": data}, "latest"])
+            try:
                 return int(result or "0x0", 16) / 1e6
+            except (ValueError, TypeError):
+                return 0.0
 
-            # Query balances with individual retries
-            eoa_usdc_native = await get_erc20_balance(self.usdc_native_contract, wallet_address)
-            eoa_usdc_e = await get_erc20_balance(self.usdc_polygon_contract, wallet_address)
+        # Build list of tasks for parallel execution
+        tasks = [
+            _call_rpc_safe("eth_getBalance", [wallet_address, "latest"]),
+            get_erc20_balance(self.usdc_native_contract, wallet_address),
+            get_erc20_balance(self.usdc_polygon_contract, wallet_address),
+        ]
+        
+        has_proxy = bool(proxy_address and proxy_address.lower() != wallet_address.lower())
+        if has_proxy:
+            tasks.extend([
+                get_erc20_balance(self.pusd_contract, proxy_address),
+                get_erc20_balance(self.usdc_native_contract, proxy_address),
+                get_erc20_balance(self.usdc_polygon_contract, proxy_address),
+            ])
+        else:
+            tasks.append(get_erc20_balance(self.pusd_contract, wallet_address))
 
-            if proxy_address and proxy_address.lower() != wallet_address.lower():
-                proxy_pusd = await get_erc20_balance(self.pusd_contract, proxy_address)
-                proxy_usdc_native = await get_erc20_balance(self.usdc_native_contract, proxy_address)
-                proxy_usdc_e = await get_erc20_balance(self.usdc_polygon_contract, proxy_address)
-            elif proxy_address and proxy_address.lower() == wallet_address.lower():
-                proxy_pusd = await get_erc20_balance(self.pusd_contract, wallet_address)
-            else:
-                proxy_pusd = await get_erc20_balance(self.pusd_contract, wallet_address)
+        results = await asyncio.gather(*tasks)
 
-        except Exception as exc:
-            logger.error("Wallet balance RPC lookup failed after multiple retries: %s", exc)
+        # Unpack results
+        eth_raw = results[0]
+        eth_balance = int(eth_raw or "0x0", 16) / 1e18 if eth_raw else 0.0
+        eoa_usdc_native = results[1]
+        eoa_usdc_e = results[2]
+        
+        if has_proxy:
+            proxy_pusd = results[3]
+            proxy_usdc_native = results[4]
+            proxy_usdc_e = results[5]
+        else:
+            proxy_pusd = results[3]
+            proxy_usdc_native = 0.0
+            proxy_usdc_e = 0.0
 
-        usdc_direct = eoa_usdc_native + eoa_usdc_e
-        usdc_proxy = proxy_pusd + proxy_usdc_native + proxy_usdc_e
+        usdc_wallet = float(eoa_usdc_native + eoa_usdc_e + proxy_usdc_native + proxy_usdc_e)
+        pusd_exchange = float(proxy_pusd)
 
         return {
-            "usdc_balance": float(usdc_direct + usdc_proxy),
-            "usdc_direct": float(usdc_direct),
-            "usdc_proxy": float(usdc_proxy),
+            "usdc_balance": float(usdc_wallet + pusd_exchange),
+            "usdc_direct": float(eoa_usdc_native + eoa_usdc_e),
+            "usdc_proxy": float(proxy_pusd + proxy_usdc_native + proxy_usdc_e),
+            "usdc_wallet": usdc_wallet,
+            "pusd_exchange": pusd_exchange,
             "eth_balance": float(eth_balance)
         }
 

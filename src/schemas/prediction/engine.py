@@ -12,7 +12,7 @@ from utils.config_loader import get_health_config
 logger = logging.getLogger("PredictiveEngine")
 
 DEFAULT_MODEL_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
+    os.getenv("RUNTIME_PATH", "runtime"),
     "user_data", "models"
 )
 
@@ -189,12 +189,23 @@ class PolymarketPredictiveEngine:
         df_live = pd.DataFrame(self._normalize_market_feature_rows(live_features))
         if df_live.empty:
             raise QuantFatal("Live feature matrix is empty after Binance injection")
-        return self.predict_winning_bet(
-            df_market_ticks=df_live,
-            clob_price_yes=clob_price_yes,
-            timestamp_resolution=timestamp_resolution,
-            ticker=ticker,
-        )
+        
+        try:
+            return self.predict_winning_bet(
+                df_market_ticks=df_live,
+                clob_price_yes=clob_price_yes,
+                timestamp_resolution=timestamp_resolution,
+                ticker=ticker,
+            )
+        except Exception as e:
+            logger.error(f"❌ Prediction engine error: {e}")
+            # Ensure we return a consistent rejection format on error
+            return {
+                "pari_approuve": False,
+                "probability_win": 0.5,
+                "absolute_edge": 0.0,
+                "conclusion": "ERROR_INTERNAL_INFERENCE",
+            }
 
     @staticmethod
     def _extract_positive_probability(prediction: Any) -> float:

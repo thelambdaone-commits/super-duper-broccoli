@@ -15,8 +15,12 @@ if SRC_ROOT.exists():
 
 os.environ.setdefault("PROJECT_ROOT", str(PROJECT_ROOT))
 os.environ.setdefault("CONFIG_PATH", str(PROJECT_ROOT / "configs" / "config"))
-os.environ.setdefault("DATA_PATH", str(PROJECT_ROOT / "runtime" / "data"))
-os.environ.setdefault("LOG_PATH", str(PROJECT_ROOT / "runtime" / "logs"))
-os.environ.setdefault("RUNTIME_PATH", str(PROJECT_ROOT / "runtime"))
-os.environ.setdefault("ARTIFACTS_PATH", str(PROJECT_ROOT / "artifacts"))
-os.environ.setdefault("SECRETS_PATH", str(PROJECT_ROOT / "secrets"))
+
+# Force project-local runtime paths
+CANONICAL_RUNTIME = PROJECT_ROOT / "runtime"
+os.environ["RUNTIME_PATH"] = str(CANONICAL_RUNTIME)
+os.environ["DATA_PATH"] = str(CANONICAL_RUNTIME / "database")
+os.environ["LOG_PATH"] = str(CANONICAL_RUNTIME / "logs")
+os.environ["ARTIFACTS_PATH"] = str(CANONICAL_RUNTIME / "artifacts")
+os.environ["SECRETS_PATH"] = str(CANONICAL_RUNTIME / "secrets")
+os.environ.setdefault("NLTK_DATA", str(CANONICAL_RUNTIME / "database" / "nltk_data"))
