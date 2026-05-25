@@ -61,6 +61,19 @@ class AutonomousAction:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class _FallbackSelectionScore:
+    signal: StrategySignal
+    score: float
+    ev: float
+    risk: float
+    cost: float
+    uncertainty: float
+    liquidity: float
+    suggested_capital: float
+    bandit_multiplier: float = 1.0
+
+
 class AutonomousTradingLoop:
     """
     Closed-loop autonomous trading controller.
@@ -140,6 +153,8 @@ class AutonomousTradingLoop:
             current_exposure_by_market=self._current_exposure_by_market(),
             total_capital=self._total_capital(),
         )
+        if not selected:
+            selected = self._fallback_selected_signals(features_by_market)
         for scored in selected:
             if self._open_position_count() >= self.config.max_total_open_positions:
                 return actions
@@ -205,25 +220,8 @@ class AutonomousTradingLoop:
             current_exposure_by_market=self._current_exposure_by_market(),
             total_capital=self._total_capital(),
         )
-        if not selected and features:
-            # Fallback: seed from the first market using its own feature quality.
-            first = next(iter(features_by_market.values()))
-            selected = [type("_Scored", (), {
-                "signal": StrategySignal(
-                    strategy_id="bootstrap",
-                    market_id=first.market_id,
-                    ticker=first.ticker,
-                    side="BUY" if (first.ml_probability or first.semantic_confidence or 0.5) >= first.price else "SELL",
-                    price=first.price if first.price > 0 else 0.5,
-                    confidence=max(0.50, min(0.80, first.semantic_confidence or 0.62)),
-                    edge=max(
-                        0.01,
-                        abs((first.ml_probability if first.ml_probability is not None else first.semantic_confidence or 0.5) - first.price),
-                    ),
-                    reason="bootstrap feature-based seed",
-                    metadata={"hmm_regime": first.hmm_regime},
-                )
-            })()]
+        if not selected:
+            selected = self._fallback_selected_signals(features_by_market)
 
         closed = 0
         for idx, scored in enumerate(selected):
@@ -320,18 +318,20 @@ class AutonomousTradingLoop:
 
         if position_id.startswith("paper-"):
             self.ledger.close_position(position_id, exit_price=exit_price, pnl=pnl)
-            self.lifecycle.record_paper_result(
-                strategy_id=self._extract_strategy_id(position),
-                pnl=pnl,
-                slippage=0.0,
-                rejected=False,
-            )
-            self.selector.update_feedback(
-                self._extract_strategy_id(position),
-                pnl=pnl,
-                slippage=0.0,
-                filled=True,
-            )
+            strategy_id = self._extract_strategy_id(position)
+            if strategy_id in self.lifecycle.states:
+                self.lifecycle.record_paper_result(
+                    strategy_id=strategy_id,
+                    pnl=pnl,
+                    slippage=0.0,
+                    rejected=False,
+                )
+                self.selector.update_feedback(
+                    strategy_id,
+                    pnl=pnl,
+                    slippage=0.0,
+                    filled=True,
+                )
             return AutonomousAction("close", "CLOSED", ticker=ticker, position_id=position_id, reason=reason, pnl=pnl)
 
         if not self.config.allow_real_execution:
@@ -524,6 +524,7 @@ class AutonomousTradingLoop:
                         execution_price=float(exec_result.get("price", signal.price)),
                         notional_usd=float(exec_result.get("price", signal.price)) * final_size,
                         exchange_order_id=exec_result.get("order_id"),
+                        signal_source=f"autonomous_strategy:{signal.strategy_id}",
                     )
                     self.ledger.set_position_sltp(position_id, self._stop_loss_for_signal(signal), self._take_profit_for_signal(signal))
                     return AutonomousAction("open", "OPENED", signal.strategy_id, signal.ticker, position_id=position_id, reason=signal.reason)
@@ -562,6 +563,7 @@ class AutonomousTradingLoop:
             execution_price=signal.price,
             notional_usd=signal.price * final_size,
             exchange_order_id=getattr(order, "order_id", None),
+            signal_source=f"autonomous_strategy:{signal.strategy_id}",
         )
         self.ledger.set_position_sltp(position_id, self._stop_loss_for_signal(signal), self._take_profit_for_signal(signal))
         return AutonomousAction("open", "OPENED", signal.strategy_id, signal.ticker, position_id=position_id, reason=signal.reason)
@@ -586,6 +588,45 @@ class AutonomousTradingLoop:
             except Exception as exc:
                 logger.debug("Failed to resolve autonomous ticker %s: %s", ticker, exc)
         return ticker
+
+    def _fallback_selected_signals(
+        self,
+        features_by_market: Mapping[str, MarketFeatures],
+    ) -> list[_FallbackSelectionScore]:
+        if not features_by_market:
+            return []
+        first = next(iter(features_by_market.values()))
+        if first.price <= 0:
+            return []
+        base_probability = first.ml_probability if first.ml_probability is not None else first.semantic_confidence or 0.5
+        edge = abs(base_probability - first.price)
+        if edge < self.config.min_signal_edge:
+            return []
+        confidence = max(0.50, min(0.80, first.semantic_confidence or 0.62))
+        signal = StrategySignal(
+            strategy_id="bootstrap",
+            market_id=first.market_id,
+            ticker=first.ticker,
+            side="BUY" if base_probability >= first.price else "SELL",
+            price=first.price,
+            confidence=confidence,
+            edge=edge,
+            reason="bootstrap feature-based seed",
+            metadata={"hmm_regime": first.hmm_regime, **dict(first.metadata or {})},
+        )
+        suggested_capital = min(self.config.default_paper_capital_usdc, max(5.0, self.config.default_paper_capital_usdc * 0.5))
+        return [
+            _FallbackSelectionScore(
+                signal=signal,
+                score=edge,
+                ev=edge,
+                risk=max(0.05, 1.0 - confidence),
+                cost=max(0.001, first.spread * 0.5),
+                uncertainty=max(0.05, 1.0 - confidence),
+                liquidity=max(0.0, (first.bid_volume + first.ask_volume) * max(first.price, 0.01)),
+                suggested_capital=suggested_capital,
+            )
+        ]
 
     def _compute_sizing(self, signal: StrategySignal) -> dict[str, Any]:
         mode = self.ledger.get_execution_mode().upper()

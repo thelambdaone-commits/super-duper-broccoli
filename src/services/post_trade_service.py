@@ -27,7 +27,7 @@ class PostTradeService:
         if result.get("status") == "SUCCESS":
             await self._handle_success(signal, result, execution_mode)
         elif result.get("status") == "SKIPPED":
-            logger.info("Signal skipped: %s", result.get("reason", "No reason provided"))
+            await self._handle_skip(signal, result)
             return
         else:
             await self._handle_failure(signal, result)
@@ -76,3 +76,12 @@ class PostTradeService:
             f"⚠️ *Execution Failed*\nTicker: `{result.get('ticker', 'Unknown')}`\nReason: `{reason}`"
         )
         self.circuit_breaker.record_failure(reason)
+
+    async def _handle_skip(self, signal: dict, result: dict) -> None:
+        reason = result.get("reason") or "No reason provided"
+        logger.info("Signal skipped: %s", reason)
+        if self.metrics_exporter:
+            try:
+                await self.metrics_exporter.log_execution(signal, result)
+            except Exception as exc:
+                logger.warning("Failed to export skipped execution metrics: %s", exc)

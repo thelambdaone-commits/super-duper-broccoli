@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from core.healing.autonomic_healer import LobstarAutonomicHealer
+from core.resource_governor import get_resource_governor
 from utils.config_loader import get_health_config
 
 logger = logging.getLogger("HealthMonitorAgent")
@@ -62,6 +63,7 @@ class HealthMonitorAgent:
         self.ledger = ledger
         self.broadcaster = broadcaster
         self.healer = LobstarAutonomicHealer(broadcaster=broadcaster)
+        self.resource_governor = get_resource_governor()
         self._running = False
         self._last_duckdb_maintenance = 0.0
         self._last_memory_check = 0.0
@@ -110,6 +112,7 @@ class HealthMonitorAgent:
 
     async def check_memory(self) -> dict[str, Any]:
         self._last_memory_check = time.time()
+        snapshot = self.resource_governor.sample_if_due(force=True)
         rss_mb = None
         try:
             import psutil
@@ -119,8 +122,9 @@ class HealthMonitorAgent:
             pass
         if rss_mb is not None and rss_mb > self.config.max_memory_rss_mb:
             gc_result = self.healer._repair_memory_leak()
-            return {"status": "warn", "rss_mb": rss_mb, "action": gc_result}
-        return {"status": "ok", "rss_mb": rss_mb}
+            return {"status": "warn", "rss_mb": rss_mb, "action": gc_result, "resource_mode": snapshot.mode, "reasons": list(snapshot.reasons)}
+        status = "warn" if snapshot.mode != "nominal" else "ok"
+        return {"status": status, "rss_mb": rss_mb, "resource_mode": snapshot.mode, "reasons": list(snapshot.reasons)}
 
     async def sync_positions(self) -> dict[str, Any]:
         """Fetch positions from API and sync with the local ledger."""

@@ -68,7 +68,7 @@ class ParameterSearchExperiment:
         return self.parameter_search
 
 
-type Experiment = ReplayExperiment | ParameterSearchExperiment
+Experiment = ReplayExperiment | ParameterSearchExperiment
 
 
 def build_backtest_for_experiment(experiment: ReplayExperiment) -> PredictionMarketBacktest:

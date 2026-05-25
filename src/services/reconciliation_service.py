@@ -104,6 +104,7 @@ class PositionReconciliationService:
                     filled_qty=size,
                     execution_price=price,
                     notional_usd=size * price,
+                    signal_source="external_reconciliation",
                 )
                 summary["new_external"] += 1
 
@@ -128,4 +129,3 @@ class PositionReconciliationService:
 
         logger.info(f"✅ [RECONCILIATION] Completed: {summary}")
         return summary
-

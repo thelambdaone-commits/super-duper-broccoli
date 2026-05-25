@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -57,3 +57,36 @@ async def test_btc5_routes_to_btc_launch_buttons() -> None:
 
     router.render_btc_launch.assert_awaited_once_with("5m")
     listener.reply_to.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_render_btc_launch_supports_mocked_service_without_thread_handoff() -> None:
+    listener = SimpleNamespace(
+        application=MagicMock(),
+        reply_to=AsyncMock(),
+        _check_auth=AsyncMock(return_value=True),
+    )
+    router = CommandRouter(listener)
+    listener._btc_launch_service = SimpleNamespace(
+        get_or_launch=Mock(
+            return_value=SimpleNamespace(
+                interval="5m",
+                requested_direction="up",
+                strongest_direction="up",
+                strongest_probability=0.72,
+                prob_up=0.72,
+                prob_down=0.28,
+                best_variant="mocked",
+                best_val_accuracy=0.61,
+                train_samples=100,
+                val_samples=20,
+                generated_at=0.0,
+            )
+        )
+    )
+
+    text, markup = await router.render_btc_launch("5m")
+
+    listener._btc_launch_service.get_or_launch.assert_called_once_with("5m", "up", False)
+    assert "BTC 5M" in text
+    assert markup is not None

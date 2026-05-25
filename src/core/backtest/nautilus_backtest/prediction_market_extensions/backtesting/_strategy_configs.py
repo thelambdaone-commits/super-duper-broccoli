@@ -10,7 +10,7 @@ from nautilus_trader.config import StrategyFactory as NautilusStrategyFactory
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
-type StrategyConfigSpec = Mapping[str, Any]
+StrategyConfigSpec = Mapping[str, Any]
 
 _PRIMARY_INSTRUMENT_SENTINELS = {None, "__PRIMARY_INSTRUMENT__", "__PRIMARY_INSTRUMENTS__"}
 

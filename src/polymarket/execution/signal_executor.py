@@ -46,6 +46,12 @@ def _execution_succeeded(result: Optional[dict]) -> bool:
     return status in SUCCESS_STATUSES or bool(result.get("orderID") or result.get("order_id"))
 
 
+async def _resolve_validation_result(validation: Any) -> dict:
+    if inspect.isawaitable(validation):
+        validation = await validation
+    return validation if isinstance(validation, dict) else {}
+
+
 def _regex_confidence(price: float, decimals: int = 4) -> float:
     price_str = f"{price:.{decimals}f}"
     decimal_part = price_str.split(".")[1] if "." in price_str else ""
@@ -69,6 +75,19 @@ def _apply_cognitive_confidence(signal: dict, base_confidence: float) -> float:
     if signal.get("cognitive_action") == "FADE":
         return max(0.0, min(blended, float(base_confidence) * 0.5))
     return max(0.0, min(0.99, blended))
+
+
+def _effective_trade_probability(side: str, confidence: float) -> float:
+    probability = max(0.0, min(float(confidence), 0.99))
+    if str(side).upper() in {"SELL", "NO", "SHORT", "DOWN"}:
+        return max(0.0, min(0.99, 1.0 - probability))
+    return probability
+
+
+def _release_reserved_capital(ledger: Any, capital: float) -> None:
+    releaser = getattr(ledger, "release_reserved_capital", None)
+    if callable(releaser):
+        releaser(capital)
 
 
 def _risk_rejection_reason(size: float, regime: str, sizing: dict) -> Optional[str]:
@@ -134,10 +153,15 @@ def _estimate_spread_from_orderbook(book: Any, price: float) -> float:
 
 
 def _minimum_polymarket_notional(freqai: Any) -> float:
+    raw_value = getattr(freqai, "POLYMARKET_MIN_NOTIONAL", 5.0)
     try:
-        return float(getattr(freqai, "POLYMARKET_MIN_NOTIONAL", 5.0) or 5.0)
+        if isinstance(raw_value, (int, float)):
+            return max(0.0, float(raw_value))
+        if isinstance(raw_value, str):
+            return max(0.0, float(raw_value))
     except (TypeError, ValueError):
-        return 5.0
+        pass
+    return 5.0
 
 
 async def _precheck_available_collateral(freqai: Any, side: str, price: float, size: float) -> Optional[dict]:
@@ -151,12 +175,15 @@ async def _precheck_available_collateral(freqai: Any, side: str, price: float, s
     snapshot = snapshot_fn()
     if inspect.isawaitable(snapshot):
         snapshot = await snapshot
-    if not snapshot:
+    if not isinstance(snapshot, dict) or not snapshot:
         return None
     required_notional = max(0.0, float(price) * float(size))
-    available_balance = float(snapshot.get("available_balance_usdc", 0.0) or 0.0)
-    total_balance = float(snapshot.get("total_balance_usdc", 0.0) or 0.0)
-    locked_balance = float(snapshot.get("locked_balance_usdc", 0.0) or 0.0)
+    try:
+        available_balance = float(snapshot.get("available_balance_usdc", 0.0) or 0.0)
+        total_balance = float(snapshot.get("total_balance_usdc", 0.0) or 0.0)
+        locked_balance = float(snapshot.get("locked_balance_usdc", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
     if required_notional > available_balance:
         minimum_notional = _minimum_polymarket_notional(freqai)
         if price > 0 and available_balance >= minimum_notional:
@@ -197,7 +224,12 @@ async def _execute_guarded(
     store: Optional[FeatureStore], mode: str, signal_source: str,
     executor: Optional[PassiveExecutor] = None,
     tenant_wallet: Optional[str] = None,
+    original_ticker: Optional[str] = None,
 ) -> Dict[str, Any]:
+    # Use original_ticker for risk/ledger, ticker for execution (which might be a token_id)
+    risk_ticker = original_ticker or ticker
+    execution_token_id = ticker
+
     rejection_reason = _risk_rejection_reason(size, regime, sizing)
     if rejection_reason or size <= 0:
         return {"status": "SKIPPED", "reason": rejection_reason or "Zero size"}
@@ -214,19 +246,19 @@ async def _execute_guarded(
     try:
         normalizer = getattr(freqai, "normalize_and_validate", None) if freqai else None
         if callable(normalizer):
-            normalized = normalizer(ticker, price, size)
+            normalized = normalizer(execution_token_id, price, size)
             if inspect.isawaitable(normalized):
                 normalized = await normalized
             if isinstance(normalized, (list, tuple)) and len(normalized) == 2:
                 normalized_size, normalized_price = normalized
-                logger.debug(f"📐 Size normalized for {ticker}: {size} -> {normalized_size}")
+                logger.debug(f"📐 Size normalized for {execution_token_id}: {size} -> {normalized_size}")
     except Exception as e:
-        logger.warning(f"📐 Normalization failed for {ticker}: {e}")
+        logger.warning(f"📐 Normalization failed for {execution_token_id}: {e}")
 
     # Slippage Gate: reject when the live book is meaningfully worse than the signal.
     try:
         if str(mode).upper() != "REPLAY" and freqai and hasattr(freqai, "client") and hasattr(freqai.client, "get_order_book"):
-            book = freqai.client.get_order_book(ticker)
+            book = freqai.client.get_order_book(execution_token_id)
             if inspect.isawaitable(book):
                 book = await book
             estimated_spread = _estimate_spread_from_orderbook(book, price)
@@ -259,13 +291,13 @@ async def _execute_guarded(
                             return {
                                 "status": "SKIPPED",
                                 "reason": f"Slippage threshold exceeded (deviation={price_diff:.2%}, threshold={threshold:.2%})",
-                                "ticker": ticker,
+                                "ticker": risk_ticker,
                                 "side": side,
                             }
     except Exception as exc:
         logger.debug(f"Slippage check bypassed: {exc}")
 
-    expected_edge = max(0.0, float(confidence) - float(normalized_price))
+    expected_edge = max(0.0, _effective_trade_probability(side, confidence) - float(normalized_price))
     objective = estimate_trade_objective(
         edge=expected_edge,
         price=normalized_price,
@@ -286,7 +318,7 @@ async def _execute_guarded(
         }
 
     report_data = {
-        "ticker": ticker, "side": side, "price": normalized_price,
+        "ticker": risk_ticker, "side": side, "price": normalized_price,
         "size": normalized_size, "executed_size": 0.0, "probability": confidence,
         "kelly_pct": sizing.get("kelly_pct", 0), "regime": regime,
         "path": "PASSIVE_MAKER" if executor else "DIRECT_CLOB",
@@ -305,7 +337,7 @@ async def _execute_guarded(
         if store:
             try:
                 store.record_decision(
-                    mode=mode, ticker=ticker, side=side, price=normalized_price, sized=normalized_size,
+                    mode=mode, ticker=risk_ticker, side=side, price=normalized_price, sized=normalized_size,
                     executed_size=0.0, kelly_pct=sizing.get("kelly_pct", 0.0),
                     regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
                     authorized=True, reason="REPLAY_SKIP_EXECUTION",
@@ -317,26 +349,31 @@ async def _execute_guarded(
     if store:
         try:
             store.record_signal(
-                source=signal_source, ticker=ticker, side=side, price=normalized_price,
+                source=signal_source, ticker=risk_ticker, side=side, price=normalized_price,
                 size=normalized_size, confidence=confidence, regime_label=regime,
             )
         except Exception as e:
             logger.error(f"Failed to record signal: {e}")
 
-    # PROD / SHADOW / PAPER Logic: validate risk before recording anything
+    # Validate sizing against capital before progressing to execution paths.
     validation = ledger.validate_and_reserve(
-        ticker=ticker,
+        ticker=risk_ticker,
         side=side,
         limit_price=normalized_price,
         requested_size=normalized_size,
     )
+    validation = await _resolve_validation_result(validation)
+    if not validation:
+        report_data["status"] = "FAILED"
+        report_data["reason_1"] = "Capital reservation returned no usable result"
+        return report_data
     if not validation["authorized"]:
         report_data["status"] = "FAILED"
         report_data["reason_1"] = validation["reason"]
         if store:
             try:
                 store.record_decision(
-                    mode=mode, ticker=ticker, side=side, price=normalized_price, sized=normalized_size,
+                    mode=mode, ticker=risk_ticker, side=side, price=normalized_price, sized=normalized_size,
                     executed_size=0.0, kelly_pct=sizing.get("kelly_pct", 0.0),
                     regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
                     authorized=False, reason=validation["reason"],
@@ -352,12 +389,12 @@ async def _execute_guarded(
         paper_order_id = f"paper-{uuid.uuid4().hex[:8]}"
         try:
             ledger.record_paper_order(
-                ticker=ticker, side=side, price=normalized_price, size=final_size,
+                ticker=risk_ticker, side=side, price=normalized_price, size=final_size,
                 confidence=confidence, regime_label=regime, signal_source=signal_source,
                 tenant_wallet=tenant_wallet,
             )
             if risk:
-                risk.book_exposure(ticker, final_size, side)
+                risk.book_exposure(risk_ticker, final_size, side)
         except Exception as e:
             logger.error(f"Concurrent Paper recording failed: {e}")
         report_data["status"] = "SUCCESS"
@@ -366,7 +403,7 @@ async def _execute_guarded(
         if store:
             try:
                 store.record_decision(
-                    mode=mode, ticker=ticker, side=side, price=normalized_price, sized=final_size,
+                    mode=mode, ticker=risk_ticker, side=side, price=normalized_price, sized=final_size,
                     executed_size=final_size, kelly_pct=sizing.get("kelly_pct", 0.0),
                     regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
                     authorized=True, reason="Paper order recorded",
@@ -378,27 +415,37 @@ async def _execute_guarded(
     final_size = validation["size"]
     if mode == "SHADOW":
         multiplier = float(TRADING_PARAMS.get("SHADOW_SIZE_MULTIPLIER", 0.01))
-        final_size = max(1.0, final_size * multiplier)
+        final_size = max(0.0, final_size * multiplier)
 
     minimum_notional = _minimum_polymarket_notional(freqai)
     final_notional = float(final_size) * float(normalized_price)
 
     # LOBSTAR V2: SMART BUMP LOGIC
-    # If we are below the $5 minimum, we scale up to $5.05 instead of skipping.
+    # If we are below the $5 minimum, we only scale paper orders.
+    # Shadow and prod must never inflate a risk-authorized size into a live-sized order.
     if 0 < final_notional < minimum_notional:
-        # Check if scaling up is safe (e.g., doesn't exceed 2x the risk-authorized size)
+        original_notional = final_notional
         target_notional = minimum_notional + 0.05
         bumped_size = math.ceil(target_notional / normalized_price)
-        
-        if bumped_size <= final_size * 2.0 or (target_notional < 10.0):
+
+        if mode in {"PROD", "SHADOW"}:
             logger.info(
-                f"🚀 [SMART BUMP] Scaling up {ticker} to meet minimum: {final_notional:.2f} -> {target_notional:.2f} USDC "
+                "⛔ [MIN NOTIONAL] %s skip for %s: %.2f < %.2f USDC (authorized size %.2f)",
+                mode,
+                risk_ticker,
+                original_notional,
+                minimum_notional,
+                final_size,
+            )
+        elif bumped_size <= final_size * 2.0 or (target_notional < 10.0):
+            logger.info(
+                f"🚀 [SMART BUMP] Scaling up {risk_ticker} to meet minimum: {final_notional:.2f} -> {target_notional:.2f} USDC "
                 f"({final_size} -> {bumped_size} shares)"
             )
             final_size = bumped_size
             final_notional = float(final_size) * float(normalized_price)
         else:
-            logger.warning(f"⚠️ [SIZING] Bump too aggressive for {ticker}: requested {final_size}, need {bumped_size}. Skipping.")
+            logger.warning(f"⚠️ [SIZING] Bump too aggressive for {risk_ticker}: requested {final_size}, need {bumped_size}. Skipping.")
 
     if final_size <= 0 or final_notional < minimum_notional:
         return {
@@ -407,7 +454,7 @@ async def _execute_guarded(
                 f"Pre-execution sizing rejection: notional {final_notional:.2f} "
                 f"< Polymarket minimum {minimum_notional:.2f}"
             ),
-            "ticker": ticker,
+            "ticker": risk_ticker,
             "side": side,
             "price": normalized_price,
             "size": final_size,
@@ -429,30 +476,49 @@ async def _execute_guarded(
             logger.warning("💸 [COLLATERAL GATE] %s", collateral_block["reason"])
             return collateral_block
 
+    live_validation = ledger.validate_and_reserve(
+        ticker=risk_ticker,
+        side=side,
+        limit_price=normalized_price,
+        requested_size=final_size,
+        reserve=True,
+    )
+    live_validation = await _resolve_validation_result(live_validation)
+    if not live_validation.get("authorized"):
+        return {
+            "status": "SKIPPED",
+            "reason": live_validation.get("reason", "Capital reservation failed before execution"),
+            "ticker": risk_ticker,
+            "side": side,
+            "price": normalized_price,
+            "size": final_size,
+        }
+    reserved_capital = float(live_validation.get("capital", 0.0) or 0.0)
+
     exec_ok = False
     executed_size = 0.0
-    position_id = f"{ticker}-{side}-{int(time.time())}"
+    position_id = f"{risk_ticker}-{side}-{int(time.time())}"
 
     # LOBSTAR V2: Enhanced Logging for Production Debugging
     logger.info(
         "📝 [SIGNAL EXECUTION] Ticker: %s | Side: %s | Price: %.4f | Size: %.2f | Mode: %s",
-        ticker, side, normalized_price, final_size, mode
+        risk_ticker, side, normalized_price, final_size, mode
     )
 
     if executor:
-        exec_result = await executor.execute(ticker, side, normalized_price, final_size)
+        exec_result = await executor.execute(execution_token_id, side, normalized_price, final_size)
         exec_ok = exec_result.get("status") in SUCCESS_STATUSES or _execution_succeeded(exec_result)
     else:
         try:
             exec_result = await freqai.clob_execute(
-                ticker=ticker,
+                ticker=execution_token_id,
                 side=side,
                 price=normalized_price,
                 size=final_size,
             )
             exec_ok = _execution_succeeded(exec_result)
         except Exception as e:
-            logger.error(f"❌ [EXECUTION ERROR] Ticker: {ticker} | Error: {e}")
+            logger.error(f"❌ [EXECUTION ERROR] Ticker: {risk_ticker} | Error: {e}")
             exec_ok = False
 
     if exec_ok:
@@ -461,38 +527,40 @@ async def _execute_guarded(
         executed_price = fill["filled_price"]
         if executed_size > 0:
             logger.info("✅ [EXECUTION SUCCESS] Ticker: %s | Filled: %.2f @ %.4f | OrderID: %s",
-                        ticker, executed_size, executed_price, fill.get("order_id"))
+                        risk_ticker, executed_size, executed_price, fill.get("order_id"))
             ledger.record_order(
                 position_id=position_id,
-                ticker=ticker,
+                ticker=risk_ticker,
                 side=side,
                 price=executed_price,
                 size=executed_size,
-
                 tenant_wallet=tenant_wallet,
                 requested_qty=final_size,
                 filled_qty=executed_size,
                 execution_price=executed_price,
                 notional_usd=executed_size * executed_price,
                 exchange_order_id=fill.get("order_id"),
+                signal_source=signal_source,
+                reserved_capital=reserved_capital,
             )
-            if risk: risk.book_exposure(ticker, executed_size, side)
+            if risk: risk.book_exposure(risk_ticker, executed_size, side)
             report_data["status"] = "SUCCESS"
             report_data["executed_size"] = executed_size
             report_data["executed_price"] = executed_price
             report_data["trade_id"] = position_id
         else:
+            _release_reserved_capital(ledger, reserved_capital)
             report_data["status"] = "FAILED"
             report_data["reason_1"] = "Zero fill returned by CLOB"
     else:
+        _release_reserved_capital(ledger, reserved_capital)
         report_data["status"] = "FAILED"
-
         report_data["reason_1"] = "Execution rejected by CLOB"
 
     if store:
         try:
             store.record_decision(
-                mode=mode, ticker=ticker, side=side, price=normalized_price, sized=final_size,
+                mode=mode, ticker=risk_ticker, side=side, price=normalized_price, sized=final_size,
                 executed_size=executed_size, kelly_pct=sizing.get("kelly_pct", 0.0),
                 regime_label=regime, net_beta_pct=sizing.get("net_beta_exposure_pct", 0.0),
                 authorized=exec_ok, reason=report_data.get("reason_1", "Nominal execution"),
@@ -514,16 +582,17 @@ async def execute_regex_signal(
             "reason": "Signal missing required keys: asset/ticker, action/side, or price",
         }
     provided_token_id = signal.get("token_id")
+    token_id = ticker # Default to ticker if not provided
 
     if provided_token_id:
-        ticker = provided_token_id
+        token_id = provided_token_id
     else:
         scanner = kwargs.get("scanner")
         if scanner:
-            token_id = scanner.resolve_ticker_to_token_id(ticker, side)
-            if token_id:
-                logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
-                ticker = token_id
+            resolved_token_id = scanner.resolve_ticker_to_token_id(ticker, side)
+            if resolved_token_id:
+                logger.info(f"Resolved ticker {ticker} to token_id {resolved_token_id}")
+                token_id = resolved_token_id
 
     mode = ledger.get_execution_mode()
     regime = get_regime_label(kwargs.get("hmm"), ticker)
@@ -536,10 +605,11 @@ async def execute_regex_signal(
     ) if risk else {"size": 10.0}
 
     return await _execute_guarded(
-        ticker, side, price, sizing["size"], confidence, regime, sizing,
+        token_id, side, price, sizing["size"], confidence, regime, sizing,
         ledger, freqai, risk, kwargs.get("store"),
         mode, "regex", kwargs.get("executor"),
         tenant_wallet=kwargs.get("tenant_wallet"),
+        original_ticker=ticker,
     )
 
 async def execute_lobstar_signal(
@@ -574,19 +644,22 @@ async def execute_lobstar_signal(
     ) if risk else {"size": size}
 
     provided_token_id = signal.get("token_id")
+    token_id = ticker # Default to ticker if not provided
+
     if provided_token_id:
-        ticker = provided_token_id
+        token_id = provided_token_id
     else:
         scanner = kwargs.get("scanner")
         if scanner:
-            token_id = scanner.resolve_ticker_to_token_id(ticker, side)
-            if token_id:
-                logger.info(f"Resolved ticker {ticker} to token_id {token_id}")
-                ticker = token_id
+            resolved_token_id = scanner.resolve_ticker_to_token_id(ticker, side)
+            if resolved_token_id:
+                logger.info(f"Resolved ticker {ticker} to token_id {resolved_token_id}")
+                token_id = resolved_token_id
 
     return await _execute_guarded(
-        ticker, side, price, sizing["size"], confidence, regime, sizing,
+        token_id, side, price, sizing["size"], confidence, regime, sizing,
         ledger, freqai, risk, kwargs.get("store"),
         mode, "lobstar_llm", kwargs.get("executor"),
         tenant_wallet=kwargs.get("tenant_wallet"),
+        original_ticker=ticker,
     )

@@ -40,9 +40,9 @@ SAMPLER_RANDOM = "random"
 SAMPLER_TPE = "tpe"
 _SUPPORTED_SAMPLERS = (SAMPLER_RANDOM, SAMPLER_TPE)
 
-type ParameterValues = tuple[tuple[str, Any], ...]
-type BacktestEvaluator = Callable[[PredictionMarketBacktest], object]
-type ParameterSpec = Mapping[str, Any]
+ParameterValues = tuple[tuple[str, Any], ...]
+BacktestEvaluator = Callable[[PredictionMarketBacktest], object]
+ParameterSpec = Mapping[str, Any]
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

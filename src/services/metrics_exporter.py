@@ -42,6 +42,7 @@ class ExecutionMetricsExporter:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "asset": self._signal_value(signal, "asset", "ticker", "token_id"),
             "direction": self._signal_value(signal, "direction", "side", "action"),
+            "signal_source": self._signal_value(signal, "source", "signal_source", default="unknown"),
             "size_usd": float(self._signal_value(signal, "size_usd", "size", "allocated_capital", default=0.0) or 0.0),
             "strategy": report.get("strategy", "IMMEDIATE"),
             "status": report.get("status", "UNKNOWN"),
@@ -61,6 +62,16 @@ class ExecutionMetricsExporter:
             "execution_path": report.get("execution_path", "immediate"),
             "trade_id": report.get("trade_id", ""),
             "reason": report.get("reason_1") or report.get("reason") or "",
+            "market_price": self._coerce_float(self._signal_value(signal, "price", default=0.0)),
+            "fair_probability_yes": self._coerce_float(self._signal_value(signal, "fair_probability_yes", "predictive_probability", default=0.0)),
+            "effective_win_probability": self._coerce_float(self._signal_value(signal, "effective_win_probability", default=0.0)),
+            "gross_edge": self._coerce_float(self._signal_value(signal, "gross_edge", "predictive_edge", default=0.0)),
+            "expected_net_profit_usdc": self._coerce_float(self._signal_value(signal, "expected_net_profit_usdc", "predictive_net_edge", default=0.0)),
+            "estimated_cost_usdc": self._coerce_float(self._signal_value(signal, "estimated_cost_usdc", "predictive_estimated_cost", default=0.0)),
+            "capital_at_risk": self._coerce_float(self._signal_value(signal, "capital_at_risk", default=0.0)),
+            "kelly_fraction": self._coerce_float(self._signal_value(signal, "kelly_fraction", default=0.0)),
+            "decision_trace": self._signal_value(signal, "decision_trace", default={}),
+            "source_scores": self._signal_value(signal, "source_scores", default={}),
         }
 
     def _append_to_file(self, payload: dict[str, Any]) -> None:

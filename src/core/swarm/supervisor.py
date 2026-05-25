@@ -50,6 +50,7 @@ class RufloSwarmSupervisor:
     MICROFISH_MIN_RECORDS = int(os.getenv("MICROFISH_MIN_RECORDS", "100"))
     DUCKBDB_MIN_RECORDS = 500
     SENTIMENT_FALLBACK_EDGE = 0.09
+    SENTIMENT_CHECK_TTL_SECONDS = int(os.getenv("SWARM_SENTIMENT_CHECK_TTL_SECONDS", "900"))
 
     def __init__(self, mode: str = "PAPER"):
         self._mode = ExecutionMode(mode)
@@ -93,6 +94,8 @@ class RufloSwarmSupervisor:
             "sentiment": False,
         }
         self._last_gap_report: Dict[str, bool] = dict(self._data_gaps)
+        self._last_sentiment_check_at: float = 0.0
+        self._last_sentiment_ok: Optional[bool] = None
         self._on_mode_change: Optional[Callable] = None
         self._on_state_change: Optional[Callable] = None
         self._on_circuit_breaker: Optional[Callable] = None
@@ -282,14 +285,7 @@ class RufloSwarmSupervisor:
             logger.warning(f"DuckDB check failed: {e}")
             self._data_gaps["duckdb"] = True
             gaps["duckdb"] = {"present": False, "error": str(e)}
-        sentiment_ok = True
-        try:
-            from utils.crypto_horizon_sentiment import CryptoHorizonSentiment
-            sentiment = CryptoHorizonSentiment()
-            sentiment_ok = sentiment.analyze("BTC", "1h") is not None
-        except Exception as e:
-            logger.warning(f"Sentiment check failed: {e}")
-            sentiment_ok = False
+        sentiment_ok = self._get_cached_sentiment_health()
         self._data_gaps["sentiment"] = not sentiment_ok
         gaps["sentiment"] = {"present": sentiment_ok}
         if self._data_gaps["sentiment"]:
@@ -310,6 +306,28 @@ class RufloSwarmSupervisor:
                 self._data_gaps.get(k, False) for k in ["microfish", "duckdb"]
             ),
         }
+
+    def _get_cached_sentiment_health(self) -> bool:
+        now = time.time()
+        if (
+            self._last_sentiment_ok is not None
+            and (now - self._last_sentiment_check_at) < self.SENTIMENT_CHECK_TTL_SECONDS
+        ):
+            return self._last_sentiment_ok
+
+        sentiment_ok = True
+        try:
+            from utils.crypto_horizon_sentiment import CryptoHorizonSentiment
+
+            sentiment = CryptoHorizonSentiment()
+            sentiment_ok = sentiment.analyze("BTC", "1h") is not None
+        except Exception as e:
+            logger.warning(f"Sentiment check failed: {e}")
+            sentiment_ok = False
+
+        self._last_sentiment_check_at = now
+        self._last_sentiment_ok = sentiment_ok
+        return sentiment_ok
 
     def _should_retrain(self) -> bool:
         elapsed = time.time() - self._last_retrain_time

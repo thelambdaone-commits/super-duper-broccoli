@@ -9,7 +9,7 @@ from prediction_market_extensions.backtesting.data_sources.replay_adapters impor
     BUILTIN_REPLAY_ADAPTERS,
 )
 
-type MarketDataKey = tuple[str, str, str]
+MarketDataKey = tuple[str, str, str]
 
 
 @dataclass(frozen=True)

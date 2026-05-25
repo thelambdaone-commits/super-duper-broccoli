@@ -96,7 +96,7 @@ class PredictiveGateService:
 
             price = float(signal.get("price", self.config.default_price))
             timestamp_resolution = float(signal.get("timestamp_resolution", time.time() + 3600))
-            ticker = str(signal.get("ticker") or signal.get("asset") or "").strip()
+            ticker = str(signal.get("ticker") or signal.get("asset") or "").strip().upper()
 
             if hasattr(predictive_engine, "get_live_prediction") and ticker and self.feature_store is not None:
                 prediction = predictive_engine.get_live_prediction(
@@ -111,9 +111,14 @@ class PredictiveGateService:
                     df_market_ticks=df_market_ticks,
                     clob_price_yes=price,
                     timestamp_resolution=timestamp_resolution,
+                    ticker=ticker,
                 )
             if not prediction.get("pari_approuve"):
                 edge = float(prediction.get("absolute_edge", 0.0))
+                signal["predictive_edge"] = edge
+                signal["predictive_probability"] = float(prediction.get("probability_win", 0.0))
+                signal["fair_probability_yes"] = float(prediction.get("probability_win", 0.0))
+                signal["gross_edge"] = edge
                 return False, f"REJECT_NO_EDGE:{edge:+.4f}"
 
             spread_value = 0.0
@@ -121,24 +126,37 @@ class PredictiveGateService:
                 spread_bps = float(liquidity.get("spread_bps", 0.0))
                 mid_price = max(0.0, float(liquidity.get("mid_price", price) or price))
                 spread_value = mid_price * spread_bps / 10_000.0
+            objective_size = self._resolve_trade_objective_size(signal, price)
             estimate = estimate_trade_objective(
                 edge=float(prediction.get("absolute_edge", 0.0)),
                 price=price,
-                size=1.0,
+                size=objective_size,
                 spread=spread_value,
                 order_type=str(signal.get("order_type", "LIMIT")),
             )
             net_edge = estimate.expected_net_profit_usdc
             min_net_profit = float(TRADING_PARAMS.get("MIN_EXPECTED_PROFIT_USDC", 0.05))
             if net_edge <= min_net_profit:
+                signal["fair_probability_yes"] = float(prediction.get("probability_win", 0.0))
+                signal["gross_edge"] = float(prediction.get("absolute_edge", 0.0))
                 signal["predictive_net_edge"] = net_edge
                 signal["predictive_estimated_cost"] = estimate.estimated_cost_usdc
+                signal["predictive_effective_size"] = objective_size
+                signal["predictive_objective_reason"] = self._classify_net_edge_rejection(
+                    signal=signal,
+                    net_edge=net_edge,
+                    min_net_profit=min_net_profit,
+                    estimate=estimate,
+                )
                 return False, f"REJECT_NO_NET_EDGE:{net_edge:+.4f}"
 
             signal["predictive_probability"] = float(prediction.get("probability_win", 0.0))
+            signal["fair_probability_yes"] = float(prediction.get("probability_win", 0.0))
             signal["predictive_edge"] = float(prediction.get("absolute_edge", 0.0))
+            signal["gross_edge"] = float(prediction.get("absolute_edge", 0.0))
             signal["predictive_net_edge"] = net_edge
             signal["predictive_estimated_cost"] = estimate.estimated_cost_usdc
+            signal["predictive_effective_size"] = objective_size
             signal["trading_objective"] = estimate.objective
             if liquidity:
                 signal["predictive_spread_bps"] = float(liquidity.get("spread_bps", 0.0))
@@ -191,7 +209,9 @@ class PredictiveGateService:
             return {}
 
         spread_bps = features.get("spread_bps", features.get("spread", 0.0))
-        if spread_bps and float(spread_bps) <= 10.0:
+        # Convert fractional spreads (e.g. 0.0012 == 12 bps), but keep values
+        # already expressed in basis points untouched (e.g. 10.0, 120.0).
+        if spread_bps and float(spread_bps) <= 1.0:
             spread_bps = float(spread_bps) * 10_000.0
 
         obi = features.get("order_imbalance", features.get("orderbook_imbalance", 0.0))
@@ -283,3 +303,38 @@ class PredictiveGateService:
             signal["predictive_edge"] = simulated_edge
             return True, "ACCEPT_SIMULATED_EDGE"
         return False, "REJECT_SIMULATED_EDGE"
+
+    def _resolve_trade_objective_size(self, signal: dict, price: float) -> float:
+        explicit_size = float(signal.get("size", 0.0) or 0.0)
+        if explicit_size > 0.0:
+            return explicit_size
+
+        explicit_notional = float(signal.get("target_notional_usdc", 0.0) or 0.0)
+        if explicit_notional <= 0.0:
+            explicit_notional = float(
+                TRADING_PARAMS.get(
+                    "MAX_REAL_NOTIONAL_USDC",
+                    TRADING_PARAMS.get("FALLBACK_CAPITAL_USDC", 1.0),
+                )
+            )
+        if explicit_notional <= 0.0:
+            explicit_notional = 1.0
+        return max(explicit_notional / max(price, 1e-6), 1.0)
+
+    @staticmethod
+    def _classify_net_edge_rejection(
+        *,
+        signal: dict,
+        net_edge: float,
+        min_net_profit: float,
+        estimate: Any,
+    ) -> str:
+        if float(signal.get("size", 0.0) or 0.0) <= 0.0:
+            return (
+                "REJECT_COST_MODEL_MISMATCH"
+                if net_edge > 0.0 and net_edge < min_net_profit
+                else "REJECT_NO_NET_EDGE"
+            )
+        if estimate.estimated_cost_usdc >= estimate.expected_gross_profit_usdc:
+            return "REJECT_ESTIMATED_COST_EXCEEDS_GROSS"
+        return "REJECT_NO_NET_EDGE"

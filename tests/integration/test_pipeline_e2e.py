@@ -203,7 +203,7 @@ def _build_orchestrator(
     predictive_gate = PredictiveGateService(
         PredictiveGateConfig(min_edge_threshold=0.07, allow_simulated_gate=False),
         model_registry=SimpleNamespace(
-            predict_winning_bet=lambda df_market_ticks, clob_price_yes, timestamp_resolution: {
+            predict_winning_bet=lambda df_market_ticks, clob_price_yes, timestamp_resolution, ticker=None: {
                 "pari_approuve": predictive_allowed,
                 "probability_win": 0.81,
                 "absolute_edge": 0.14,

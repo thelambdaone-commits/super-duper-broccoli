@@ -39,7 +39,7 @@ async def test_fragmented_executor_uses_twap_for_passive_only_signal(monkeypatch
         immediate_executor=executor,
     )
     sleep_mock = AsyncMock()
-    monkeypatch.setattr("execution.fragmented_executor.asyncio.sleep", sleep_mock)
+    monkeypatch.setattr("polymarket.execution.fragmented_executor.asyncio.sleep", sleep_mock)
 
     signal = {
         "asset": "SOL",
@@ -96,7 +96,7 @@ async def test_fragmented_executor_caps_slice_by_participation_rate(monkeypatch)
         feature_store=store,
     )
     sleep_mock = AsyncMock()
-    monkeypatch.setattr("execution.fragmented_executor.asyncio.sleep", sleep_mock)
+    monkeypatch.setattr("polymarket.execution.fragmented_executor.asyncio.sleep", sleep_mock)
 
     signal = {
         "asset": "SOL",

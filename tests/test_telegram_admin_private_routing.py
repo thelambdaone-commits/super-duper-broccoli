@@ -74,6 +74,22 @@ async def test_channel_chat_is_not_authorized_for_interactive_commands() -> None
 
 
 @pytest.mark.asyncio
+async def test_listener_without_any_acl_rejects_interactive_commands() -> None:
+    listener = TelegramListener(
+        bot_token="token",
+        on_signal=lambda signal: None,
+        chat_id=None,
+        private_chat_ids=None,
+        admin_chat_ids=None,
+        access_control=None,
+    )
+    listener.reply_to = AsyncMock(return_value=True)
+
+    assert await listener._check_auth(_update(12345, 12345, chat_type="private")) is False
+    listener.reply_to.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_channel_command_reply_is_redirected_to_admin_private_chat() -> None:
     listener = TelegramListener(
         bot_token="token",

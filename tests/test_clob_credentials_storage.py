@@ -66,6 +66,7 @@ def test_vault_handler_prefers_data_enc_wallet_over_env(monkeypatch: pytest.Monk
 def test_vault_handler_rejects_env_private_key_without_enc_wallet(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     _patch_data_dir(monkeypatch, tmp_path)
     monkeypatch.setenv("SECRET_SOURCE", "env")
+    monkeypatch.setenv("EXECUTION_MODE", "PROD")
     monkeypatch.setenv("CLOB_PRIVATE_KEY", TEST_PRIVATE_KEY)
     monkeypatch.delenv("CHAT_ID", raising=False)
     monkeypatch.delenv("VAULT_TOKEN", raising=False)

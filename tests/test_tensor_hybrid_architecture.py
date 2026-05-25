@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from core.portfolio_risk_engine import PortfolioRiskEngine
+from services.portfolio_risk_engine import PortfolioRiskEngine
 from user_data.freqaimodels.HybridQuantModel import (
     HAS_TORCH,
     HybridQuantModelAdapter,

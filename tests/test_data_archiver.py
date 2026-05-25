@@ -1,6 +1,7 @@
 import os
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -85,3 +86,68 @@ class TestDiskUsage:
         assert usage["logs"] >= 1024
         assert "feature_store" in usage
         assert "archive" in usage
+
+
+class TestPolymarketDatasetArchive:
+    def test_archive_polymarket_dataset_creates_manifest_and_copies_sidecars(
+        self, archiver: DataArchiver, temp_dirs: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source_dir = Path(temp_dirs["logs"]) / "polymarket_dataset"
+        source_dir.mkdir(parents=True, exist_ok=True)
+
+        parquet_path = source_dir / "quant.parquet"
+        parquet_path.write_bytes(b"parquet-placeholder")
+        (source_dir / "README.md").write_text("dataset readme", encoding="utf-8")
+
+        monkeypatch.setattr(
+            DataArchiver,
+            "_parquet_summary",
+            staticmethod(
+                lambda path: {
+                    "path": str(path),
+                    "kind": "parquet",
+                    "status": "ok",
+                    "size_bytes": path.stat().st_size,
+                    "rows": 2,
+                    "row_groups": 1,
+                    "columns": ["market_id", "price", "usd_amount"],
+                }
+            ),
+        )
+
+        result = archiver.archive_polymarket_dataset(str(source_dir))
+
+        assert result["status"] == "OK"
+        assert result["file_count"] == 2
+        assert result["parquet_row_total"] == 2
+        manifest = Path(result["manifest"])
+        assert manifest.exists()
+        copied_readme = Path(result["archive_dir"]) / "README.md"
+        assert copied_readme.exists()
+
+    def test_run_maintenance_cycle_includes_dataset_archive_when_configured(
+        self, archiver: DataArchiver, temp_dirs: dict, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source_dir = Path(temp_dirs["logs"]) / "polymarket_dataset"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        (source_dir / "users.parquet").write_bytes(b"parquet-placeholder")
+        monkeypatch.setattr(
+            DataArchiver,
+            "_parquet_summary",
+            staticmethod(
+                lambda path: {
+                    "path": str(path),
+                    "kind": "parquet",
+                    "status": "ok",
+                    "size_bytes": path.stat().st_size,
+                    "rows": 1,
+                    "row_groups": 1,
+                    "columns": ["market_id", "price"],
+                }
+            ),
+        )
+
+        monkeypatch.setenv("POLYMARKET_DATASET_PATH", str(source_dir))
+        result = archiver.run_maintenance_cycle()
+
+        assert result["polymarket_dataset"]["status"] == "OK"

@@ -72,6 +72,7 @@ class Ledger:
         limit_price: float,
         requested_size: float,
         fee_rate_bps: Optional[float] = None,
+        reserve: bool = False,
     ) -> Dict[str, Any]:
         if limit_price <= 0 or requested_size <= 0:
             return {"authorized": False, "reason": "Invalid non-positive price or size."}
@@ -81,53 +82,78 @@ class Ledger:
         fee_buffer = notional * (fee_rate_bps / 10_000.0)
         capital_required = notional + fee_buffer
 
-        with self._lock:
-            cursor = self.conn.cursor()
+        with self._transaction() as cursor:
             cursor.execute(
-                "SELECT total_capital, allocated_pct, available_capital "
+                "SELECT id, total_capital, allocated_pct, available_capital "
                 "FROM capital_allocation ORDER BY id DESC LIMIT 1"
             )
             allocation = cursor.fetchone()
 
-        if not allocation:
-            return {"authorized": False, "reason": "No allocation config found."}
+            if not allocation:
+                return {"authorized": False, "reason": "No allocation config found."}
 
-        total_capital = allocation["total_capital"]
-        max_pct = allocation["allocated_pct"]
-        available = allocation["available_capital"]
+            total_capital = allocation["total_capital"]
+            max_pct = allocation["allocated_pct"]
+            available = allocation["available_capital"]
 
-        hard_cap = total_capital * (max_pct / 100.0)
+            hard_cap = total_capital * (max_pct / 100.0)
 
-        if capital_required > available:
-            return {
-                "authorized": False,
-                "reason": f"Insufficient capital. Required: {capital_required}, Available: {available}",
-            }
+            if capital_required > available:
+                return {
+                    "authorized": False,
+                    "reason": f"Insufficient capital. Required: {capital_required}, Available: {available}",
+                }
 
-        if capital_required > hard_cap:
-            adjusted_size = hard_cap / limit_price
-            adjusted_capital = limit_price * adjusted_size
-            logger.info(
-                f"Circuit breaker adjusted size ({max_pct}%% max): "
-                f"{requested_size} -> {adjusted_size}"
-            )
+            if capital_required > hard_cap:
+                adjusted_size = hard_cap / limit_price
+                adjusted_notional = limit_price * adjusted_size
+                adjusted_fee = adjusted_notional * (fee_rate_bps / 10_000.0)
+                adjusted_capital = adjusted_notional + adjusted_fee
+                logger.info(
+                    f"Circuit breaker adjusted size ({max_pct}%% max): "
+                    f"{requested_size} -> {adjusted_size}"
+                )
+                if reserve:
+                    cursor.execute(
+                        "UPDATE capital_allocation SET available_capital = available_capital - ? WHERE id = ?",
+                        (adjusted_capital, allocation["id"]),
+                    )
+                return {
+                    "authorized": True,
+                    "size": adjusted_size,
+                    "capital": adjusted_capital,
+                    "reason": "Size adjusted by hardware circuit breaker.",
+                    "fee_rate_bps": fee_rate_bps,
+                    "estimated_fee": adjusted_fee,
+                    "reserved": reserve,
+                }
+
+            if reserve:
+                cursor.execute(
+                    "UPDATE capital_allocation SET available_capital = available_capital - ? WHERE id = ?",
+                    (capital_required, allocation["id"]),
+                )
+
             return {
                 "authorized": True,
-                "size": adjusted_size,
-                "capital": adjusted_capital,
-                "reason": "Size adjusted by hardware circuit breaker.",
+                "size": requested_size,
+                "capital": capital_required,
+                "reason": "Nominal validation passed.",
                 "fee_rate_bps": fee_rate_bps,
-                "estimated_fee": adjusted_capital * (fee_rate_bps / 10_000.0),
+                "estimated_fee": fee_buffer,
+                "reserved": reserve,
             }
 
-        return {
-            "authorized": True,
-            "size": requested_size,
-            "capital": capital_required,
-            "reason": "Nominal validation passed.",
-            "fee_rate_bps": fee_rate_bps,
-            "estimated_fee": fee_buffer,
-        }
+    def release_reserved_capital(self, capital_amount: float) -> None:
+        amount = max(0.0, float(capital_amount or 0.0))
+        if amount <= 0:
+            return
+        with self._transaction() as cursor:
+            cursor.execute(
+                "UPDATE capital_allocation SET available_capital = available_capital + ? "
+                "WHERE id = (SELECT max(id) FROM capital_allocation)",
+                (amount,),
+            )
 
     def record_order(
         self,
@@ -143,6 +169,8 @@ class Ledger:
         notional_usd: Optional[float] = None,
         exchange_order_id: Optional[str] = None,
         fee_rate_bps: Optional[float] = None,
+        signal_source: Optional[str] = None,
+        reserved_capital: Optional[float] = None,
     ) -> None:
         if price <= 0 or size <= 0:
             raise QuantFatal("Order persistence failed: price and size must be positive")
@@ -154,6 +182,7 @@ class Ledger:
         fee_rate_bps = self._effective_fee_rate_bps(mode, fee_rate_bps)
         fee_amount = notional_usd_val * (fee_rate_bps / 10_000.0)
         capital_engaged = notional_usd_val + fee_amount
+        reserved_capital_val = max(0.0, float(reserved_capital or 0.0))
 
         try:
             with self._transaction() as cursor:
@@ -163,7 +192,7 @@ class Ledger:
                 allocation = cursor.fetchone()
                 if not allocation:
                     raise QuantFatal("No allocation config found.")
-                if capital_engaged > allocation["available_capital"]:
+                if reserved_capital_val <= 0 and capital_engaged > allocation["available_capital"]:
                     raise QuantFatal(
                         f"Insufficient capital during reservation. Required: {capital_engaged}, "
                         f"Available: {allocation['available_capital']}"
@@ -181,7 +210,8 @@ class Ledger:
                     new_capital = existing["capital_engaged"] + capital_engaged
                     cursor.execute(
                         "UPDATE positions SET size = ?, capital_engaged = ?, requested_qty = requested_qty + ?, "
-                        "filled_qty = filled_qty + ?, execution_price = ?, notional_usd = notional_usd + ?, exchange_order_id = ? "
+                        "filled_qty = filled_qty + ?, execution_price = ?, notional_usd = notional_usd + ?, exchange_order_id = ?, "
+                        "signal_source = COALESCE(NULLIF(?, ''), signal_source) "
                         "WHERE position_id = ?",
                         (
                             new_size,
@@ -191,13 +221,14 @@ class Ledger:
                             execution_price_val,
                             notional_usd_val,
                             exchange_order_id,
+                            signal_source,
                             position_id,
                         ),
                     )
                 else:
                     cursor.execute(
-                        "INSERT INTO positions (position_id, ticker, side, entry_price, size, requested_qty, filled_qty, execution_price, notional_usd, capital_engaged, tenant_wallet, exchange_order_id) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO positions (position_id, ticker, side, entry_price, size, requested_qty, filled_qty, execution_price, notional_usd, capital_engaged, tenant_wallet, exchange_order_id, signal_source) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             position_id,
                             ticker,
@@ -211,6 +242,7 @@ class Ledger:
                             capital_engaged,
                             tenant_wallet,
                             exchange_order_id,
+                            signal_source or "",
                         ),
                     )
 
@@ -231,13 +263,34 @@ class Ledger:
                     ),
                 )
 
-                cursor.execute(
-                    "UPDATE capital_allocation SET available_capital = available_capital - ? "
-                    "WHERE id = (SELECT max(id) FROM capital_allocation)",
-                    (capital_engaged,),
-                )
-                if cursor.rowcount != 1:
-                    raise QuantFatal("Capital reservation update failed.")
+                if reserved_capital_val > 0:
+                    delta = reserved_capital_val - capital_engaged
+                    if delta > 0:
+                        cursor.execute(
+                            "UPDATE capital_allocation SET available_capital = available_capital + ? "
+                            "WHERE id = (SELECT max(id) FROM capital_allocation)",
+                            (delta,),
+                        )
+                    elif delta < 0:
+                        extra_required = abs(delta)
+                        if extra_required > allocation["available_capital"]:
+                            raise QuantFatal(
+                                f"Reserved capital insufficient. Required extra: {extra_required}, "
+                                f"Available: {allocation['available_capital']}"
+                            )
+                        cursor.execute(
+                            "UPDATE capital_allocation SET available_capital = available_capital - ? "
+                            "WHERE id = (SELECT max(id) FROM capital_allocation)",
+                            (extra_required,),
+                        )
+                else:
+                    cursor.execute(
+                        "UPDATE capital_allocation SET available_capital = available_capital - ? "
+                        "WHERE id = (SELECT max(id) FROM capital_allocation)",
+                        (capital_engaged,),
+                    )
+                    if cursor.rowcount != 1:
+                        raise QuantFatal("Capital reservation update failed.")
             logger.info(
                 f"Position {position_id} updated. "
                 f"{capital_engaged} deducted from available capital (including fees)."
@@ -291,6 +344,32 @@ class Ledger:
             cursor = self.conn.cursor()
             cursor.execute("SELECT * FROM positions WHERE status = 'OPEN'")
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_closed_positions(self, limit: int = 50, mode: str | None = None) -> list[dict]:
+        with self._lock:
+            cursor = self.conn.cursor()
+            rows: list[dict] = []
+
+            mode_upper = mode.upper().strip() if mode else None
+            include_prod = mode_upper in (None, "PROD")
+            include_paper = mode_upper in (None, "PAPER", "REPLAY")
+
+            if include_prod:
+                cursor.execute(
+                    "SELECT * FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT ?",
+                    (limit,),
+                )
+                rows.extend(dict(row) for row in cursor.fetchall())
+
+            if include_paper:
+                cursor.execute(
+                    "SELECT * FROM paper_positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT ?",
+                    (limit,),
+                )
+                rows.extend(dict(row) for row in cursor.fetchall())
+
+            rows.sort(key=lambda row: row.get("closed_at") or "", reverse=True)
+            return rows[:limit]
 
     def _ensure_execution_config_columns(self) -> None:
         for col, col_type in [
@@ -420,20 +499,31 @@ class Ledger:
 
             self.conn.commit()
 
-    def _update_performance_from_paper(self, pnl: float, is_win: bool) -> None:
+    def _update_performance_metrics(
+        self,
+        execution_mode: str,
+        gross_pnl: float,
+        net_pnl: float,
+        friction_cost: float,
+        is_win: bool,
+    ) -> None:
         with self._lock:
             is_win_int = 1 if is_win else 0
             cursor = self.conn.cursor()
 
             cursor.execute(
-                "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES ('PAPER')",
+                "INSERT OR IGNORE INTO performance_metrics (execution_mode) VALUES (?)",
+                (execution_mode,),
             )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT total_trades, winning_trades, losing_trades,
-                       total_net_pnl, total_friction, avg_win, avg_loss
-                FROM performance_metrics WHERE execution_mode = 'PAPER'
-            """)
+                       total_gross_pnl, total_net_pnl, total_friction, avg_win, avg_loss
+                FROM performance_metrics WHERE execution_mode = ?
+                """,
+                (execution_mode,),
+            )
             metrics = cursor.fetchone()
             if not metrics:
                 return
@@ -441,27 +531,53 @@ class Ledger:
             total_trades = metrics["total_trades"] + 1
             winning_trades = metrics["winning_trades"] + is_win_int
             losing_trades = metrics["losing_trades"] + (0 if is_win else 1)
-            total_net_pnl = metrics["total_net_pnl"] + pnl
+            total_gross_pnl = (metrics["total_gross_pnl"] or 0.0) + gross_pnl
+            total_net_pnl = (metrics["total_net_pnl"] or 0.0) + net_pnl
+            total_friction = (metrics["total_friction"] or 0.0) + friction_cost
 
             win_rate = winning_trades / total_trades if total_trades > 0 else 0.0
             avg_win = (
-                (metrics["avg_win"] * metrics["winning_trades"] + (pnl if is_win else 0))
+                (metrics["avg_win"] * metrics["winning_trades"] + (net_pnl if is_win else 0.0))
                 / winning_trades if winning_trades > 0 else 0.0
             )
             avg_loss = (
-                (metrics["avg_loss"] * metrics["losing_trades"] + (pnl if not is_win else 0))
+                (metrics["avg_loss"] * metrics["losing_trades"] + (net_pnl if not is_win else 0.0))
                 / losing_trades if losing_trades > 0 else 0.0
             )
             profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else 0.0
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE performance_metrics SET
                     total_trades = ?, winning_trades = ?, losing_trades = ?,
-                    total_net_pnl = ?, win_rate = ?, profit_factor = ?,
+                    total_gross_pnl = ?, total_net_pnl = ?, total_friction = ?,
+                    win_rate = ?, profit_factor = ?,
                     avg_win = ?, avg_loss = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE execution_mode = 'PAPER'
-            """, (total_trades, winning_trades, losing_trades, total_net_pnl,
-                  win_rate, profit_factor, avg_win, avg_loss))
+                WHERE execution_mode = ?
+                """,
+                (
+                    total_trades,
+                    winning_trades,
+                    losing_trades,
+                    total_gross_pnl,
+                    total_net_pnl,
+                    total_friction,
+                    win_rate,
+                    profit_factor,
+                    avg_win,
+                    avg_loss,
+                    execution_mode,
+                ),
+            )
+
+    def _update_performance_from_paper(self, pnl: float, is_win: bool) -> None:
+        self._update_performance_metrics(
+            execution_mode="PAPER",
+            gross_pnl=pnl,
+            net_pnl=pnl,
+            friction_cost=0.0,
+            is_win=is_win,
+        )
 
     def get_performance_summary_by_source(self, mode: str | None = None) -> Dict[str, Dict[str, float]]:
         """
@@ -691,9 +807,48 @@ class Ledger:
                     )
                 else:
                     cursor.execute(
-                        "UPDATE positions SET status = 'CLOSED', exit_price = ?, pnl = ?, "
+                        "SELECT position_id, notional_usd, capital_engaged FROM positions "
+                        "WHERE position_id = ? AND status = 'OPEN'",
+                        (position_id,),
+                    )
+                    position = cursor.fetchone()
+                    if position is None:
+                        logger.warning("Close requested for unknown or already closed position: %s", position_id)
+                        return
+
+                    cursor.execute(
+                        "SELECT id, total_capital, available_capital FROM capital_allocation ORDER BY id DESC LIMIT 1"
+                    )
+                    capital_row = cursor.fetchone()
+                    if capital_row is None:
+                        raise QuantFatal("No capital allocation row found during close_position")
+
+                    notional_usd = float(position["notional_usd"] or 0.0)
+                    capital_engaged = float(position["capital_engaged"] or 0.0)
+                    gross_pnl = float(pnl if pnl is not None else 0.0)
+                    fee_cost = max(0.0, capital_engaged - notional_usd)
+                    net_pnl = gross_pnl - fee_cost
+
+                    new_available = max(0.0, float(capital_row["available_capital"] or 0.0) + notional_usd + gross_pnl)
+                    new_total = max(0.0, float(capital_row["total_capital"] or 0.0) + net_pnl)
+
+                    cursor.execute(
+                        "UPDATE capital_allocation SET total_capital = ?, available_capital = ?, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE id = ?",
+                        (new_total, new_available, capital_row["id"]),
+                    )
+                    is_win = 1 if net_pnl > 0 else 0
+                    cursor.execute(
+                        "UPDATE positions SET status = 'CLOSED', exit_price = ?, pnl = ?, is_win = ?, "
                         "closed_at = CURRENT_TIMESTAMP WHERE position_id = ?",
-                        (exit_price, pnl, position_id),
+                        (exit_price, net_pnl, is_win, position_id),
+                    )
+                    self._update_performance_metrics(
+                        execution_mode=self.get_execution_mode(),
+                        gross_pnl=gross_pnl,
+                        net_pnl=net_pnl,
+                        friction_cost=fee_cost,
+                        is_win=bool(is_win),
                     )
             else:
                 cursor.execute(

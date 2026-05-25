@@ -8,7 +8,7 @@ from typing import Any, Mapping, Sequence
 from utils.llm_council import _redact_secret_like_text
 
 
-CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config")
 PERSONA_PROMPTS_CONFIG_PATH = os.path.join(CONFIG_DIR, "persona_prompts.json")
 
 

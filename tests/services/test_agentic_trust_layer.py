@@ -1,6 +1,6 @@
 import pytest
 
-from core.services.agentic_trust_layer import AgenticTraceEvent, AgenticTrustLayer
+from services.agentic_trust_layer import AgenticTraceEvent, AgenticTrustLayer
 
 
 def test_trust_layer_accepts_extra_incidental_states() -> None:

@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Any
 
 
-CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config")
 OPENVIKING_CONFIG_PATH = os.path.join(CONFIG_DIR, "openviking.json")
 
 DEFAULT_ENDPOINTS = [

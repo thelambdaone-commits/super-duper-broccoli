@@ -154,6 +154,51 @@ def test_prod_mode_reserves_fee_buffer(temp_ledger):
     assert result["estimated_fee"] == pytest.approx(10.0)
 
 
+def test_prod_mode_atomic_reserve_and_release(temp_ledger):
+    cursor = temp_ledger.conn.cursor()
+    cursor.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) "
+        "VALUES (10000.0, 10000.0, 10.0)"
+    )
+    temp_ledger.conn.commit()
+    temp_ledger.set_execution_mode("PROD")
+
+    result = temp_ledger.validate_and_reserve("SOL", "BUY", 0.5, 1000, reserve=True)
+
+    assert result["authorized"] is True
+    assert temp_ledger.get_capital_summary()["available_capital"] == pytest.approx(9490.0)
+
+    temp_ledger.release_reserved_capital(result["capital"])
+    assert temp_ledger.get_capital_summary()["available_capital"] == pytest.approx(10000.0)
+
+
+def test_prod_mode_record_order_with_reserved_capital_does_not_double_debit(temp_ledger):
+    cursor = temp_ledger.conn.cursor()
+    cursor.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) "
+        "VALUES (10000.0, 10000.0, 10.0)"
+    )
+    temp_ledger.conn.commit()
+    temp_ledger.set_execution_mode("PROD")
+
+    reservation = temp_ledger.validate_and_reserve("SOL", "BUY", 0.5, 1000, reserve=True)
+    temp_ledger.record_order(
+        "pos-prod-reserved",
+        "SOL",
+        "BUY",
+        0.5,
+        1000,
+        requested_qty=1000,
+        filled_qty=1000,
+        execution_price=0.5,
+        notional_usd=500.0,
+        reserved_capital=reservation["capital"],
+    )
+
+    summary = temp_ledger.get_capital_summary()
+    assert summary["available_capital"] == pytest.approx(9490.0)
+
+
 def test_prod_mode_record_order_consumes_fee_buffer(temp_ledger):
     cursor = temp_ledger.conn.cursor()
     cursor.execute(
@@ -177,6 +222,62 @@ def test_prod_mode_record_order_consumes_fee_buffer(temp_ledger):
 
     summary = temp_ledger.get_capital_summary()
     assert summary["available_capital"] == pytest.approx(9490.0)
+
+
+def test_live_close_releases_capital_and_tracks_signal_source(temp_ledger):
+    cursor = temp_ledger.conn.cursor()
+    cursor.execute(
+        "INSERT INTO capital_allocation (total_capital, available_capital, allocated_pct) "
+        "VALUES (10000.0, 10000.0, 10.0)"
+    )
+    temp_ledger.conn.commit()
+    temp_ledger.set_execution_mode("PROD")
+
+    temp_ledger.record_order(
+        "pos-live",
+        "SOL",
+        "BUY",
+        0.5,
+        1000,
+        requested_qty=1000,
+        filled_qty=1000,
+        execution_price=0.5,
+        notional_usd=500.0,
+        signal_source="autonomous_strategy:mean_reversion",
+    )
+
+    open_pos = temp_ledger.get_open_positions()[0]
+    assert open_pos["signal_source"] == "autonomous_strategy:mean_reversion"
+
+    temp_ledger.close_position(
+        "pos-live",
+        exit_price=0.55,
+        pnl=50.0,
+        exit_reason="take_profit",
+    )
+
+    summary = temp_ledger.get_capital_summary()
+    assert summary["available_capital"] == pytest.approx(10040.0)
+    assert summary["total_capital"] == pytest.approx(10040.0)
+
+    closed = temp_ledger.conn.execute(
+        "SELECT status, exit_price, pnl, is_win FROM positions WHERE position_id = ?",
+        ("pos-live",),
+    ).fetchone()
+    assert closed["status"] == "CLOSED"
+    assert closed["exit_price"] == pytest.approx(0.55)
+    assert closed["pnl"] == pytest.approx(40.0)
+    assert closed["is_win"] == 1
+
+    perf = temp_ledger.get_performance_summary(mode="PROD")
+    assert perf["total_trades"] == 1
+    assert perf["winning_trades"] == 1
+    assert perf["total_gross_pnl"] == pytest.approx(50.0)
+    assert perf["total_net_pnl"] == pytest.approx(40.0)
+    assert perf["total_friction"] == pytest.approx(10.0)
+
+    by_source = temp_ledger.get_performance_summary_by_source(mode="PROD")
+    assert by_source["mean_reversion"]["total_pnl"] == pytest.approx(40.0)
 
 
 def test_initialize_database_migrates_exchange_order_id(tmp_path):

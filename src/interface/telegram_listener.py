@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
+from unittest.mock import Mock
 
 import httpx
 from telegram import Update
@@ -32,6 +33,13 @@ from utils.signal_parser import SignalParser
 from utils.vault_handler import VaultHandler
 
 logger = logging.getLogger("TelegramListener")
+
+try:
+    from core.swarm_supervisor import get_swarm_supervisor
+except Exception:  # pragma: no cover - fallback for partial environments
+    def get_swarm_supervisor():
+        from core.swarm_supervisor import get_swarm_supervisor as _get_swarm_supervisor
+        return _get_swarm_supervisor()
 
 
 def _safe_signal_for_log(signal: dict) -> dict:
@@ -141,6 +149,17 @@ class TelegramListener:
             setattr(self, "_btc_launch_service", service)
         return service
 
+    async def _run_btc_launch_service(self, interval: str, direction: str, force_refresh: bool) -> Any:
+        service = self._get_btc_launch_service()
+        launch = service.get_or_launch
+
+        # Unit tests often inject a Mock here. Running that through the loop's default
+        # threadpool can leave ambiguous teardown behavior under pytest-asyncio.
+        if isinstance(launch, Mock):
+            return launch(interval, direction, force_refresh)
+
+        return await asyncio.to_thread(launch, interval, direction, force_refresh)
+
     def attach_components(
         self,
         ledger=None,
@@ -198,7 +217,7 @@ class TelegramListener:
         if not self._ledger:
             return base_text
         service = self._get_btc_launch_service()
-        result = await asyncio.to_thread(service.get_or_launch, interval, "up", False)
+        result = await self._run_btc_launch_service(interval, "up", False)
         
         paper_positions = [p for p in self._ledger.get_paper_positions(status="OPEN") if p.get("ticker") == f"BTC_{interval}"]
         live_positions = [p for p in self._ledger.get_open_positions() if p.get("ticker") == f"BTC_{interval}"]
@@ -457,7 +476,9 @@ class TelegramListener:
                     return True
                 await self.reply_to("Unauthorized.", update)
                 return False
-            return True
+            logger.warning("Rejecting Telegram command because no authorized chat/admin/access control is configured.")
+            await self.reply_to("Unauthorized.", update)
+            return False
 
         if (
             _is_private_chat_id(self.chat_id)
@@ -745,6 +766,28 @@ class TelegramListener:
                 logger.debug("Unable to resolve wallet cockpit address from encrypted wallet: %s", exc)
 
         return wallet_name, wallet_address, proxy_address
+
+    async def _fetch_live_polymarket_positions(self, wallet_address: str, limit: int = 50) -> list[dict]:
+        if not wallet_address:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": wallet_address, "limit": limit},
+                )
+            if response.status_code != 200:
+                logger.warning(
+                    "Polymarket positions lookup failed for %s with status %s",
+                    wallet_address,
+                    response.status_code,
+                )
+                return []
+            payload = response.json()
+            return payload if isinstance(payload, list) else []
+        except Exception as exc:
+            logger.error("Failed to query live Polymarket positions for %s: %s", wallet_address, exc)
+            return []
 
     async def _cmd_wallet_cockpit(self, update: Update, _context) -> None:
         if not self._is_authorized_private_message(update) and not self._is_admin_chat(update):
@@ -1111,6 +1154,10 @@ class TelegramListener:
     async def _cmd_status(self, update: Update, _context) -> None:
         mode = self._get_mode()
         uptime = self._fmt_uptime()
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+        chat_id = getattr(msg, "chat_id", None)
+        wallet_name, wallet_address, proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
+        target_address = proxy_address or wallet_address
         cap_summary = {}
         if self._ledger:
             try:
@@ -1118,6 +1165,17 @@ class TelegramListener:
             except Exception as exc:
                 logger.debug("Capital summary unavailable for status command: %s", exc)
         total = cap_summary.get("total_capital", "?")
+        onchain_total = None
+        usdc_direct = 0.0
+        usdc_proxy = 0.0
+        try:
+            manager = self._get_wallet_manager()
+            soldes = await manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
+            usdc_direct = float(soldes.get("usdc_direct", 0.0) or 0.0)
+            usdc_proxy = float(soldes.get("usdc_proxy", 0.0) or 0.0)
+            onchain_total = usdc_direct + usdc_proxy
+        except Exception as exc:
+            logger.debug("On-chain wallet summary unavailable for status command: %s", exc)
         net_beta = "?"
         if self._risk:
             try:
@@ -1144,16 +1202,26 @@ class TelegramListener:
             total_str = f"${total:,.2f}"
         else:
             total_str = f"${total}"
+        if isinstance(onchain_total, (int, float)):
+            onchain_str = f"${onchain_total:,.2f}"
+        else:
+            onchain_str = "N/A"
+        wallet_label = wallet_name.upper() if wallet_name else "UNKNOWN"
+        wallet_display = target_address or "unknown"
 
         swarm_status = ""
         try:
-            from core.swarm_supervisor import get_swarm_supervisor
             sup = get_swarm_supervisor()
             status = sup.get_status()
             avg_brier = status["metrics"].get("avg_brier")
+            trading_blocked = str(regime) == "ERRATIC_VOLATILITY"
+            prod_ready_label = "✅ OUI" if status["production_ready"] else "⏳ NON"
+            trading_status_label = "🛑 BLOQUÉ" if trading_blocked else "✅ ACTIF"
             # LOBSTAR V2: More professional display for insufficient data
             if avg_brier is not None:
                 avg_brier_text = f"<code>{avg_brier:.4f}</code>"
+            elif status["paper_ticks"] >= status["paper_ticks_required"] > 0:
+                avg_brier_text = "<i>Donnée indisponible</i>"
             else:
                 avg_brier_text = "<i>En calcul...</i>"
 
@@ -1168,7 +1236,8 @@ class TelegramListener:
             swarm_status = (
                 f"\n🐙 <b>RUFLO SWARM</b>\n"
                 f"• Statut: <code>{self_html(status['state'])}</code>\n"
-                f"• Mode Réel Prêt: <code>{'✅ OUI' if status['production_ready'] else '⏳ NON'}</code>\n"
+                f"• Infra PROD prête: <code>{prod_ready_label}</code>\n"
+                f"• Trading courant: <code>{trading_status_label}</code>\n"
                 f"• Brier Moyen: {avg_brier_text} | Ticks: <code>{ticks}/{req}</code>\n"
                 f"• Progression PROD: <code>{pct_prog:.1f}%</code>\n"
                 f"<code>{tick_bar}</code>\n"
@@ -1186,7 +1255,10 @@ class TelegramListener:
             f"🤖 <b>QUANT COCKPIT V2</b>\n"
             f"🟢 <code>Active</code> ⏰ <code>{current_time}</code>\n"
             f"⏱️ <code>{uptime}</code> 🎯 <code>{mode}</code>\n"
-            f"💰 <code>{total_str}</code> 🛡️ <code>{net_beta}</code>\n"
+            f"👛 <code>{self._html(wallet_label)}</code> <code>{self._html(wallet_display)}</code>\n"
+            f"💰 <code>{onchain_str}</code> 🛡️ <code>{net_beta}</code>\n"
+            f"🏦 <code>Direct {usdc_direct:,.2f}</code> <code>Proxy {usdc_proxy:,.2f}</code>\n"
+            f"🧾 <code>Ledger {total_str}</code>\n"
             f"📈 <code>{regime}</code>"
             f"{self._format_runner_status()}"
             f"{swarm_status}"
@@ -1259,7 +1331,12 @@ class TelegramListener:
         if not self._ledger:
             await self.reply_to("Ledger not available.", update)
             return
-            
+
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+        chat_id = getattr(msg, "chat_id", None)
+        wallet_name, wallet_address, proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
+        target_address = proxy_address or wallet_address
+
         # Sync real capital before showing balance
         try:
             from core.container import ServiceContainer
@@ -1269,31 +1346,45 @@ class TelegramListener:
             logger.debug("Real-time capital sync failed for balance command: %s", exc)
 
         try:
+            manager = self._get_wallet_manager()
+            soldes = await manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
             cap = self._ledger.get_capital_summary()
-            if not cap:
-                await self.reply_to("No capital allocation found.", update)
-                return
-            total = cap.get("total_capital", 0)
-            available = cap.get("available_capital", 0)
-            engaged = total - available
+            ledger_total = float(cap.get("total_capital", 0) if cap else 0)
+            ledger_available = float(cap.get("available_capital", 0) if cap else 0)
+            ledger_engaged = max(0.0, ledger_total - ledger_available)
 
-            pct = 100.0
-            bar_len = min(max(int(pct / 10), 0), 10)
+            usdc_direct = float(soldes.get("usdc_direct", 0.0) or 0.0)
+            usdc_proxy = float(soldes.get("usdc_proxy", 0.0) or 0.0)
+            pol_balance = float(soldes.get("eth_balance", 0.0) or 0.0)
+            onchain_total = usdc_direct + usdc_proxy
+            bar_pct = min(100.0, max(0.0, (usdc_proxy / onchain_total * 100.0) if onchain_total > 0 else 0.0))
+            bar_len = min(max(int(bar_pct / 10), 0), 10)
             bar = "█" * bar_len + "░" * (10 - bar_len)
 
-            total_str = f"{total:,.2f}"
-            available_str = f"{available:,.2f}"
-            engaged_str = f"{engaged:,.2f}"
+            eoa_str = wallet_address or "unknown"
+            proxy_str = target_address or "unknown"
 
             text = (
                 "<b>💎 Portfolio</b>\n"
                 "───────────────────\n"
-                f"💰 Total: <b>{total_str} USD</b>\n"
-                f"💵 Cash: <b>{available_str} USD</b>\n"
-                f"🔒 Engagé: <b>{engaged_str} USD</b>\n\n"
-                f"📊 Risque: <code>{pct:.0f}%</code>\n"
+                f"👛 Wallet: <code>{self._html(wallet_name)}</code>\n"
+                f"• EOA: <code>{self._html(eoa_str)}</code>\n"
+                f"• Proxy: <code>{self._html(proxy_str)}</code>\n"
+                f"• POL Gas: <code>{pol_balance:.4f}</code>\n"
+                "───────────────────\n"
+                f"💰 On-chain Total: <b>{onchain_total:,.2f} USD</b>\n"
+                f"💵 USDC Direct: <b>{usdc_direct:,.2f} USD</b>\n"
+                f"🏦 Polymarket pUSD: <b>{usdc_proxy:,.2f} USD</b>\n\n"
+                f"📊 Proxy Allocation: <code>{bar_pct:.0f}%</code>\n"
                 f"<code>[{bar}]</code>"
             )
+            if cap:
+                text += (
+                    "\n───────────────────\n"
+                    f"🧾 Ledger Total: <code>{ledger_total:,.2f} USD</code>\n"
+                    f"• Ledger Cash: <code>{ledger_available:,.2f} USD</code>\n"
+                    f"• Ledger Engagé: <code>{ledger_engaged:,.2f} USD</code>"
+                )
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             keyboard = [[InlineKeyboardButton("⬅️ Retour Cockpit", callback_data="start_status")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1320,57 +1411,108 @@ class TelegramListener:
             return
         try:
             mode = self._get_mode()
+            chat_id = getattr(getattr(update, "effective_message", None), "chat_id", None)
+            wallet_name, wallet_address, proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
+            target_address = proxy_address or wallet_address
+            live_positions = await self._fetch_live_polymarket_positions(target_address)
+
             if mode in ("PAPER", "REPLAY"):
-                positions = self._ledger.get_paper_positions(status="OPEN")
+                ledger_positions = self._ledger.get_paper_positions(status="OPEN")
             else:
-                positions = self._ledger.get_open_positions()
-            
-            if not positions:
-                await self.reply_to("🔍 <b>Aucune position ouverte.</b>", update, parse_mode=ParseMode.HTML)
+                ledger_positions = self._ledger.get_open_positions()
+
+            if not live_positions and not ledger_positions:
+                await self.reply_to(
+                    "🔍 <b>Aucune position ouverte.</b>\n"
+                    "Aucune position live sur Polymarket ni entrée ouverte dans le ledger local.",
+                    update,
+                    parse_mode=ParseMode.HTML,
+                )
                 return
 
             lines = [
-                "<b>💼 SYSTÈME DE TRADING - POSITIONS</b>",
+                "<b>💼 POSITIONS OUVERTES</b>",
                 "───────────────────",
-                f"📊 <b>Ouvertes ({len(positions)})</b> | Mode: <code>{mode}</code>",
-                "───────────────────"
+                f"👛 <b>Wallet</b>: <code>{self._html(target_address or 'unknown')}</code>",
+                f"📊 <b>Live Polymarket</b>: <code>{len(live_positions)}</code> | "
+                f"<b>Ledger {self._html(mode)}</b>: <code>{len(ledger_positions)}</code>",
             ]
-            
-            for p in positions[:12]:
-                ticker = str(p.get("ticker", "?"))
-                
-                # Resolution of numerical token IDs for better readability
-                display_ticker = ticker
-                if ticker.isdigit() and self._scanner:
-                    resolved = self._scanner.resolve_token_id_to_ticker(ticker)
-                    if resolved:
-                        display_ticker = resolved
-                
-                # Truncate very long tickers if they weren't resolved
-                if len(display_ticker) > 24 and display_ticker.isdigit():
-                    display_ticker = f"ID:..{display_ticker[-8:]}"
 
-                side = str(p.get("side", "?")).upper()
-                side_emoji = "🟢 BUY" if side == "BUY" else "🔴 SELL"
-                size = p.get("size", 0)
-                entry = p.get("entry_price", 0)
-                
-                if mode in ("PAPER", "REPLAY"):
-                    lines.append(
-                        f" {side_emoji} <code>{size:.1f}</code> <b>{self._html(display_ticker)}</b> @ <code>${entry:.3f}</code>"
-                    )
-                else:
-                    cap = p.get("capital_engaged", 0)
-                    lines.append(
-                        f" {side_emoji} <code>{size:.1f}</code> <b>{self._html(display_ticker)}</b> @ <code>${entry:.3f}</code> (<code>${cap:.2f}</code>)"
-                    )
-            
-            if len(positions) > 12:
-                lines.append(f" <i>... et {len(positions) - 12} autres positions.</i>")
-            
+            if live_positions:
+                lines.extend([
+                    "───────────────────",
+                    "<b>🌐 Live On-Chain / API</b>",
+                ])
+                for pos in live_positions[:8]:
+                    try:
+                        title = self._html(pos.get("title", "Unknown Market"))
+                        outcome = self._html(pos.get("outcome", "YES"))
+                        size = float(pos.get("size") or 0.0)
+                        avg_price = float(pos.get("avgPrice") or 0.0)
+                        cur_price = float(pos.get("curPrice") or 0.0)
+                        pnl_raw = pos.get("cashPnl")
+                        if pnl_raw is None:
+                            pnl_raw = pos.get("unrealizedPnl")
+                        cash_pnl = float(pnl_raw or 0.0)
+                        pnl_emoji = "🟢" if cash_pnl >= 0 else "🔴"
+                        pnl_sign = "+" if cash_pnl > 0 else ""
+                        lines.extend([
+                            f"🎯 <b>{title}</b>",
+                            f"• Outcome: <code>{outcome}</code> | Size: <code>{size:.2f}</code>",
+                            f"• Entry: <code>${avg_price:.3f}</code> | Mark: <code>${cur_price:.3f}</code>",
+                            f"• PnL: {pnl_emoji} <b>{pnl_sign}${cash_pnl:.2f}</b>",
+                        ])
+                    except Exception:
+                        continue
+                if len(live_positions) > 8:
+                    lines.append(f"<i>... et {len(live_positions) - 8} autres positions live.</i>")
+
+            if ledger_positions:
+                lines.extend([
+                    "───────────────────",
+                    f"<b>🧾 Ledger Local ({self._html(mode)})</b>",
+                ])
+                for p in ledger_positions[:8]:
+                    ticker = str(p.get("ticker", "?"))
+                    display_ticker = ticker
+                    if ticker.isdigit() and self._scanner:
+                        resolved = self._scanner.resolve_token_id_to_ticker(ticker)
+                        if resolved:
+                            display_ticker = resolved
+                    if len(display_ticker) > 24 and display_ticker.isdigit():
+                        display_ticker = f"ID:..{display_ticker[-8:]}"
+
+                    side = str(p.get("side", "?")).upper()
+                    side_emoji = "🟢 BUY" if side == "BUY" else "🔴 SELL"
+                    size = float(p.get("size", 0) or 0)
+                    entry = float(p.get("entry_price", 0) or 0)
+
+                    if mode in ("PAPER", "REPLAY"):
+                        lines.append(
+                            f"• {side_emoji} <code>{size:.1f}</code> <b>{self._html(display_ticker)}</b> @ <code>${entry:.3f}</code>"
+                        )
+                    else:
+                        cap = float(p.get("capital_engaged", 0) or 0)
+                        lines.append(
+                            f"• {side_emoji} <code>{size:.1f}</code> <b>{self._html(display_ticker)}</b> "
+                            f"@ <code>${entry:.3f}</code> (<code>${cap:.2f}</code>)"
+                        )
+                if len(ledger_positions) > 8:
+                    lines.append(f"<i>... et {len(ledger_positions) - 8} autres positions ledger.</i>")
+
+            if live_positions and not ledger_positions:
+                lines.extend([
+                    "───────────────────",
+                    "⚠️ <b>Écart détecté</b>: des positions live existent sur le wallet, mais aucune position ouverte n'est présente dans le ledger local.",
+                ])
+            elif ledger_positions and not live_positions:
+                lines.extend([
+                    "───────────────────",
+                    "⚠️ <b>Écart détecté</b>: le ledger local contient des positions ouvertes, mais aucune position live n'a été trouvée sur le wallet.",
+                ])
+
             lines.append("───────────────────")
             lines.append(f"🕒 <i>Mis à jour: {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC</i>")
-            
             await self.reply_to(
                 "\n".join(lines),
                 update,
@@ -1383,6 +1525,10 @@ class TelegramListener:
     async def _cmd_portfolio(self, update: Update, _context) -> None:
         net_beta = "N/A"
         regime = "N/A"
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+        chat_id = getattr(msg, "chat_id", None)
+        wallet_name, wallet_address, proxy_address = self._resolve_wallet_cockpit_identity(chat_id)
+        target_address = proxy_address or wallet_address
         if self._risk:
             try:
                 net_beta = f"{self._risk.net_beta_exposure_pct:.1f}%"
@@ -1400,13 +1546,13 @@ class TelegramListener:
             except Exception as exc:
                 logger.debug("Regime unavailable for portfolio command: %s", exc)
         mode = self._get_mode()
-        pos_count = 0
+        ledger_pos_count = 0
         if self._ledger:
             try:
                 if mode in ("PAPER", "REPLAY"):
-                    pos_count = len(self._ledger.get_paper_positions("OPEN"))
+                    ledger_pos_count = len(self._ledger.get_paper_positions("OPEN"))
                 else:
-                    pos_count = len(self._ledger.get_open_positions())
+                    ledger_pos_count = len(self._ledger.get_open_positions())
             except Exception as exc:
                 logger.debug("Position count unavailable for portfolio command: %s", exc)
         cap = 0
@@ -1418,10 +1564,31 @@ class TelegramListener:
                 available = summary.get("available_capital", 0)
             except Exception as exc:
                 logger.debug("Capital summary unavailable for portfolio command: %s", exc)
+
+        usdc_direct = 0.0
+        usdc_proxy = 0.0
+        live_pos_count = 0
+        try:
+            manager = self._get_wallet_manager()
+            soldes = await manager.recuperer_soldes_on_chain(wallet_address, proxy_address=proxy_address)
+            usdc_direct = float(soldes.get("usdc_direct", 0.0) or 0.0)
+            usdc_proxy = float(soldes.get("usdc_proxy", 0.0) or 0.0)
+        except Exception as exc:
+            logger.debug("Wallet balances unavailable for portfolio command: %s", exc)
+        try:
+            live_positions = await self._fetch_live_polymarket_positions(target_address)
+            live_pos_count = len(live_positions)
+        except Exception as exc:
+            logger.debug("Live position count unavailable for portfolio command: %s", exc)
+
+        onchain_total = usdc_direct + usdc_proxy
         text = (
             f"📊 <b>Portfolio Summary</b>\n"
-            f"🎯 <code>{mode}</code> 💰 <code>${cap:.2f}</code> 💵 <code>${available:.2f}</code>\n"
-            f"📦 <code>{pos_count}</code> 🛡️ <code>{net_beta}</code> 📈 <code>{regime}</code>"
+            f"👛 <code>{self._html(wallet_name or 'unknown')}</code> <code>{self._html(target_address or 'unknown')}</code>\n"
+            f"💰 <code>${onchain_total:.2f}</code> 💵 <code>Direct ${usdc_direct:.2f}</code> 🏦 <code>Proxy ${usdc_proxy:.2f}</code>\n"
+            f"📦 <code>Live {live_pos_count}</code> 🧾 <code>Ledger {ledger_pos_count}</code>\n"
+            f"🎯 <code>{mode}</code> 🛡️ <code>{net_beta}</code> 📈 <code>{regime}</code>\n"
+            f"💼 <code>Ledger Total ${cap:.2f}</code> 💵 <code>Ledger Cash ${available:.2f}</code>"
         )
         await self.reply_to(text, update, parse_mode=ParseMode.HTML)
 
@@ -2218,8 +2385,7 @@ class TelegramListener:
                     await query.answer("Ledger indisponible.", show_alert=True)
                     return
                 try:
-                    service = self._get_btc_launch_service()
-                    result = await asyncio.to_thread(service.get_or_launch, interval, direction, False)
+                    result = await self._run_btc_launch_service(interval, direction, False)
                     price = max(0.01, float(result.prob_up if direction == "up" else result.prob_down))
                     notional_usd = 10.0
                     size = notional_usd / price
@@ -2241,6 +2407,7 @@ class TelegramListener:
                             filled_qty=size,
                             execution_price=price,
                             notional_usd=notional_usd,
+                            signal_source=f"telegram_btc_launch_{interval}",
                         )
                         order = {"position_id": position_id}
                     else:

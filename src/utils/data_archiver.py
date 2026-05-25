@@ -1,8 +1,11 @@
 import logging
 import os
+import json
+import shutil
 import tarfile
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger("DataArchiver")
@@ -43,6 +46,111 @@ class DataArchiver:
             return self._fs_instance
         from utils.feature_store import FeatureStore
         return FeatureStore(db_path=self.db_path)
+
+    @staticmethod
+    def _parquet_summary(path: Path) -> dict[str, Any]:
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            return {
+                "path": str(path),
+                "kind": "parquet",
+                "status": "skipped",
+                "reason": "pyarrow_not_installed",
+                "size_bytes": path.stat().st_size if path.exists() else 0,
+            }
+
+        pf = pq.ParquetFile(str(path))
+        metadata = pf.metadata
+        schema = pf.schema_arrow
+        return {
+            "path": str(path),
+            "kind": "parquet",
+            "status": "ok",
+            "size_bytes": path.stat().st_size if path.exists() else 0,
+            "rows": int(metadata.num_rows) if metadata else 0,
+            "row_groups": int(metadata.num_row_groups) if metadata else 0,
+            "columns": [field.name for field in schema],
+        }
+
+    def archive_polymarket_dataset(
+        self,
+        source_dir: str,
+        dataset_name: str = "Polymarket_data",
+        include_sidecars: bool = True,
+    ) -> dict[str, Any]:
+        source_path = Path(source_dir)
+        if not source_path.exists() or not source_path.is_dir():
+            return {"status": "SKIPPED", "reason": "source_dir_not_found", "source_dir": str(source_path)}
+
+        snapshot_root = Path(self.archive_dir) / "polymarket_data"
+        snapshot_root.mkdir(parents=True, exist_ok=True)
+        snapshot_dir = snapshot_root / f"{dataset_name.lower()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+
+        candidate_files = [
+            "quant.parquet",
+            "users.parquet",
+            "trades.parquet",
+            "markets.parquet",
+            "orderfilled.parquet",
+            "README.md",
+            "LICENSE",
+        ]
+        entries: list[dict[str, Any]] = []
+        total_rows = 0
+        total_bytes = 0
+
+        for rel_name in candidate_files:
+            src = source_path / rel_name
+            if not src.exists() or not src.is_file():
+                continue
+
+            size_bytes = src.stat().st_size
+            total_bytes += size_bytes
+            entry: dict[str, Any] = {
+                "name": rel_name,
+                "source_path": str(src),
+                "size_bytes": size_bytes,
+            }
+
+            if src.suffix == ".parquet":
+                parquet_summary = self._parquet_summary(src)
+                total_rows += int(parquet_summary.get("rows", 0) or 0)
+                entry.update(parquet_summary)
+            else:
+                entry["kind"] = "sidecar"
+                entry["status"] = "ok"
+                if include_sidecars:
+                    dst = snapshot_dir / rel_name
+                    shutil.copy2(src, dst)
+                    entry["copied_to"] = str(dst)
+
+            entries.append(entry)
+
+        manifest = {
+            "dataset_name": dataset_name,
+            "source_dir": str(source_path),
+            "archived_at": datetime.now().isoformat(),
+            "archive_dir": str(snapshot_dir),
+            "files": entries,
+            "file_count": len(entries),
+            "parquet_row_total": total_rows,
+            "bytes_scanned": total_bytes,
+        }
+        manifest_path = snapshot_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+
+        return {
+            "status": "OK",
+            "dataset_name": dataset_name,
+            "source_dir": str(source_path),
+            "archive_dir": str(snapshot_dir),
+            "manifest": str(manifest_path),
+            "file_count": len(entries),
+            "parquet_row_total": total_rows,
+            "bytes_scanned": total_bytes,
+        }
 
     def archive_microstructure(self) -> dict:
         if not os.path.exists(self.db_path) and not self._fs_instance:
@@ -173,10 +281,15 @@ class DataArchiver:
         return usage
 
     def run_maintenance_cycle(self) -> dict:
+        polymarket_dataset_path = os.getenv("POLYMARKET_DATASET_PATH", "").strip()
         results = {
             "microstructure": self.archive_microstructure(),
             "logs": self.compress_logs(),
             "cleanup": self.clean_warm_archives(),
             "disk_usage": self.disk_usage_report(),
         }
+        if polymarket_dataset_path:
+            results["polymarket_dataset"] = self.archive_polymarket_dataset(polymarket_dataset_path)
+        else:
+            results["polymarket_dataset"] = {"status": "SKIPPED", "reason": "POLYMARKET_DATASET_PATH_not_set"}
         return results

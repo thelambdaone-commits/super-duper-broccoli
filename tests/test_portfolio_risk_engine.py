@@ -1,7 +1,8 @@
+import asyncio
 import pytest
 from unittest.mock import MagicMock
 
-from core.portfolio_risk_engine import PortfolioRiskEngine, REGIME_SIZING_MULTIPLIER
+from services.portfolio_risk_engine import PortfolioRiskEngine, REGIME_SIZING_MULTIPLIER
 
 
 @pytest.fixture
@@ -257,6 +258,54 @@ class TestComputePositionSize:
         )
         assert "size" in result
         assert result["capital_at_risk"] == 0.0
+        assert result["reason"] == "INVALID_PRICE"
+
+    def test_effective_win_probability_flips_for_sell_side(self, engine: PortfolioRiskEngine) -> None:
+        assert engine._effective_win_probability("BUY", 0.80, fallback=0.5) == pytest.approx(0.80)
+        assert engine._effective_win_probability("SELL", 0.80, fallback=0.5) == pytest.approx(0.20)
+        assert engine._effective_win_probability("NO", 0.65, fallback=0.5) == pytest.approx(0.35)
+
+    def test_validate_signal_risk_uses_side_adjusted_probability(self, engine: PortfolioRiskEngine) -> None:
+        ok_buy, reason_buy = asyncio.run(engine.validate_signal_risk(
+            {
+                "ticker": "SOL",
+                "side": "BUY",
+                "price": 0.50,
+                "confidence": 0.8,
+                "predictive_probability": 0.80,
+                "regime_label": "LOW_VOLATILITY",
+            },
+            current_portfolio_value=20_000.0,
+            active_positions={},
+        ))
+        ok_sell, reason_sell = asyncio.run(engine.validate_signal_risk(
+            {
+                "ticker": "SOL",
+                "side": "SELL",
+                "price": 0.50,
+                "confidence": 0.8,
+                "predictive_probability": 0.80,
+                "regime_label": "LOW_VOLATILITY",
+            },
+            current_portfolio_value=20_000.0,
+            active_positions={},
+        ))
+        assert ok_buy is True
+        assert reason_buy == "OK"
+        assert ok_sell is False
+        assert reason_sell == "RISK_CAP_ZERO"
+
+    def test_zero_available_capital_sets_explicit_reason(self, engine: PortfolioRiskEngine) -> None:
+        engine.ledger.get_capital_summary.return_value = {
+            "total_capital": 20_000.0,
+            "available_capital": 0.0,
+        }
+        result = engine.compute_position_size(
+            ticker="SOL", side="BUY", price=0.50,
+            confidence=0.8, regime_label="LOW_VOLATILITY",
+        )
+        assert result["size"] == 0.0
+        assert result["reason"] == "INSUFFICIENT_AVAILABLE_CAPITAL"
 
     def test_available_capital_limits_size(self, engine: PortfolioRiskEngine) -> None:
         engine.ledger.get_capital_summary.return_value = {
@@ -382,7 +431,7 @@ class TestEdgeCases:
 
     def test_ticker_with_dash_prefix(self, engine: PortfolioRiskEngine) -> None:
         engine.book_exposure("BTC-PERP", 500.0, "BUY")
-        assert engine._exposures["BTC-PERP"] == 500.0
+        assert engine._exposures["BTC"] == 500.0
         pct = engine.net_beta_exposure_pct
         expected = (500.0 * 1.0) / 20_000.0 * 100
         assert pct == pytest.approx(expected)

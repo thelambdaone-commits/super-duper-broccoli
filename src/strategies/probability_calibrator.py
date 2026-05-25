@@ -14,6 +14,8 @@ logger = logging.getLogger("ProbabilityCalibrator")
 
 
 class ProbabilityCalibrator:
+    ALLOWED_DIR = os.getcwd()
+
     def __init__(
         self,
         fusion_mode: str = "ensemble",

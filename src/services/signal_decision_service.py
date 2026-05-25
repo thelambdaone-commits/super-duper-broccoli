@@ -19,13 +19,46 @@ class SignalDecisionService:
         self.ledger = ledger
         self.snapshot_mgr = snapshot_mgr
 
+    @staticmethod
+    def mark_stage(signal: dict, stage: str, status: str, reason: str = "", **details: Any) -> dict:
+        trace = dict(signal.get("decision_trace") or {})
+        entry: dict[str, Any] = {"status": status}
+        if reason:
+            entry["reason"] = reason
+        for key, value in details.items():
+            if value is not None:
+                entry[key] = value
+        trace[stage] = entry
+        signal["decision_trace"] = trace
+        return signal
+
     async def apply_predictive_gate(self, signal: dict) -> tuple[dict, bool]:
         if self.predictive_gate is None:
+            self.mark_stage(signal, "predictive_gate", "SKIPPED", "gate_unavailable")
             return signal, True
         allowed, reason = self.predictive_gate.validate_signal(signal)
         if not allowed:
+            self.mark_stage(
+                signal,
+                "predictive_gate",
+                "REJECTED",
+                reason,
+                edge=signal.get("predictive_edge"),
+                net_edge=signal.get("predictive_net_edge"),
+                estimated_cost=signal.get("predictive_estimated_cost"),
+            )
             logger.info("💤 [PREDICTIVE GATE] Signal rejected: %s", reason)
             return signal, False
+        self.mark_stage(
+            signal,
+            "predictive_gate",
+            "ACCEPTED",
+            reason,
+            probability=signal.get("predictive_probability"),
+            edge=signal.get("predictive_edge"),
+            net_edge=signal.get("predictive_net_edge"),
+            estimated_cost=signal.get("predictive_estimated_cost"),
+        )
         logger.info(
             "🔮 [PREDICTIVE GATE] Signal validated: P(win)=%s, Edge=%s",
             f"{signal.get('predictive_probability', 0.0):.1%}",
@@ -66,10 +99,24 @@ class SignalDecisionService:
         active_positions: dict[str, float] = {}
         if self.ledger is not None:
             try:
-                for pos in self.ledger.get_open_positions():
+                mode = ""
+                if hasattr(self.ledger, "get_execution_mode"):
+                    try:
+                        mode = str(self.ledger.get_execution_mode() or "").upper()
+                    except Exception:
+                        mode = ""
+
+                positions = []
+                if mode in {"PAPER", "REPLAY"} and hasattr(self.ledger, "get_paper_positions"):
+                    positions = list(self.ledger.get_paper_positions(status="OPEN"))
+                else:
+                    positions = list(self.ledger.get_open_positions())
+
+                for pos in positions:
                     ticker = str(pos.get("ticker", "")).upper()
                     active_positions[ticker] = active_positions.get(ticker, 0.0) + float(
                         pos.get("capital_engaged")
+                        or pos.get("capital_virtual")
                         or pos.get("size", 0.0) * pos.get("entry_price", 0.0)
                     )
             except Exception as exc:
@@ -88,7 +135,7 @@ class SignalDecisionService:
 
     def build_microstructure_context(self, signal: dict, snapshot: Any) -> dict[str, Any]:
         context: dict[str, Any] = {}
-        if isinstance(snapshot, dict):
+        if isinstance(snapshot, dict) and self._snapshot_matches_signal(signal, snapshot):
             context.update(
                 {
                     "source": snapshot.get("source", "snapshot_manager"),
@@ -133,6 +180,30 @@ class SignalDecisionService:
             context["ticker"] = ticker
             context["liquidity_regime"] = self._classify_microstructure_regime(context)
         return context
+
+    @staticmethod
+    def _snapshot_matches_signal(signal: dict, snapshot: dict[str, Any]) -> bool:
+        signal_ids = {
+            str(signal.get("token_id") or "").strip().upper(),
+            str(signal.get("asset") or "").strip().upper(),
+            str(signal.get("ticker") or "").strip().upper(),
+            str(signal.get("market_id") or "").strip().upper(),
+        }
+        signal_ids.discard("")
+        if not signal_ids:
+            return True
+
+        snapshot_ids = {
+            str(snapshot.get("token_id") or "").strip().upper(),
+            str(snapshot.get("asset_id") or "").strip().upper(),
+            str(snapshot.get("ticker") or "").strip().upper(),
+            str(snapshot.get("market_id") or "").strip().upper(),
+            str(snapshot.get("condition_id") or "").strip().upper(),
+        }
+        snapshot_ids.discard("")
+        if not snapshot_ids:
+            return False
+        return not signal_ids.isdisjoint(snapshot_ids)
 
     @staticmethod
     def _coerce_first_numeric(value: Any) -> float:

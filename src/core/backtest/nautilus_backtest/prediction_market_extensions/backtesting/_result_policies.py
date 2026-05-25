@@ -12,8 +12,8 @@ from prediction_market_extensions.adapters.prediction_market.backtest_utils impo
     compute_binary_settlement_pnl,
 )
 
-type Results = list[dict[str, Any]]
-type SettlementPnlFn = Callable[[object, object], float | None]
+Results = list[dict[str, Any]]
+SettlementPnlFn = Callable[[object, object], float | None]
 _CURATED_REPLAY_WARNING = (
     "Replay selection is explicitly curated from named markets and may exclude cancelled, "
     "delisted, or zero-liquidity markets."

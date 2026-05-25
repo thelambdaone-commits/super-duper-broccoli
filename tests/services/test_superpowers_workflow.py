@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from core.services.superpowers_workflow import SuperpowersWorkflow
+from services.superpowers_workflow import SuperpowersWorkflow
 
 
 def test_superpowers_workflow_builds_task_packet() -> None:

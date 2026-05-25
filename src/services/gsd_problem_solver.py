@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -11,6 +12,18 @@ from services.gsd_workflow import GSDWorkflow, GSDTaskPacket
 from utils.llm_council import OpenRouterChatClient, resolve_openrouter_api_key
 
 logger = logging.getLogger("GSDProblemSolver")
+
+IGNORED_CONTEXT_DIRS = {
+    ".git",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "tests",
+    "user_data",
+    "runtime",
+    "logs",
+}
 
 
 @dataclass(frozen=True)
@@ -199,8 +212,9 @@ class GSDProblemSolverAgent:
         # Rule-based fast mapping of workspace files
         all_files = []
         for p in self.workspace_path.rglob("*.py"):
-            if ".venv" not in p.parts and "tests" not in p.parts:
-                all_files.append(str(p.relative_to(self.workspace_path)))
+            if any(part in IGNORED_CONTEXT_DIRS for part in p.parts):
+                continue
+            all_files.append(str(p.relative_to(self.workspace_path)))
 
         prompt = (
             f"Given this list of codebase files:\n{all_files}\n\n"
@@ -344,14 +358,17 @@ class GSDProblemSolverAgent:
         """Helper to invoke OpenRouter with fallback to mock response if keys are missing."""
         if self._chat_client:
             try:
-                content = await self._chat_client.complete(
-                    model="openai/gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are a precise GSD JSON assistant."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-                    max_tokens=2000,
+                content = await asyncio.wait_for(
+                    self._chat_client.complete(
+                        model="openai/gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "You are a precise GSD JSON assistant."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.1,
+                        max_tokens=2000,
+                    ),
+                    timeout=2.0,
                 )
                 return content
             except Exception as e:

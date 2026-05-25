@@ -130,6 +130,7 @@ class TestExecuteGuarded:
         assert result["status"] == "SKIPPED"
         assert "Polymarket minimum" in result["reason"]
         mock_freqai.clob_execute.assert_not_called()
+        assert result["size"] == pytest.approx(1.0)
 
     @pytest.mark.asyncio
     async def test_prod_mode_executes_full_size(
@@ -185,6 +186,25 @@ class TestExecuteGuarded:
         assert result["status"] == "SUCCESS"
         call_args = mock_freqai.clob_execute.call_args[1]
         assert call_args["size"] == 10.0
+
+    @pytest.mark.asyncio
+    async def test_failed_live_execution_releases_reserved_capital(
+        self, ledger: Ledger, mock_freqai: AsyncMock, mock_store: MagicMock,
+    ) -> None:
+        ledger.set_execution_mode("PROD")
+        before = ledger.get_capital_summary()["available_capital"]
+        mock_freqai.clob_execute.return_value = {"status": "REJECTED"}
+
+        result = await _execute_guarded(
+            ticker="SOL", side="BUY", price=0.50, size=100.0,
+            confidence=0.8, regime="LOW_VOLATILITY",
+            sizing={"kelly_pct": 12.5, "net_beta_exposure_pct": 3.2},
+            ledger=ledger, freqai=mock_freqai, risk=None, store=mock_store,
+            mode="PROD", signal_source="regex",
+        )
+
+        assert result["status"] == "FAILED"
+        assert ledger.get_capital_summary()["available_capital"] == pytest.approx(before)
 
     @pytest.mark.asyncio
     async def test_prod_mode_skips_when_available_collateral_cannot_meet_minimum(

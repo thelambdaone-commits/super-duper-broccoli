@@ -58,6 +58,8 @@ class PolymarketPredictiveEngine:
 
         self._inference_count = 0
         self._hybrid_model: Optional[Any] = None
+        self._models_cache: Dict[str, Any] = {}
+        self._calibrators_cache: Dict[str, Any] = {}
         self._timesfm: Optional[Any] = None
         
         try:
@@ -191,6 +193,7 @@ class PolymarketPredictiveEngine:
             df_market_ticks=df_live,
             clob_price_yes=clob_price_yes,
             timestamp_resolution=timestamp_resolution,
+            ticker=ticker,
         )
 
     @staticmethod
@@ -215,16 +218,18 @@ class PolymarketPredictiveEngine:
             return self._extract_positive_probability(model(X_live))
         raise TypeError(f"Unsupported model interface: {type(model).__name__}")
 
-    def _apply_calibrator(self, raw_score: float) -> float:
-        if not self.calibrator:
+    def _apply_calibrator(self, raw_score: float, ticker: Optional[str] = None) -> float:
+        calibrator = self._get_calibrator_for_ticker(ticker or "")
+        if not calibrator:
             return raw_score
         scores = np.array([[1.0 - raw_score, raw_score]], dtype=np.float64)
-        if hasattr(self.calibrator, "predict_proba"):
-            return self._extract_positive_probability(self.calibrator.predict_proba(scores))
-        if callable(self.calibrator):
-            return self._extract_positive_probability(self.calibrator(scores))
-        if hasattr(self.calibrator, "calibrate"):
-            logger.warning("Calibrator exposes calibrate() only; skipping inference-time recalibration")
+        if hasattr(calibrator, "predict_proba"):
+            return self._extract_positive_probability(calibrator.predict_proba(scores))
+        if callable(calibrator):
+            return self._extract_positive_probability(calibrator(scores))
+        if hasattr(calibrator, "predict"):
+             # IsotonicRegression.predict usually takes 1D array
+             return self._extract_positive_probability(calibrator.predict(np.array([raw_score])))
         return raw_score
 
     def _normalize_market_feature_rows(self, features: Any) -> list[dict[str, Any]]:
@@ -262,6 +267,7 @@ class PolymarketPredictiveEngine:
         df_market_ticks: pd.DataFrame,
         clob_price_yes: float,
         timestamp_resolution: float,
+        ticker: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Exécute la matrice d'inférence en 6 étapes déterministes.
@@ -272,10 +278,13 @@ class PolymarketPredictiveEngine:
         try:
             ensemble_scores = []
             
-            if self._hybrid_model is not None:
+            # Use ticker-specific model if available
+            target_model = self._get_model_for_ticker(ticker or "")
+            
+            if target_model is not None:
                 X_live = self.pipeline.transform(df_market_ticks) if self.pipeline else df_market_ticks.values
-                ensemble_scores.append(self._predict_model_probability(self._hybrid_model, X_live))
-                logger.info("🔮 Using HybridQuantModel for prediction")
+                ensemble_scores.append(self._predict_model_probability(target_model, X_live))
+                logger.info(f"🔮 Using {'specific' if ticker else 'global'} HybridQuantModel for prediction")
             elif self.models and self.pipeline:
                 X_live = self.pipeline.transform(df_market_ticks)
                 for model in self.models.values():
@@ -311,7 +320,7 @@ class PolymarketPredictiveEngine:
                 raw_score = self._get_mock_prediction()
                 logger.warning("🔮 Using explicitly enabled simulated prediction")
 
-            p_calibrated = self._apply_calibrator(float(np.clip(raw_score, 0.0, 1.0)))
+            p_calibrated = self._apply_calibrator(float(np.clip(raw_score, 0.0, 1.0)), ticker=ticker)
 
             p_final = self._calculer_time_decay(p_calibrated, timestamp_resolution)
 
@@ -385,6 +394,70 @@ class PolymarketPredictiveEngine:
             "allow_mock_predictions": self.allow_mock_predictions,
         }
 
+    def _get_model_for_ticker(self, ticker: str) -> Optional[Any]:
+        """Resolves the best matching model for a given ticker."""
+        if not ticker:
+            return self._hybrid_model
+        
+        # 0. Normalize to canonical asset (e.g. "will-bitcoin-hit-100k" -> "BTC")
+        from utils.ticker_utils import normalize_to_asset
+        asset_canonical = normalize_to_asset(ticker)
+        
+        # Exact match (e.g. "BTC_15m")
+        if ticker in self._models_cache:
+            return self._models_cache[ticker]
+            
+        # Canonical match (e.g. "BTC")
+        if asset_canonical in self._models_cache:
+            return self._models_cache[asset_canonical]
+        
+        # Asset-only match (e.g. ticker="BTC", model="BTC_hybrid.pkl")
+        asset_base = ticker.split("_")[0].upper()
+        if asset_base in self._models_cache:
+            return self._models_cache[asset_base]
+            
+        # Fallback to any model for this asset, preferring 15m standard
+        preferred = f"{asset_canonical}_15M"
+        if preferred in self._models_cache:
+            return self._models_cache[preferred]
+            
+        # Also try asset_base fallback
+        preferred_base = f"{asset_base}_15M"
+        if preferred_base in self._models_cache:
+            return self._models_cache[preferred_base]
+
+        for key in self._models_cache:
+            if key.startswith(f"{asset_canonical}_") or key.startswith(f"{asset_base}_"):
+                return self._models_cache[key]
+                
+        return self._hybrid_model
+
+    def _get_calibrator_for_ticker(self, ticker: str) -> Optional[Any]:
+        """Resolves the best matching calibrator for a given ticker."""
+        if not ticker:
+            return self.calibrator
+        
+        from utils.ticker_utils import normalize_to_asset
+        asset_canonical = normalize_to_asset(ticker)
+        
+        asset_base = ticker.split("_")[0].upper()
+        if ticker in self._calibrators_cache:
+            return self._calibrators_cache[ticker]
+        if asset_canonical in self._calibrators_cache:
+            return self._calibrators_cache[asset_canonical]
+        if asset_base in self._calibrators_cache:
+            return self._calibrators_cache[asset_base]
+            
+        preferred = f"{asset_canonical}_15M"
+        if preferred in self._calibrators_cache:
+            return self._calibrators_cache[preferred]
+
+        for key in self._calibrators_cache:
+            if key.startswith(f"{asset_canonical}_") or key.startswith(f"{asset_base}_"):
+                return self._calibrators_cache[key]
+                
+        return self.calibrator
+
     def load_models(
         self,
         model_dir: str = DEFAULT_MODEL_DIR,
@@ -393,9 +466,39 @@ class PolymarketPredictiveEngine:
     ) -> "PolymarketPredictiveEngine":
         """
         Charge les modèles réel HybridQuantModel et ProbabilityCalibrator depuis le disk.
+        Supporte le chargement massif par asset ({ticker}_hybrid.pkl).
         """
         os.makedirs(model_dir, exist_ok=True)
+        
+        # 1. Mass discovery
+        try:
+            from user_data.freqaimodels.HybridQuantModel import HybridQuantModel
+            from strategies.probability_calibrator import ProbabilityCalibrator
+            
+            for filename in os.listdir(model_dir):
+                if filename.endswith("_hybrid.pkl"):
+                    ticker_key = filename.replace("_hybrid.pkl", "").upper()
+                    try:
+                        self._models_cache[ticker_key] = HybridQuantModel().load(os.path.join(model_dir, filename))
+                        logger.info(f"✅ Loaded specific model: {ticker_key}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load specific model {filename}: {e}")
+                
+                elif filename.endswith("_calibrator.pkl"):
+                    ticker_key = filename.replace("_calibrator.pkl", "").upper()
+                    try:
+                        # ProbabilityCalibrator doesn't have .load() in some versions? 
+                        # Let's check strategies/probability_calibrator.py
+                        with open(os.path.join(model_dir, filename), "rb") as f:
+                            import pickle
+                            self._calibrators_cache[ticker_key] = pickle.load(f)
+                        logger.info(f"✅ Loaded specific calibrator: {ticker_key}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load specific calibrator {filename}: {e}")
+        except Exception as e:
+            logger.warning(f"Model discovery failed: {e}")
 
+        # 2. Legacy/Explicit path loading
         if hybrid_model_path is None:
             hybrid_model_path = os.path.join(model_dir, "hybrid_model.pkl")
 
@@ -413,7 +516,13 @@ class PolymarketPredictiveEngine:
         if os.path.exists(calibrator_path):
             try:
                 from strategies.probability_calibrator import ProbabilityCalibrator
-                self.calibrator = ProbabilityCalibrator().load(calibrator_path)
+                # Support both pickle and custom .load()
+                try:
+                    self.calibrator = ProbabilityCalibrator().load(calibrator_path)
+                except Exception:
+                    with open(calibrator_path, "rb") as f:
+                        import pickle
+                        self.calibrator = pickle.load(f)
                 logger.info(f"✅ ProbabilityCalibrator loaded from {calibrator_path}")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to load ProbabilityCalibrator: {e}")

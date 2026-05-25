@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 
 PROJECT_CONTEXT_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
     "config",
     "project_contexts.json",
 )

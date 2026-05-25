@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from core.services.gsd_workflow import GSDWorkflow
+from services.gsd_workflow import GSDWorkflow
 
 
 def test_gsd_workflow_builds_compact_task_packet() -> None:

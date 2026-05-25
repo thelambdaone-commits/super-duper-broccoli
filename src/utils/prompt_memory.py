@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 KB_DIR = os.path.join(PROJECT_ROOT, "continuous_improvement", "knowledge_base")
 PROJECT_MEMORY_PATH = os.path.join(KB_DIR, "project_memory.json")
@@ -105,7 +105,9 @@ def _default_memory() -> dict[str, Any]:
     }
 
 
-def load_project_memory(path: str = PROJECT_MEMORY_PATH) -> dict[str, Any]:
+def load_project_memory(path: Optional[str] = None) -> dict[str, Any]:
+    if path is None:
+        path = PROJECT_MEMORY_PATH
     memory = _load_json(path, _default_memory())
     if not isinstance(memory, dict):
         return _default_memory()
@@ -150,8 +152,10 @@ def list_project_memory(
     component: str = "",
     tag: str = "",
     limit: int = 10,
-    path: str = PROJECT_MEMORY_PATH,
+    path: Optional[str] = None,
 ) -> list[dict[str, Any]]:
+    if path is None:
+        path = PROJECT_MEMORY_PATH
     entries = load_project_memory(path).get("entries", [])
     component_norm = component.strip().lower()
     tag_norm = tag.strip().lower()

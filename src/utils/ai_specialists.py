@@ -6,7 +6,7 @@ from typing import Any
 from utils.prompt_memory import build_project_prompt_context
 
 
-CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config")
 AI_SPECIALISTS_PATH = os.path.join(CONFIG_DIR, "ai_specialists.json")
 FREE_PROVIDER_SOURCES_PATH = os.path.join(CONFIG_DIR, "free_ai_provider_sources.json")
 

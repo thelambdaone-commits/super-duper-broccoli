@@ -15,6 +15,7 @@ from utils.feature_store import FeatureStore
 class FakeLedger:
     total_capital: float = 100.0
     available_capital: float = 100.0
+    risk: object | None = None
 
     def get_capital_summary(self) -> dict:
         return {
@@ -48,6 +49,14 @@ class FakeArchiver:
 @dataclass
 class FakeBroadcaster:
     diffuser_message_au_canal: AsyncMock
+
+
+@dataclass
+class FakeRisk:
+    calls: int = 0
+
+    def rehydrate_from_ledger(self, ledger: FakeLedger) -> None:
+        self.calls += 1
 
 
 def _make_agent(tmp_path: Path, broadcaster: FakeBroadcaster, wallet_balances: dict, ledger_balance: float = 100.0) -> tuple[HealthSupervisorAgent, FeatureStore, FakeArchiver]:
@@ -120,6 +129,19 @@ async def test_health_supervisor_wallet_reconciliation_reports_drift(tmp_path: P
     assert result["status"] == "WARNING"
     assert result["drift_usd"] == pytest.approx(60.0)
     broadcaster.diffuser_message_au_canal.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_health_supervisor_wallet_reconciliation_rehydrates_risk(tmp_path: Path) -> None:
+    broadcaster = FakeBroadcaster(diffuser_message_au_canal=AsyncMock(return_value=True))
+    agent, _, _ = _make_agent(tmp_path, broadcaster, wallet_balances={"usdc_balance": 40.0})
+    fake_risk = FakeRisk()
+    agent.ledger.risk = fake_risk
+
+    result = await agent.reconcile_wallet_balances()
+
+    assert result["status"] == "WARNING"
+    assert fake_risk.calls == 1
 
 
 @pytest.mark.asyncio

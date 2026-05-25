@@ -19,10 +19,10 @@ from typing import Any, Dict, List
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from database.ledger_db import Ledger
-from user_data.strategies.hmm_filter import HMMRegimeFilter
-from core.portfolio_risk_engine import PortfolioRiskEngine
+from strategies.hmm_filter import HMMRegimeFilter
+from services.portfolio_risk_engine import PortfolioRiskEngine
 from utils.access_control import AccessControlManager
-from core.lobstar_cognitive_brain import LobstarCognitiveBrain
+from services.lobstar_cognitive_brain import LobstarCognitiveBrain
 from utils.mirofish_adapter import build_mirofish_trading_research_brief
 from scripts.rl_feedback_loop import run_rl_feedback_loop
 

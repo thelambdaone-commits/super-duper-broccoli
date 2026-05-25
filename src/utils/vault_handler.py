@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Dict, Iterable
 
+from utils import credential_manager as credential_manager_module
+from utils.credential_manager import CredentialManager
 from utils.exceptions import QuantFatal
 from utils.secret_validation import normalize_private_key
 
@@ -56,6 +58,9 @@ RPC_URL_ALIASES: dict[str, str] = {
     "base": "BASE_RPC_URL",
 }
 
+# Backward-compatible patch point for tests and legacy callers.
+POLYMARKET_WALLET_PATH = credential_manager_module.POLYMARKET_WALLET_PATH
+
 
 def get_rpc_url(chain: str) -> str:
     key = RPC_URL_ALIASES.get(chain.lower(), f"{chain.upper()}_RPC_URL")
@@ -72,32 +77,66 @@ def _load_env_file() -> None:
             load_dotenv(env_path, override=False)
 
 
+def _encrypted_wallet_path() -> Path:
+    return Path(globals().get("POLYMARKET_WALLET_PATH", credential_manager_module.POLYMARKET_WALLET_PATH))
+
+
 class VaultHandler:
     _session_wallets: Dict[str, Dict[str, str]] = {}
 
     def __init__(self) -> None:
-        load_dotenv(override=True)
+        load_dotenv(override=False)
         self.chat_id: str | None = os.getenv("CHAT_ID") or None
 
     def fetch_quantum_secrets(self, chat_id: int | str | None = None) -> Dict[str, str]:
         _load_env_file()
         validated_secrets: Dict[str, str] = {}
+        execution_mode = str(os.getenv("EXECUTION_MODE", "PAPER")).upper()
+        secret_source = str(os.getenv("SECRET_SOURCE", "")).lower()
 
-        pk = normalize_private_key(os.getenv("CLOB_PRIVATE_KEY"))
+        enc_wallet_secrets: Dict[str, str] = {}
+        wallet_path = _encrypted_wallet_path()
+        enc_wallet_exists = wallet_path.exists()
+        if enc_wallet_exists:
+            try:
+                enc_wallet_secrets = CredentialManager().load_and_decrypt(str(wallet_path))
+            except Exception as exc:
+                raise QuantFatal(f"Failed to load encrypted wallet credentials: {exc}") from exc
+
+        # Runtime policy: when configured for env-only secrets, a raw env private key is not acceptable
+        # unless it has already been materialized into the encrypted wallet file.
+        if (
+            execution_mode not in {"PAPER", "REPLAY"}
+            and secret_source == "env"
+            and os.getenv("CLOB_PRIVATE_KEY")
+            and not enc_wallet_exists
+        ):
+            raise QuantFatal("CLOB_PRIVATE_KEY is missing from user credentials and encrypted vault")
+
+        raw_pk = enc_wallet_secrets.get("CLOB_PRIVATE_KEY")
+        if not raw_pk and execution_mode not in {"PAPER", "REPLAY"}:
+            raw_pk = os.getenv("CLOB_PRIVATE_KEY")
+        pk = normalize_private_key(raw_pk)
         if pk:
             validated_secrets["CLOB_PRIVATE_KEY"] = pk
 
         for key in REQUIRED_SECRET_KEYS:
-            val = os.getenv(key) or os.getenv(key.lower())
+            val = enc_wallet_secrets.get(key) or os.getenv(key) or os.getenv(key.lower())
             if val:
                 validated_secrets[key] = val
-            else:
+            elif execution_mode not in {"PAPER", "REPLAY"}:
                 raise QuantFatal(f"Missing required environment variable: {key}")
 
         for key in OPTIONAL_SECRET_KEYS:
-            val = os.getenv(key)
+            val = enc_wallet_secrets.get(key) or os.getenv(key)
             if val:
                 validated_secrets[key] = val
+
+        for alias_key in ("address", "POLYMARKET_WALLET_ADDRESS", "EOA_ADDRESS"):
+            if alias_key in enc_wallet_secrets and enc_wallet_secrets[alias_key]:
+                value = enc_wallet_secrets[alias_key]
+                validated_secrets.setdefault("POLYMARKET_WALLET_ADDRESS", value)
+                validated_secrets.setdefault("EOA_ADDRESS", value)
 
         validated_secrets.setdefault("POLYMARKET_GAMMA_API_URL", "https://gamma-api.polymarket.com")
         validated_secrets.setdefault("POLYMARKET_CLOB_HTTP_URL", "https://clob.polymarket.com")

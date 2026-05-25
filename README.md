@@ -64,19 +64,26 @@ graph TD
     ORC --> STATE
 ```
 
-## Project Structure
+## 🏗 Architecture & Structure du Projet
 
-The project has been restructured into a modular, domain-driven architecture for institutional robustness:
+Le projet a été restructuré selon une architecture **modulaire et orientée domaine** pour une robustesse institutionnelle. Chaque composant communique via des schémas de données stricts (`src/schemas`).
 
-*   **`src/app/`**: Application entry points and API servers (FastAPI, Dashboard).
-*   **`src/core/`**: Central orchestration, job scheduling (`QuantumRunner`), and core lifecycle management.
-*   **`src/polymarket/`**: Domain logic for Polymarket CLOB integration, order execution, and on-chain wallet management.
-*   **`src/strategies/`**: Quantitative strategy implementations (Arbitrage, ML Forecasting, NLP Sentiment).
-*   **`src/interface/`**: High-level UI and Telegram bot handlers.
-*   **`src/services/`**: Autonomous supporting services (Risk Engine, MLOps, Health Sidecar).
-*   **`src/schemas/`**: Shared domain models and specialized mathematical implementations (VolSurface, SABR).
-*   **`src/database/`**: Persistence layer (SQLite Ledger, schema definitions).
-*   **`src/utils/`**: Shared technical utilities and helper functions.
+### 🧩 Composants Clés
+*   **Predictive matrix (`src/schemas/prediction`)** : Combine XGBoost, LightGBM et TimesFM pour des prévisions calibrées.
+*   **Risk Layer (`src/services/portfolio_risk_engine.py`)** : Applique le critère de Kelly et des filtres de régime HMM.
+*   **Execution Engine (`src/polymarket/execution`)** : Gère les ordres Maker-first et les stratégies TWAP fragmentées.
+
+Consultez la [Documentation Architecturale](docs/schemas/architecture_overview.md) pour plus de détails.
+
+### 📂 Organisation des Dossiers
+*   **`src/app/`** : Points d'entrée de l'application (CLI, TUI, Dashboard).
+*   **`src/core/`** : Orchestration centrale, sécurité et gestion du cycle de vie.
+*   **`src/polymarket/`** : Logique spécifique à Polymarket CLOB, exécution et gestion de portefeuille.
+*   **`src/strategies/`** : Implémentations quantitatives (Arbitrage, ML Forecasting, NLP Sentiment).
+*   **`src/services/`** : Services autonomes (Risk Engine, Cognitive Brain, Metrics).
+*   **`src/schemas/`** : Modèles de données partagés et contrats inter-modules.
+*   **`src/agents/`** : Personas de trading agentiques et swarms.
+*   **`src/utils/`** : Utilitaires techniques partagés (Logging, Config, Vault).
 
 ## Intelligence & Tools
 

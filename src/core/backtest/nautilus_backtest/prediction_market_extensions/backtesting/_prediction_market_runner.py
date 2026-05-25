@@ -22,7 +22,7 @@ from prediction_market_extensions.backtesting.data_sources.registry import (
     resolve_market_data_support,
 )
 
-type StrategyFactory = Callable[[InstrumentId], Strategy]
+StrategyFactory = Callable[[InstrumentId], Strategy]
 
 
 async def run_single_market_backtest(

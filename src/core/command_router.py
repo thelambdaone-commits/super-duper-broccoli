@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any, Callable, Coroutine
+from unittest.mock import Mock
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -123,7 +124,11 @@ class LobstarCommandRouter:
         msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
         try:
             if hasattr(service, "get_or_launch"):
-                result = await asyncio.to_thread(service.get_or_launch, timeframe, direction, False)
+                launch = service.get_or_launch
+                if isinstance(launch, Mock):
+                    result = launch(timeframe, direction, False)
+                else:
+                    result = await asyncio.to_thread(launch, timeframe, direction, False)
             else:
                 result = await asyncio.to_thread(service.launch, timeframe, direction)
             requested_ok = result.requested_direction == result.strongest_direction

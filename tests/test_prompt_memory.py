@@ -46,7 +46,16 @@ def test_list_project_memory_filters_component_and_tag(tmp_path) -> None:
     assert entries[0]["component"] == "execution"
 
 
-def test_build_project_prompt_context_includes_memory_and_graphify_policy() -> None:
+def test_build_project_prompt_context_includes_memory_and_graphify_policy(tmp_path, monkeypatch) -> None:
+    memory_path = tmp_path / "project_memory.json"
+    monkeypatch.setattr("utils.prompt_memory.PROJECT_MEMORY_PATH", str(memory_path))
+    
+    record_project_memory(
+        component="agent_context",
+        summary="Test memory entry.",
+        path=str(memory_path)
+    )
+
     context = build_project_prompt_context(
         task="Make prompts context-aware",
         specialist_id="mcp_toolsmith",

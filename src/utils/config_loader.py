@@ -119,6 +119,10 @@ def _load_trading_params() -> dict[str, Any]:
     params: dict[str, Any] = dict(TRADING_DEFAULTS)
     for key, default in TRADING_DEFAULTS.items():
         raw_value = data.get(key.lower(), default)
+        if raw_value is None:
+            raw_value = default
+        if key == "BLOCKED_REGIMES" and (not isinstance(raw_value, list) or not raw_value):
+            raw_value = list(default)
         params[key] = raw_value
     return params
 

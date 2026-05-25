@@ -186,7 +186,6 @@ class PolymarketOrderManager:
         try:
             order_side = "BUY" if side.upper() in ("BUY", "YES", "LONG") else "SELL"
             cost_est = self.estimate_bet_cost(amount, price, side)
-            self._validate_market_is_tradeable(market_id, token_id)
 
             if dry_run:
                 logger.info(f"DRY RUN: {side} {amount}x {outcome} @ {price}")
@@ -197,6 +196,8 @@ class PolymarketOrderManager:
                     collateral_value=cost_est["collateral_or_proceeds"],
                     status="pending", created_at=datetime.utcnow(),
                 )
+
+            self._validate_market_is_tradeable(market_id, token_id)
 
             from py_clob_client.clob_types import OrderArgs, PartialCreateOrderOptions
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.services.circuit_breaker import CircuitBreakerConfig, CircuitBreakerService, CircuitState
+from services.circuit_breaker import CircuitBreakerConfig, CircuitBreakerService, CircuitState
 
 
 class DummyStorage:
@@ -44,7 +44,7 @@ def test_half_open_recovers_after_timeout(monkeypatch: pytest.MonkeyPatch) -> No
     service.record_failure("boom")
     assert service.state == CircuitState.OPEN
 
-    monkeypatch.setattr("core.services.circuit_breaker.time.time", lambda: 100.0)
+    monkeypatch.setattr("services.circuit_breaker.time.time", lambda: 100.0)
     service.last_failure_time = 90.0
 
     assert service.is_allowed() is True
@@ -64,4 +64,3 @@ def test_record_success_in_half_open_closes_circuit(monkeypatch: pytest.MonkeyPa
     assert service.state == CircuitState.CLOSED
     assert service.failure_count == 0
     assert service.check_signal({"ticker": "BTC"}) is True
-

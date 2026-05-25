@@ -6,7 +6,7 @@ from typing import Any
 from utils.llm_council import _redact_secret_like_text
 
 
-CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config")
 MIROFISH_CONFIG_PATH = os.path.join(CONFIG_DIR, "mirofish.json")
 
 

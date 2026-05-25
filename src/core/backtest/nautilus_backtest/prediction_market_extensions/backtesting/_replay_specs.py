@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-type TimestampLike = pd.Timestamp | str | object
+TimestampLike = pd.Timestamp | str | object
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class BookReplay:
     metadata: Mapping[str, Any] | None = None
 
 
-type ReplaySpec = BookReplay
+ReplaySpec = BookReplay
 
 
 __all__ = [

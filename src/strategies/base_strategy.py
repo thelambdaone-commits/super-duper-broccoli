@@ -40,7 +40,7 @@ class MarketFeatures:
         
         # Preserve specific metadata from payload
         metadata = dict(payload.get("metadata") or {})
-        for key in ("yes_token_id", "no_token_id", "outcome", "tokens"):
+        for key in ("yes_token_id", "no_token_id", "token_id", "outcome", "tokens"):
             val = payload.get(key)
             if val not in (None, ""):
                 metadata[key] = val

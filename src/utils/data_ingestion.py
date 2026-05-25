@@ -228,6 +228,8 @@ class BinanceWSListener:
         self.tickers = tickers or ["BTCUSDT", "ETHUSDT"]
         self._ws: Any = None
         self._running = False
+        self.depth_stream_interval = str(os.getenv("BINANCE_DEPTH_STREAM_INTERVAL", "1000ms")).strip() or "1000ms"
+        self.record_raw_depth_events = str(os.getenv("BINANCE_RECORD_RAW_DEPTH_EVENTS", "false")).strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _kline_to_ohlcv(msg: dict) -> Optional[dict]:
@@ -310,14 +312,15 @@ class BinanceWSListener:
         if self._depth_counts[ticker] % 100 == 0:
             logger.info(f"📊 [BINANCE] Recorded 100 depth ticks for {ticker} (Last price: {data['mid_price']:.2f})")
 
-        self.store.record_web_event(
-            source="binance_ws",
-            event_type="depth",
-            payload={**data, "ticker": ticker},
-            market_slug=ticker,
-            condition_id="",
-            timestamp=ts,
-        )
+        if self.record_raw_depth_events:
+            self.store.record_web_event(
+                source="binance_ws",
+                event_type="depth",
+                payload={**data, "ticker": ticker},
+                market_slug=ticker,
+                condition_id="",
+                timestamp=ts,
+            )
 
     def start(self) -> None:
         import asyncio
@@ -330,7 +333,7 @@ class BinanceWSListener:
     async def _run(self) -> None:
         import websockets
         streams = "/".join(
-            f"{t.lower()}@kline_1m/{t.lower()}@depth10@100ms"
+            f"{t.lower()}@kline_1m/{t.lower()}@depth10@{self.depth_stream_interval}"
             for t in self.tickers
         )
         # Combined stream URL format

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 
-from core.services.predictive_gate import PredictiveGateConfig, PredictiveGateService
+from services.predictive_gate import PredictiveGateConfig, PredictiveGateService
 
 
 class FakePredictiveEngine:
@@ -13,12 +13,13 @@ class FakePredictiveEngine:
         self.probability = probability
         self.calls = []
 
-    def predict_winning_bet(self, df_market_ticks, clob_price_yes, timestamp_resolution):
+    def predict_winning_bet(self, df_market_ticks, clob_price_yes, timestamp_resolution, ticker=None):
         self.calls.append(
             {
                 "shape": df_market_ticks.shape,
                 "price": clob_price_yes,
                 "timestamp_resolution": timestamp_resolution,
+                "ticker": ticker,
             }
         )
         return {
@@ -92,6 +93,25 @@ def test_rejects_when_fees_consume_predictive_edge() -> None:
 
     assert allowed is False
     assert reason.startswith("REJECT_NO_NET_EDGE:")
+
+
+def test_uses_realistic_notional_when_signal_size_is_zero() -> None:
+    engine = FakePredictiveEngine(approved=True, edge=0.092, probability=0.437)
+    service = PredictiveGateService(PredictiveGateConfig(min_edge_threshold=0.01), model_registry=engine)
+
+    signal = {
+        "price": 0.345,
+        "size": 0.0,
+        "order_type": "LIMIT",
+        "timestamp_resolution": time.time() + 3600,
+        "market_features": {"price": [0.345], "volume": [100.0], "bid_depth": [50.0], "ask_depth": [50.0]},
+    }
+    allowed, reason = service.validate_signal(signal)
+
+    assert allowed is True
+    assert reason == "ACCEPT_PREDICTIVE_EDGE"
+    assert signal["predictive_effective_size"] > 1.0
+    assert signal["predictive_net_edge"] > 0.05
 
 
 def test_simulated_gate_can_accept_on_configured_threshold() -> None:

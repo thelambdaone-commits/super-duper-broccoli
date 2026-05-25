@@ -16,7 +16,8 @@ from utils.vault_handler import VaultHandler
 logger = logging.getLogger("LLMCouncil")
 
 
-CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+CONFIG_DIR = os.path.join(REPO_ROOT, "config")
 LLM_COUNCIL_CONFIG_PATH = os.path.join(CONFIG_DIR, "llm_council.json")
 
 

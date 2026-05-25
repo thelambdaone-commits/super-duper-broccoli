@@ -67,7 +67,7 @@ PolymarketDataLoader = RunnerPolymarketDataLoader
 PolymarketPMXTDataLoader = RunnerPolymarketPMXTDataLoader
 
 
-type StrategyFactory = Callable[[InstrumentId], Strategy]
+StrategyFactory = Callable[[InstrumentId], Strategy]
 
 LARGE_DATA_GAP_NS = 4 * 60 * 60 * 1_000_000_000
 REPO_STATUS_TOPIC = "prediction_market.backtest.status"

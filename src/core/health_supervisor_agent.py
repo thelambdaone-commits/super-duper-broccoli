@@ -225,6 +225,14 @@ class HealthSupervisorAgent:
         status = "OK" if drift <= self.config.wallet_drift_tolerance_usd else "WARNING"
 
         if status != "OK":
+            logger.warning(
+                "Wallet reconciliation drift detected: onchain=%.2f ledger_available=%.2f ledger_total=%.2f drift=%.2f tolerance=%.2f",
+                onchain_usdc,
+                ledger_available,
+                ledger_total,
+                drift,
+                self.config.wallet_drift_tolerance_usd,
+            )
             await self._notify_once(
                 "wallet_reconciliation",
                 "🏥 <b>HEALTH ALERT</b>\nWallet balance drift detected!\n"
@@ -238,6 +246,12 @@ class HealthSupervisorAgent:
                 self.ledger.sync_capital(onchain_usdc)
                 if hasattr(self.ledger, "risk") and self.ledger.risk:
                     self.ledger.risk.rehydrate_from_ledger(self.ledger)
+                logger.info(
+                    "Wallet reconciliation sync applied: previous_available=%.2f new_total=%.2f engaged_adjusted_available=%.2f",
+                    ledger_available,
+                    onchain_usdc,
+                    float((self.ledger.get_capital_summary() or {}).get("available_capital", 0.0) or 0.0),
+                )
 
         return {
             "check": "wallet_reconciliation",

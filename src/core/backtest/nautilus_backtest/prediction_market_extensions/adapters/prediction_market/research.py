@@ -841,6 +841,7 @@ def save_combined_backtest_report(
             raise ValueError(f"Unable to locate <body> in {chart_path}")
         body_chunks.append(body_match.group("body").strip())
 
+    body_content = "\n\n".join(body_chunks)
     combined_html = (
         "<!DOCTYPE html>\n"
         '<html lang="en">\n'
@@ -848,7 +849,7 @@ def save_combined_backtest_report(
         f"{head_match.group('head').strip()}\n"
         "  </head>\n"
         "  <body>\n"
-        f"{'\n\n'.join(body_chunks)}\n"
+        f"{body_content}\n"
         "  </body>\n"
         "</html>\n"
     )

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.freqai_engine import FreqAIEngine
+from polymarket.execution.freqai_engine import FreqAIEngine
 
 
 class FakeClient:
@@ -56,7 +56,7 @@ def run_to_thread_inline(monkeypatch):
     async def fake_to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
-    monkeypatch.setattr("core.freqai_engine.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("polymarket.execution.freqai_engine.asyncio.to_thread", fake_to_thread)
 
 
 @pytest.mark.asyncio
@@ -115,7 +115,7 @@ async def test_create_order_runs_blocking_client_call_in_thread(monkeypatch) -> 
         calls.append(fn)
         return fn(*args, **kwargs)
 
-    monkeypatch.setattr("core.freqai_engine.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("polymarket.execution.freqai_engine.asyncio.to_thread", fake_to_thread)
 
     result = await engine.create_order("0xabc", "BUY", 0.5, 11.0)
 
@@ -133,7 +133,7 @@ async def test_get_order_status_runs_blocking_client_call_in_thread(monkeypatch)
         calls.append((fn, args))
         return fn(*args, **kwargs)
 
-    monkeypatch.setattr("core.freqai_engine.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("polymarket.execution.freqai_engine.asyncio.to_thread", fake_to_thread)
 
     result = await engine.get_order_status("ord-1")
 
@@ -150,7 +150,7 @@ async def test_get_midpoint_runs_blocking_client_call_in_thread(monkeypatch) -> 
         calls.append((fn, args))
         return fn(*args, **kwargs)
 
-    monkeypatch.setattr("core.freqai_engine.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("polymarket.execution.freqai_engine.asyncio.to_thread", fake_to_thread)
 
     result = await engine.get_midpoint("0xabc")
 

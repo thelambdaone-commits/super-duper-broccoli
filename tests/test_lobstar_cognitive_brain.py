@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from core.lobstar_cognitive_brain import LobstarCognitiveBrain
-from core.signal_executor import _apply_cognitive_confidence
+from services.lobstar_cognitive_brain import LobstarCognitiveBrain
+from polymarket.execution.signal_executor import _apply_cognitive_confidence
 
 
 class FakeStore:

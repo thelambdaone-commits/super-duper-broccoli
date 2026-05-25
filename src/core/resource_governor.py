@@ -32,6 +32,7 @@ class ResourceGovernor:
         self._snapshot = ResourceSnapshot(time.time(), None, None, None, None, None, "nominal", ())
         self._sample_interval_seconds = float(get_health_config("resource_sample_interval_seconds", 5.0))
         self._last_sample_ts = 0.0
+        self._process: Any | None = None
         self._profile_multipliers = {
             "nominal": {"latency": 1.0, "normal": 1.0, "heavy": 1.0},
             "constrained": {"latency": 1.25, "normal": 1.75, "heavy": 3.0},
@@ -139,11 +140,19 @@ class ResourceGovernor:
         try:
             import psutil
 
-            process = psutil.Process(os.getpid())
-            cpu_percent = psutil.cpu_percent(interval=None)
+            process = self._process
+            if process is None or process.pid != os.getpid():
+                process = psutil.Process(os.getpid())
+                process.cpu_percent(interval=None)
+                self._process = process
+                return None, float(psutil.virtual_memory().percent), process.memory_info().rss / (1024.0 * 1024.0)
+
+            cpu_percent = process.cpu_percent(interval=None)
             memory_percent = psutil.virtual_memory().percent
+            cpu_count = max(psutil.cpu_count() or 1, 1)
+            normalized_cpu = max(0.0, min(float(cpu_percent) / cpu_count, 100.0))
             rss_mb = process.memory_info().rss / (1024.0 * 1024.0)
-            return float(cpu_percent), float(memory_percent), float(rss_mb)
+            return float(normalized_cpu), float(memory_percent), float(rss_mb)
         except Exception:
             return None, None, None
 

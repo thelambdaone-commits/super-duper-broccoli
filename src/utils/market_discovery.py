@@ -125,7 +125,8 @@ class MarketDiscovery:
             return 50.0
 
     def _score_sentiment(self, market: Market) -> float:
-        tags = [t.lower() for t in market.tags]
+        raw_tags = getattr(market, "tags", []) or []
+        tags = [str(t).lower() for t in raw_tags]
 
         positive_tags = ["crypto", "bitcoin", "ethereum", "solana", "bullish", "up"]
         negative_tags = ["dump", "crash", "bearish", "down", "risk"]

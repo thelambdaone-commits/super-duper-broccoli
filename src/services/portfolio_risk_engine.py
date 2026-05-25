@@ -73,10 +73,12 @@ class PortfolioRiskEngine:
             total_value = float(total)
         except (TypeError, ValueError):
             total_value = 0.0
+        available_missing = available is None
         try:
             available_value = float(available)
         except (TypeError, ValueError):
             available_value = 0.0
+            available_missing = True
 
         if total_value <= 0.0:
             logger.warning(
@@ -87,8 +89,10 @@ class PortfolioRiskEngine:
             total_value = DEFAULT_FALLBACK_CAPITAL_USDC
             available_value = min(available_value if available_value > 0.0 else total_value, total_value)
 
-        if available_value <= 0.0:
+        if available_missing:
             available_value = total_value
+        else:
+            available_value = max(0.0, available_value)
 
         return {
             "total_capital": total_value,
@@ -139,6 +143,17 @@ class PortfolioRiskEngine:
             "net_beta_exposure_pct": self.net_beta_exposure_pct,
             "reason": reason,
         }
+
+    @staticmethod
+    def _effective_win_probability(side: str, probability_yes: float | None, fallback: float = 0.5) -> float:
+        try:
+            probability = float(probability_yes) if probability_yes is not None else float(fallback)
+        except (TypeError, ValueError):
+            probability = float(fallback)
+        probability = max(0.0, min(probability, 1.0))
+        if str(side).upper() in {"SELL", "NO", "SHORT", "DOWN"}:
+            return 1.0 - probability
+        return probability
 
     def _check_concentration(self, ticker: str, add_size: float, capital: float) -> bool:
         current = self._exposures.get(ticker, 0.0)
@@ -197,6 +212,9 @@ class PortfolioRiskEngine:
         asset_volatility: float = 0.5,
         regime_label: str = "LOW_VOLATILITY",
     ) -> dict:
+        from utils.ticker_utils import normalize_to_asset
+        asset = normalize_to_asset(ticker)
+
         cap = self._resolved_capital_summary()
         total = cap.get("total_capital", DEFAULT_FALLBACK_CAPITAL_USDC)
         available = cap.get("available_capital", total)
@@ -225,11 +243,10 @@ class PortfolioRiskEngine:
             if mode in ("PROD", "SHADOW"):
                 sized_notional = min(sized_notional, self.max_real_notional_usdc)
 
-        ticker_base = ticker.split("-")[0] if "-" in ticker else ticker
-        beta = self._beta_to_btc.get(ticker_base, 0.5)
+        beta = self._beta_to_btc.get(asset, 0.5)
 
-        if not self._check_concentration(ticker, sized_notional, total):
-            sized_notional = self.max_concentration_pct * total - self._exposures.get(ticker, 0.0)
+        if not self._check_concentration(asset, sized_notional, total):
+            sized_notional = max(0.0, self.max_concentration_pct * total - abs(self._exposures.get(asset, 0.0)))
 
         if not self._check_correlated_drawdown(sized_notional, beta, total):
             current_net = self.net_beta_exposure_pct / 100.0 * total
@@ -242,6 +259,9 @@ class PortfolioRiskEngine:
         if 0.0 < final_notional < SMALL_ACCOUNT_MIN_TRADE_USDC and self._is_small_live_account(total, available):
             final_notional = self._small_account_trade_cap(total, available)
         final_size = final_notional / price
+        reason = "OK" if final_size > 0 else "RISK_CAP_ZERO"
+        if final_size <= 0.0 and available <= 0.0:
+            reason = "INSUFFICIENT_AVAILABLE_CAPITAL"
 
         return {
             "size": final_size,
@@ -251,27 +271,31 @@ class PortfolioRiskEngine:
             "regime_multiplier": regime_multiplier,
             "net_beta_exposure_pct": self.net_beta_exposure_pct,
             "single_position_cap_pct": self.max_single_position_pct * 100.0,
-            "reason": "OK" if final_size > 0 else "RISK_CAP_ZERO",
+            "reason": reason,
         }
 
     def rehydrate_from_ledger(self, ledger: Ledger) -> None:
+        from utils.ticker_utils import normalize_to_asset
         positions = ledger.get_open_positions()
         for pos in positions:
             ticker = pos.get("ticker", "")
+            asset = normalize_to_asset(ticker)
             size = pos.get("size", 0.0)
             side = pos.get("side", "BUY")
             signed = size if side in ("BUY", "YES", "LONG") else -size
-            self._exposures[ticker] = self._exposures.get(ticker, 0.0) + signed
+            self._exposures[asset] = self._exposures.get(asset, 0.0) + signed
         logger.info(
             f"Rehydrated {len(positions)} positions into exposures: "
             f"{dict(self._exposures)}"
         )
 
     def book_exposure(self, ticker: str, size: float, side: str) -> None:
+        from utils.ticker_utils import normalize_to_asset
+        asset = normalize_to_asset(ticker)
         signed = size if side in ("BUY", "YES", "LONG") else -size
-        self._exposures[ticker] = self._exposures.get(ticker, 0.0) + signed
+        self._exposures[asset] = self._exposures.get(asset, 0.0) + signed
         logger.info(
-            f"Exposure updated: {ticker} -> {self._exposures[ticker]:.2f} "
+            f"Exposure updated: {ticker} (asset: {asset}) -> {self._exposures[asset]:.2f} "
             f"(net beta exposure: {self.net_beta_exposure_pct:.1f}%)"
         )
 
@@ -281,10 +305,12 @@ class PortfolioRiskEngine:
         return res.get("capital_at_risk", 0.0)
 
     def get_concentration(self, ticker: str) -> float:
+        from utils.ticker_utils import normalize_to_asset
+        asset = normalize_to_asset(ticker)
         cap = self._resolved_capital_summary().get("total_capital", DEFAULT_FALLBACK_CAPITAL_USDC)
         if cap <= 0:
             return 0.0
-        return abs(self._exposures.get(ticker, 0.0)) / cap
+        return abs(self._exposures.get(asset, 0.0)) / cap
 
 
     async def validate_signal_risk(
@@ -305,6 +331,7 @@ class PortfolioRiskEngine:
         price = float(signal.get("price", 0.0) or 0.0)
         confidence = float(signal.get("confidence", 0.5))
         predictive_edge = signal.get("predictive_edge", signal.get("estimated_edge"))
+        predictive_probability = signal.get("predictive_probability")
         is_fallback = bool(signal.get("is_fallback", signal.get("ml_is_fallback", False)))
         ood_alert = bool(signal.get("ood_alert", False))
 
@@ -327,9 +354,11 @@ class PortfolioRiskEngine:
             return False, "INVALID_PRICE"
 
         # Estimate potential size with current compute_position_size
+        effective_win_prob = self._effective_win_probability(side, predictive_probability, fallback=confidence)
         sizing = self.compute_position_size(
             ticker=ticker, side=side, price=price,
             confidence=confidence,
+            win_prob=effective_win_prob,
             regime_label=regime_label,
         )
         if sizing.get("size", 0.0) <= 0:

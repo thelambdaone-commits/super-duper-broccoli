@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from core.services.metrics_exporter import ExecutionMetricsExporter
+from services.metrics_exporter import ExecutionMetricsExporter
 
 
 @pytest.mark.asyncio

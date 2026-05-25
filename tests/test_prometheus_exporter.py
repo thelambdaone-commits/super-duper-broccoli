@@ -13,7 +13,7 @@ def test_prometheus_exporter_skips_start_when_port_in_use(monkeypatch) -> None:
     def _fail_start_http_server(port: int) -> None:
         called["start_http_server"] = True
 
-    monkeypatch.setattr("monitoring.prometheus_exporter.start_http_server", _fail_start_http_server)
+    monkeypatch.setattr("services.prometheus_exporter.start_http_server", _fail_start_http_server)
 
     exporter.start()
 

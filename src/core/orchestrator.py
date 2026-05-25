@@ -1,4 +1,6 @@
 import asyncio
+import inspect
+import json
 import logging
 import os
 import time
@@ -116,6 +118,49 @@ class LobstarOrchestrator:
         self._queue_worker_task: Optional[asyncio.Task] = None
         self._main_loop = None
         self._running = False
+
+    @staticmethod
+    def _effective_win_probability(risk_engine: Any, side: str, probability_yes: Any, fallback: float = 0.5) -> float:
+        resolver = getattr(risk_engine, "_effective_win_probability", None)
+        if callable(resolver):
+            return float(resolver(side, probability_yes, fallback=fallback))
+
+        try:
+            probability = float(probability_yes)
+        except (TypeError, ValueError):
+            probability = float(fallback)
+        probability = max(0.0, min(1.0, probability))
+
+        normalized_side = str(side or "BUY").upper()
+        if normalized_side in {"SELL", "NO", "SHORT", "DOWN"}:
+            return max(0.0, min(1.0, 1.0 - probability))
+        return probability
+
+    @staticmethod
+    def _compute_position_size(
+        risk_engine: Any,
+        *,
+        ticker: str,
+        side: str,
+        price: float,
+        confidence: float,
+        regime_label: str,
+        win_prob: float,
+    ) -> dict:
+        compute = getattr(risk_engine, "compute_position_size")
+        kwargs = {
+            "ticker": ticker,
+            "side": side,
+            "price": price,
+            "confidence": confidence,
+            "regime_label": regime_label,
+        }
+        try:
+            if "win_prob" in inspect.signature(compute).parameters:
+                kwargs["win_prob"] = win_prob
+        except (TypeError, ValueError):
+            pass
+        return compute(**kwargs)
 
     def start(self) -> None:
         self._running = True
@@ -398,11 +443,19 @@ class LobstarOrchestrator:
 
         signal, allowed = await self._apply_predictive_gate(signal)
         if not allowed:
+            signal["effective_win_probability"] = self._effective_win_probability(
+                self.risk,
+                signal.get("side", "BUY"),
+                signal.get("fair_probability_yes", signal.get("predictive_probability")),
+                fallback=signal.get("confidence", 0.5),
+            )
+            self._log_signal_decision(signal, "predictive_gate_rejected")
             return {
                 "status": "SKIPPED",
                 "reason": "Predictive gate rejected signal",
                 "ticker": signal.get("ticker", "Unknown"),
                 "side": signal.get("side", "Unknown"),
+                "decision_trace": signal.get("decision_trace", {}),
             }
 
         try:
@@ -455,6 +508,8 @@ class LobstarOrchestrator:
 
         risk_allowed, risk_reason = await self.signal_decision_service.apply_portfolio_risk_gate(signal)
         if not risk_allowed:
+            self.signal_decision_service.mark_stage(signal, "portfolio_risk", "REJECTED", risk_reason)
+            self._log_signal_decision(signal, "portfolio_risk_rejected")
             logger.warning("Portfolio risk gate rejected signal: %s", risk_reason)
             self.notifier.send(
                 f"🛑 <b>PORTFOLIO RISK GATE</b>\nTicker: <code>{signal.get('ticker', 'Unknown')}</code>\nReason: <code>{risk_reason}</code>"
@@ -464,7 +519,9 @@ class LobstarOrchestrator:
                 "reason": risk_reason,
                 "ticker": signal.get("ticker", "Unknown"),
                 "side": signal.get("side", "Unknown"),
+                "decision_trace": signal.get("decision_trace", {}),
             }
+        self.signal_decision_service.mark_stage(signal, "portfolio_risk", "ACCEPTED", risk_reason)
 
         # --- AULEKATOR INTEGRATION: Weighted Signal Fusion ---
         self.fusion_engine.add_signal(signal.get("strategy_id", "llm_council"), signal)
@@ -486,15 +543,49 @@ class LobstarOrchestrator:
         # --- HITL (Human-in-the-Loop) Safeguard ---
         hitl_threshold = float(os.getenv("HITL_PROD_THRESHOLD_USDC", "50.0"))
         live_mode = self.ledger.get_execution_mode() if self.ledger else "PAPER"
+        effective_win_prob = self._effective_win_probability(
+            self.risk,
+            signal.get("side", "BUY"),
+            signal.get("predictive_probability"),
+            fallback=signal.get("confidence", 0.75),
+        )
+        signal["effective_win_probability"] = effective_win_prob
 
         # We estimate sizing again for the HITL gate
-        sizing = self.risk.compute_position_size(
+        sizing = self._compute_position_size(
+            self.risk,
             ticker=signal.get("ticker", "N/A"),
             side=signal.get("side", "BUY"),
             price=signal.get("price", 0.5),
-            confidence=signal.get("cognitive_confidence", 0.5),
-            regime_label=label
+            confidence=signal.get("cognitive_confidence", signal.get("confidence", 0.5)),
+            win_prob=effective_win_prob,
+            regime_label=label,
         )
+        signal["sizing"] = sizing
+        signal["size"] = float(sizing.get("size", 0.0) or 0.0)
+        signal["capital_at_risk"] = float(sizing.get("capital_at_risk", 0.0) or 0.0)
+        signal["kelly_fraction"] = float(sizing.get("kelly_pct", 0.0) or 0.0) / 100.0
+        signal["expected_net_profit_usdc"] = float(signal.get("predictive_net_edge", 0.0) or 0.0)
+        signal["estimated_cost_usdc"] = float(signal.get("predictive_estimated_cost", 0.0) or 0.0)
+        signal["source_scores"] = self._build_source_scores(signal)
+        self.signal_decision_service.mark_stage(
+            signal,
+            "position_sizing",
+            "ACCEPTED" if signal["size"] > 0.0 else "REJECTED",
+            str(sizing.get("reason", "")),
+            size=signal["size"],
+            capital_at_risk=signal["capital_at_risk"],
+            regime=label,
+        )
+        if signal["size"] <= 0.0:
+            self._log_signal_decision(signal, "position_sizing_rejected")
+            return {
+                "status": "SKIPPED",
+                "reason": str(sizing.get("reason", "RISK_CAP_ZERO")),
+                "ticker": signal.get("ticker"),
+                "side": signal.get("side"),
+                "decision_trace": signal.get("decision_trace", {}),
+            }
 
         temporary_hitl_approval = bool(
             getattr(self.listener, "high_value_trades_authorized", lambda: False)()
@@ -513,6 +604,7 @@ class LobstarOrchestrator:
                     "status": "PAUSED",
                     "reason": f"HITL Required: Size {sizing['capital_at_risk']:.2f} >= {hitl_threshold}",
                     "ticker": signal.get("ticker"),
+                    "decision_trace": signal.get("decision_trace", {}),
                 }
         # ------------------------------------------
 
@@ -531,6 +623,14 @@ class LobstarOrchestrator:
 
         chat_id = signal.get("chat_id")
         tenant_wallet = self.access_control.obtenir_wallet_associe(chat_id) if chat_id and self.access_control else None
+        self.signal_decision_service.mark_stage(
+            signal,
+            "signal_router",
+            "PENDING",
+            "routing_to_executor",
+            execution_preference=signal.get("execution_preference"),
+        )
+        self._log_signal_decision(signal, "routing")
         return await self.signal_router.route(
             signal,
             SignalRouterContext(
@@ -544,6 +644,14 @@ class LobstarOrchestrator:
                 tenant_wallet=tenant_wallet,
                 lobstar_agent=self.lobstar_agent,
             ),
+        )
+
+    def _log_signal_decision(self, signal: dict, outcome: str) -> None:
+        logger.info(
+            "Signal decision trace: ticker=%s outcome=%s trace=%s",
+            signal.get("ticker", "UNKNOWN"),
+            outcome,
+            signal.get("decision_trace", {}),
         )
 
     async def _apply_predictive_gate(self, signal: dict) -> tuple[dict, bool]:
@@ -638,6 +746,32 @@ class LobstarOrchestrator:
 
     def _safe_signal_for_log(self, signal: dict) -> dict:
         return {key: value for key, value in signal.items() if key != "update"}
+
+    def _build_source_scores(self, signal: dict) -> dict[str, float]:
+        scores: dict[str, float] = {}
+        market_features = signal.get("market_features") or {}
+        metadata = market_features.get("metadata") if isinstance(market_features, dict) else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        wallet_flow = (
+            signal.get("known_wallet_flow_score")
+            or market_features.get("known_wallet_flow_score")
+            or metadata.get("known_wallet_flow_score")
+        )
+        if wallet_flow is not None:
+            scores["wallet_flow"] = float(wallet_flow)
+
+        sentiment_score = signal.get("sentiment_score")
+        if sentiment_score is None and isinstance(market_features, dict):
+            sentiment_score = market_features.get("sentiment_score")
+        if sentiment_score is not None:
+            scores["sentiment"] = float(sentiment_score)
+
+        source = str(signal.get("source", "")).lower()
+        if source:
+            scores[source] = float(signal.get("confidence", 0.0) or 0.0)
+        return scores
 
     async def handle_wallet_callback(self, update: Any, context: Any) -> None:
         if not hasattr(self, "wallet_callback_handler"):

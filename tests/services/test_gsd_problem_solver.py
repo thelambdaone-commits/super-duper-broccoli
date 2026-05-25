@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.services.gsd_problem_solver import GSDProblemSolverAgent
+from services.gsd_problem_solver import GSDProblemSolverAgent
 
 
 def test_gsd_solver_agent_initialization() -> None:
@@ -41,13 +41,13 @@ def test_gsd_solver_guardrails_sensitive_files() -> None:
     agent = GSDProblemSolverAgent()
     candidates = [
         "utils/vault_handler.py",
-        "core/services/gsd_workflow.py",
+        "src/services/gsd_workflow.py",
         "config/.env",
         "core/portfolio_risk_engine.py",
     ]
     safe_files = agent._filter_sensitive_files(candidates)
 
-    assert "core/services/gsd_workflow.py" in safe_files
+    assert "src/services/gsd_workflow.py" in safe_files
     assert "utils/vault_handler.py" not in safe_files
     assert "config/.env" not in safe_files
     assert "core/portfolio_risk_engine.py" not in safe_files
@@ -56,7 +56,7 @@ def test_gsd_solver_guardrails_sensitive_files() -> None:
 def test_gsd_solver_backup_and_restore() -> None:
     """Verifies that the agent can successfully back up and restore modified files in memory."""
     agent = GSDProblemSolverAgent()
-    target_file = "core/services/gsd_workflow.py"
+    target_file = "src/services/gsd_workflow.py"
     full_path = agent.workspace_path / target_file
 
     with open(full_path, "r", encoding="utf-8") as handle:

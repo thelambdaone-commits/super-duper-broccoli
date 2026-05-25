@@ -47,3 +47,63 @@ def test_strategy_features_include_known_wallet_flow_score() -> None:
 
     assert rows
     assert rows[0]["metadata"]["known_wallet_flow_score"] == 0.75
+
+
+def test_strategy_features_normalize_buy_signal_to_yes_probability() -> None:
+    scanner = MarketScanner()
+    scanner._last_scan = ScanResult(
+        timestamp="2026-01-01T00:00:00Z",
+        winning_bets=[
+            MarketSignal(
+                ticker="btc-above-100k",
+                side="BUY",
+                price=0.62,
+                confidence=0.8,
+                reason="momentum",
+                market_question="Will BTC go above 100k?",
+                market_slug="btc-above-100k",
+                current_prob=62.0,
+                volume=100000.0,
+                sentiment="BULLISH",
+                direction="📈 UP",
+            )
+        ],
+        total_markets_scanned=1,
+    )
+
+    [row] = scanner.get_strategy_features()
+
+    assert row["price"] == 0.62
+    assert row["ml_probability"] > row["price"]
+    assert row["metadata"]["estimated_probability"] == row["ml_probability"]
+    assert row["metadata"]["quoted_outcome_price"] == 0.62
+
+
+def test_strategy_features_normalize_sell_signal_to_yes_probability() -> None:
+    scanner = MarketScanner()
+    scanner._last_scan = ScanResult(
+        timestamp="2026-01-01T00:00:00Z",
+        winning_bets=[
+            MarketSignal(
+                ticker="btc-below-100k",
+                side="SELL",
+                price=0.38,
+                confidence=0.8,
+                reason="mean reversion",
+                market_question="Will BTC go above 100k?",
+                market_slug="btc-below-100k",
+                current_prob=62.0,
+                volume=100000.0,
+                sentiment="BEARISH",
+                direction="📉 DOWN",
+            )
+        ],
+        total_markets_scanned=1,
+    )
+
+    [row] = scanner.get_strategy_features()
+
+    assert row["price"] == 0.62
+    assert row["ml_probability"] < row["price"]
+    assert row["metadata"]["estimated_probability"] == row["ml_probability"]
+    assert row["metadata"]["quoted_outcome_price"] == 0.38

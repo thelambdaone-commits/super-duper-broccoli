@@ -370,9 +370,29 @@ class MarketScanner:
         logger.info(f"📊 [SCANNER] Generated {len(rows)} strategy feature rows (incl. {len(all_signals)} signals).")
         return rows
 
+    @staticmethod
+    def _clamp_probability(value: float, default: float = 0.5) -> float:
+        try:
+            prob = float(value)
+        except (TypeError, ValueError):
+            prob = default
+        if prob > 1.0:
+            prob /= 100.0
+        return max(0.01, min(0.99, prob))
+
+    def _yes_probability_from_signal(self, sig: MarketSignal) -> float:
+        base_probability = self._clamp_probability(sig.current_prob if sig.current_prob else sig.price)
+        directional_strength = max(0.0, min(0.45, (float(sig.confidence) - 0.5) * 0.75))
+        if sig.side.upper() in {"SELL", "NO", "SHORT"}:
+            return max(0.01, min(0.99, base_probability - directional_strength))
+        return max(0.01, min(0.99, base_probability + directional_strength))
+
     def _sig_to_feature(self, sig: MarketSignal) -> dict[str, Any]:
-        price = max(0.0001, min(0.9999, float(sig.price)))
+        yes_probability = self._yes_probability_from_signal(sig)
+        price = self._clamp_probability(sig.current_prob if sig.current_prob else sig.price)
         spread = max(0.01, min(0.08, float(sig.fee_rate_bps or 0) / 10000.0 or 0.02))
+        time_to_settlement_hours = 24.0
+        probability_variance = max(0.0004, min(0.04, (1.0 - max(0.0, min(1.0, float(sig.confidence)))) * 0.12))
         return {
             "market_id": sig.market_slug or sig.ticker,
             "ticker": sig.ticker,
@@ -384,9 +404,10 @@ class MarketScanner:
             "ask_volume": max(25.0, float(sig.volume) / 2.0),
             "spread": spread,
             "order_imbalance": 0.0,
-            "ml_probability": price,
+            "ml_probability": yes_probability,
             "hmm_regime": sig.sentiment,
             "sentiment_score": 0.1,
+            "confidence": float(sig.confidence),
             "known_wallet_flow_score": self._wallet_flow_scores.get(sig.market_slug.lower() if sig.market_slug else "", 0.0),
             "metadata": {
                 "market_question": sig.market_question,
@@ -395,6 +416,12 @@ class MarketScanner:
                 "token_id": sig.token_id,
                 "yes_token_id": sig.token_id if sig.side.upper() in {"BUY", "YES", "LONG"} else "",
                 "no_token_id": sig.token_id if sig.side.upper() in {"SELL", "NO", "SHORT"} else "",
+                "estimated_probability": yes_probability,
+                "posterior_probability": yes_probability,
+                "probability_variance": probability_variance,
+                "sigma_relative": max(0.05, min(0.45, 1.0 - float(sig.confidence))),
+                "time_to_settlement_hours": time_to_settlement_hours,
+                "quoted_outcome_price": max(0.0001, min(0.9999, float(sig.price))),
                 "source": "market_scanner_signal",
             }
         }

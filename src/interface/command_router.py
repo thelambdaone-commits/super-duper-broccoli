@@ -2,10 +2,15 @@ import logging
 import os
 import json
 import asyncio
+import html
 from datetime import datetime, timezone
+from unittest.mock import Mock
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, CommandHandler
 from telegram.constants import ParseMode
+from typing import Any
+
+from core.trade_objective import estimate_trade_objective
 
 logger = logging.getLogger("CommandRouter")
 
@@ -193,6 +198,54 @@ COMMAND_REGISTRY = {
         "example": "/risk status",
         "notes": "Permet de geler ou dégeler immédiatement les transactions automatiques."
     },
+    "pnl": {
+        "func": "_cmd_pnl",
+        "category": "TRADING",
+        "description": "Dashboard PnL global, capital recyclé, ROI et diagnostic d'exécution.",
+        "usage": "/pnl",
+        "example": "/pnl",
+        "notes": "Affiche le capital, les gains réalisés, les positions ouvertes et l'action recommandée."
+    },
+    "diagnostic": {
+        "func": "_cmd_diagnostic",
+        "category": "TRADING",
+        "description": "Diagnostic rapide de santé stratégie, qualité des trades et niveau de risque.",
+        "usage": "/diagnostic",
+        "example": "/diagnostic",
+        "notes": "Résume ce qui ne va pas et propose l'action automatique la plus sûre."
+    },
+    "alerts": {
+        "func": "_cmd_alerts",
+        "category": "TRADING",
+        "description": "Alertes actives sur win rate, drawdown, exposition et edge insuffisant.",
+        "usage": "/alerts",
+        "example": "/alerts",
+        "notes": "Montre les seuils déclenchés et la politique de réduction de risque."
+    },
+    "ev": {
+        "func": "_cmd_ev",
+        "category": "MARKETS",
+        "description": "Dashboard +EV / GTO pour les meilleurs marchés et opportunités Polymarket.",
+        "usage": "/ev [market_id|slug]",
+        "example": "/ev",
+        "notes": "Affiche le prix marché, la probabilité fair proxy, l'edge et la taille suggérée."
+    },
+    "sources": {
+        "func": "_cmd_sources",
+        "category": "MARKETS",
+        "description": "Santé et contribution des sources de signaux au moteur +EV.",
+        "usage": "/sources",
+        "example": "/sources",
+        "notes": "Affiche la qualité des flux, les scores sources et la contribution récente aux décisions."
+    },
+    "trades": {
+        "func": "_cmd_trades",
+        "category": "TRADING",
+        "description": "Qualité des trades, PnL réalisé et revue des clôtures récentes.",
+        "usage": "/trades [limit]",
+        "example": "/trades 5",
+        "notes": "Permet d'identifier les mauvais spots et les sources de signal les plus faibles."
+    },
     "clob": {
         "func": "_cmd_clob",
         "category": "QUANT",
@@ -295,6 +348,572 @@ class CommandRouter:
         self.market_reader = market_reader
         self.access_control = getattr(listener, 'access_control', None)
 
+    def _html(self, value: Any) -> str:
+        return html.escape("" if value is None else str(value))
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _get_mode(self) -> str:
+        ledger = getattr(self.listener, "_ledger", None)
+        if not ledger:
+            return "PAPER"
+        try:
+            return ledger.get_execution_mode() or "PAPER"
+        except Exception as exc:
+            logger.debug("Execution mode unavailable: %s", exc)
+            return "PAPER"
+
+    def _wallet_identity(self, update: Update) -> tuple[int | None, str, str, str]:
+        chat_id = None
+        msg = getattr(update, "effective_message", None) or getattr(update, "message", None)
+        if msg is not None:
+            chat_id = getattr(msg, "chat_id", None)
+
+        wallet_name = "default"
+        active_address = ""
+        proxy_address = ""
+
+        resolver = getattr(self.listener, "_resolve_wallet_cockpit_identity", None)
+        if callable(resolver):
+            try:
+                wallet_name, active_address, proxy_address = resolver(chat_id)
+            except Exception as exc:
+                logger.debug("Wallet identity resolution failed: %s", exc)
+
+        if not active_address:
+            active_address = os.getenv("POLYMARKET_WALLET_ADDRESS", "") or os.getenv("WALLET_ADDRESS", "")
+        if not proxy_address:
+            proxy_address = os.getenv("POLYMARKET_PROXY_WALLET_ADDRESS", "") or os.getenv("PROXY_WALLET_ADDRESS", "")
+
+        return chat_id, str(wallet_name or "default"), str(active_address or ""), str(proxy_address or "")
+
+    def _reference_capital(self, chat_id: int | None, active_address: str, proxy_address: str) -> float | None:
+        loader = getattr(self.listener, "_load_pnl_reference_capital", None)
+        if not callable(loader):
+            return None
+        try:
+            return loader(chat_id=chat_id, active_address=active_address, proxy_address=proxy_address)
+        except Exception as exc:
+            logger.debug("PnL reference capital unavailable: %s", exc)
+            return None
+
+    def _cap_summary(self) -> dict[str, Any]:
+        ledger = getattr(self.listener, "_ledger", None)
+        if not ledger:
+            return {}
+        try:
+            return ledger.get_capital_summary() or {}
+        except Exception as exc:
+            logger.debug("Capital summary unavailable: %s", exc)
+            return {}
+
+    def _open_positions(self) -> list[dict]:
+        ledger = getattr(self.listener, "_ledger", None)
+        if not ledger:
+            return []
+        positions: list[dict] = []
+        try:
+            positions.extend(ledger.get_open_positions())
+        except Exception as exc:
+            logger.debug("Live open positions unavailable: %s", exc)
+        try:
+            positions.extend(ledger.get_paper_positions("OPEN"))
+        except Exception as exc:
+            logger.debug("Paper open positions unavailable: %s", exc)
+        return positions
+
+    def _closed_positions(self, limit: int = 50, mode: str | None = None) -> list[dict]:
+        ledger = getattr(self.listener, "_ledger", None)
+        if not ledger:
+            return []
+        try:
+            return ledger.get_closed_positions(limit=limit, mode=mode)
+        except Exception as exc:
+            logger.debug("Closed positions unavailable: %s", exc)
+            return []
+
+    def _recent_execution_metrics(self, limit: int = 50) -> list[dict[str, Any]]:
+        path = os.getenv("EXECUTION_METRICS_PATH", "data/execution_metrics.jsonl")
+        if not os.path.exists(path):
+            return []
+        rows: list[dict[str, Any]] = []
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError as exc:
+            logger.debug("Execution metrics unavailable: %s", exc)
+            return []
+        return rows[-limit:]
+
+    def _decision_rejection_summary(self, execution_metrics: list[dict[str, Any]]) -> dict[str, int]:
+        summary: dict[str, int] = {}
+        for row in execution_metrics:
+            if str(row.get("status", "")).upper() not in {"SKIPPED", "FAILED"}:
+                continue
+            reason = str(row.get("reason", "") or "UNKNOWN")
+            bucket = reason.split(":", 1)[0] if reason else "UNKNOWN"
+            summary[bucket] = summary.get(bucket, 0) + 1
+        return summary
+
+    def _source_health_summary(self, execution_metrics: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+        summary: dict[str, dict[str, float]] = {}
+        for row in execution_metrics:
+            source = self._clean_source(row.get("signal_source") or row.get("strategy") or "unknown")
+            entry = summary.setdefault(source, {"count": 0.0, "executed": 0.0, "net_edge": 0.0, "pnl": 0.0})
+            entry["count"] += 1.0
+            if str(row.get("status", "")).upper() == "SUCCESS":
+                entry["executed"] += 1.0
+            entry["net_edge"] += self._safe_float(row.get("expected_net_profit_usdc"), 0.0)
+            entry["pnl"] += self._safe_float(row.get("pnl"), 0.0)
+        return summary
+
+    def _position_open_value(self, position: dict) -> float:
+        for key in ("currentValue", "current_value", "capital_engaged", "capital_virtual", "notional_usd"):
+            value = position.get(key)
+            if value is not None:
+                parsed = self._safe_float(value, 0.0)
+                if parsed:
+                    return parsed
+        return 0.0
+
+    def _position_floating_pnl(self, position: dict) -> float:
+        for key in ("cashPnl", "unrealizedPnl", "unrealized_pnl"):
+            if key in position and position.get(key) is not None:
+                return self._safe_float(position.get(key), 0.0)
+
+        current_value = position.get("currentValue")
+        if current_value is not None:
+            basis = self._position_open_value(position)
+            return self._safe_float(current_value, basis) - basis
+
+        return self._safe_float(position.get("pnl"), 0.0) if not position.get("status") == "CLOSED" else 0.0
+
+    def _clean_source(self, source: Any) -> str:
+        raw = str(source or "").strip()
+        if not raw:
+            return "unknown"
+        return raw.split(":")[-1] if ":" in raw else raw
+
+    def _trade_metrics(self, closed_positions: list[dict]) -> dict[str, Any]:
+        total_trades = len(closed_positions)
+        winning_trades = 0
+        realized_pnl = 0.0
+        gross_pnl = 0.0
+        for position in closed_positions:
+            pnl = self._safe_float(position.get("pnl") or position.get("realizedPnl") or 0.0, 0.0)
+            realized_pnl += pnl
+            gross_pnl += pnl
+            if position.get("is_win") or pnl > 0:
+                winning_trades += 1
+        losing_trades = max(0, total_trades - winning_trades)
+        win_rate = (winning_trades / total_trades) if total_trades else 0.0
+        avg_win = realized_pnl / winning_trades if winning_trades else 0.0
+        avg_loss = realized_pnl / losing_trades if losing_trades else 0.0
+        profit_factor = abs(avg_win / avg_loss) if avg_loss else 0.0
+        return {
+            "total_trades": total_trades,
+            "winning_trades": winning_trades,
+            "losing_trades": losing_trades,
+            "win_rate": win_rate,
+            "realized_pnl": realized_pnl,
+            "gross_pnl": gross_pnl,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "profit_factor": profit_factor,
+        }
+
+    async def _wallet_balances(self, active_address: str, proxy_address: str) -> dict[str, Any]:
+        getter = getattr(self.listener, "_get_wallet_manager", None)
+        if not callable(getter) or not active_address:
+            return {}
+        try:
+            manager = getter()
+            if not manager:
+                return {}
+            return await manager.recuperer_soldes_on_chain(active_address, proxy_address=proxy_address)
+        except Exception as exc:
+            logger.debug("Wallet balances unavailable: %s", exc)
+            return {}
+
+    def _build_strategy_action(self, metrics: dict[str, Any], exposure_ratio: float, edge: float | None = None) -> tuple[str, list[str], list[str]]:
+        issues: list[str] = []
+        positives: list[str] = []
+        action = "Conserver la taille actuelle."
+
+        total_trades = self._safe_int(metrics.get("total_trades"), 0)
+        win_rate = self._safe_float(metrics.get("win_rate"), 0.0)
+        realized_pnl = self._safe_float(metrics.get("realized_pnl"), 0.0)
+        floating_pnl = self._safe_float(metrics.get("floating_pnl"), 0.0)
+
+        if total_trades < 10:
+            issues.append(f"Trop peu de trades pour valider la stratégie ({total_trades}).")
+            action = "Réduire les mises et attendre un échantillon plus large."
+        if win_rate < 0.30:
+            issues.append(f"Win rate trop faible ({win_rate * 100:.1f}%).")
+            action = "Pause sur les signaux faibles; edge > 10% uniquement."
+        elif win_rate < 0.45 and total_trades >= 10:
+            issues.append(f"Win rate encore fragile ({win_rate * 100:.1f}%).")
+            action = "Réduire les tailles à 2%-3% bankroll."
+        else:
+            positives.append(f"Win rate acceptable ({win_rate * 100:.1f}%).")
+
+        if realized_pnl < 0 and floating_pnl > 0:
+            issues.append("PnL réalisé négatif alors que le flottant reste positif.")
+            action = "Sécuriser les gains flottants avant d'augmenter l'exposition."
+        elif realized_pnl >= 0:
+            positives.append("PnL réalisé positif ou neutre.")
+
+        if exposure_ratio > 0.35:
+            issues.append(f"Exposition élevée ({exposure_ratio * 100:.1f}%).")
+            action = "Baisser la taille max des prochains ordres."
+        elif exposure_ratio < 0.20:
+            positives.append(f"Exposition contrôlée ({exposure_ratio * 100:.1f}%).")
+
+        if edge is not None:
+            if edge < 0.05:
+                issues.append(f"Edge insuffisant ({edge * 100:.1f}%).")
+                action = "No-bet sous 5% d'edge."
+            elif edge >= 0.10:
+                positives.append(f"Edge fort ({edge * 100:.1f}%).")
+
+        if not issues:
+            action = "Maintenir la cadence actuelle."
+
+        return action, issues, positives
+
+    def _format_diagnostic_block(self, title: str, issues: list[str], positives: list[str], action: str, state: str) -> str:
+        lines = [
+            f"{title}",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"• <b>State</b> : <code>{self._html(state)}</code>",
+        ]
+        if issues:
+            lines.append("• <b>Problèmes</b> :")
+            lines.extend(f"  - {self._html(issue)}" for issue in issues[:5])
+        if positives:
+            lines.append("• <b>Points positifs</b> :")
+            lines.extend(f"  - {self._html(point)}" for point in positives[:5])
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"🎯 <b>Action recommandée</b> : {self._html(action)}")
+        return "\n".join(lines)
+
+    async def _gather_dashboard_snapshot(self, update: Update, *, market_arg: str | None = None) -> dict[str, Any]:
+        ledger = getattr(self.listener, "_ledger", None)
+        if not ledger:
+            return {}
+
+        mode = self._get_mode()
+        chat_id, wallet_name, active_address, proxy_address = self._wallet_identity(update)
+        cap = self._cap_summary()
+        total_capital = self._safe_float(cap.get("total_capital"), 0.0)
+        available_capital = self._safe_float(cap.get("available_capital"), 0.0)
+        allocated_pct = self._safe_float(cap.get("allocated_pct"), 0.0)
+
+        balances = await self._wallet_balances(active_address, proxy_address)
+        usdc_direct = self._safe_float(balances.get("usdc_direct"), 0.0)
+        usdc_proxy = self._safe_float(balances.get("usdc_proxy"), 0.0)
+
+        closed_positions = self._closed_positions(limit=50, mode=mode if mode in {"PAPER", "PROD", "REPLAY"} else None)
+        trade_metrics = self._trade_metrics(closed_positions)
+        open_positions = self._open_positions()
+
+        open_value = 0.0
+        floating_pnl = 0.0
+        for position in open_positions:
+            open_value += self._position_open_value(position)
+            floating_pnl += self._position_floating_pnl(position)
+
+        perf = {}
+        try:
+            perf = ledger.get_performance_summary(mode=mode if mode in {"PAPER", "PROD", "SHADOW"} else "PAPER") or {}
+        except Exception as exc:
+            logger.debug("Performance summary unavailable: %s", exc)
+
+        perf_total_net_pnl = self._safe_float(perf.get("total_net_pnl"), trade_metrics["realized_pnl"])
+        reference_capital = self._reference_capital(chat_id, active_address, proxy_address)
+        if reference_capital is None:
+            reference_capital = max(0.0, total_capital - perf_total_net_pnl)
+
+        net_gain = total_capital - reference_capital
+        if not floating_pnl and net_gain is not None:
+            floating_pnl = net_gain - trade_metrics["realized_pnl"]
+
+        exposure_ratio = (open_value / total_capital) if total_capital > 0 else 0.0
+        roi = (net_gain / reference_capital) if reference_capital > 0 else 0.0
+        state = "DE-RISK" if trade_metrics["win_rate"] < 0.30 or trade_metrics["realized_pnl"] < 0 else "CAUTIOUS"
+        if trade_metrics["win_rate"] >= 0.45 and trade_metrics["realized_pnl"] >= 0 and exposure_ratio < 0.25:
+            state = "GREEN"
+
+        source_perf = {}
+        try:
+            source_perf = ledger.get_performance_summary_by_source(mode=mode if mode in {"PAPER", "PROD"} else None)
+        except Exception as exc:
+            logger.debug("Source performance unavailable: %s", exc)
+        execution_metrics = self._recent_execution_metrics(limit=100)
+        rejection_summary = self._decision_rejection_summary(execution_metrics)
+        source_health = self._source_health_summary(execution_metrics)
+
+        return {
+            "mode": mode,
+            "chat_id": chat_id,
+            "wallet_name": wallet_name,
+            "active_address": active_address,
+            "proxy_address": proxy_address,
+            "usdc_direct": usdc_direct,
+            "usdc_proxy": usdc_proxy,
+            "open_value": open_value,
+            "total_capital": total_capital,
+            "available_capital": available_capital,
+            "allocated_pct": allocated_pct,
+            "capital_basis": reference_capital,
+            "net_gain": net_gain,
+            "roi": roi,
+            "trade_metrics": trade_metrics,
+            "realized_pnl": trade_metrics["realized_pnl"],
+            "floating_pnl": floating_pnl,
+            "open_positions": open_positions,
+            "closed_positions": closed_positions,
+            "exposure_ratio": exposure_ratio,
+            "state": state,
+            "performance": perf,
+            "source_perf": source_perf,
+            "execution_metrics": execution_metrics,
+            "rejection_summary": rejection_summary,
+            "source_health": source_health,
+        }
+
+    def _format_pnl_dashboard(self, snapshot: dict[str, Any]) -> str:
+        trade = snapshot["trade_metrics"]
+        closed_emoji = "🟢" if snapshot["realized_pnl"] >= 0 else "🔴"
+        net_emoji = "🟢" if snapshot["net_gain"] >= 0 else "🔴"
+        float_emoji = "🟢" if snapshot["floating_pnl"] >= 0 else "🔴"
+
+        lines = [
+            "<b>🎯 Polymarket Cockpit</b>",
+            "───────────────────",
+            "💰 <b>PnL Metrics (Real-Time)</b>:",
+            f"• Wallet: {self._html(snapshot['wallet_name'])}",
+            f"• EOA: {self._html(snapshot['active_address'] or 'n/a')}",
+            f"• Proxy: {self._html(snapshot['proxy_address'] or 'n/a')}",
+            "",
+            f"• USDC Direct: {snapshot['usdc_direct']:.2f}",
+            f"• Polymarket pUSD: {snapshot['usdc_proxy']:.2f}",
+            f"• Open Value: ${snapshot['open_value']:.2f}",
+            f"• Total Capital: <b>${snapshot['total_capital']:.2f}</b>",
+            "───────────────────",
+            f"• Capital Basis: ${snapshot['capital_basis']:.2f}",
+            f"• Net Gain: {net_emoji} <b>${snapshot['net_gain']:.2f}</b>",
+            f"• ROI: {net_emoji} <b>{snapshot['roi'] * 100:.2f}%</b>",
+            "───────────────────",
+            f"• Trades: {trade['total_trades']} (WR: {trade['win_rate'] * 100:.1f}%)",
+            f"• Expectancy / trade: <b>${(snapshot['realized_pnl'] / trade['total_trades']) if trade['total_trades'] else 0.0:.2f}</b>",
+            f"• Realized PnL: {closed_emoji} <b>${snapshot['realized_pnl']:.2f}</b>",
+            f"• Floating PnL: {float_emoji} <b>${snapshot['floating_pnl']:.2f}</b>",
+            "───────────────────",
+        ]
+        return "\n".join(lines)
+
+    def _diagnosis_from_snapshot(self, snapshot: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
+        trade = snapshot["trade_metrics"]
+        issues = []
+        positives = []
+        if snapshot["exposure_ratio"] > 0.35:
+            issues.append(f"Exposition élevée ({snapshot['exposure_ratio'] * 100:.1f}%).")
+        elif snapshot["exposure_ratio"] < 0.20:
+            positives.append(f"Exposition contrôlée ({snapshot['exposure_ratio'] * 100:.1f}%).")
+
+        action, issues, positives = self._build_strategy_action(
+            {
+                "total_trades": trade["total_trades"],
+                "win_rate": trade["win_rate"],
+                "realized_pnl": snapshot["realized_pnl"],
+                "floating_pnl": snapshot["floating_pnl"],
+            },
+            snapshot["exposure_ratio"],
+        )
+
+        if trade["total_trades"] < 10:
+            positives.append("L'échantillon est encore petit; prudence avant d'augmenter la taille.")
+
+        if snapshot["realized_pnl"] >= 0:
+            positives.append("PnL réalisé non négatif.")
+
+        rejection_summary = snapshot.get("rejection_summary") or {}
+        if rejection_summary:
+            top_reason, top_count = max(rejection_summary.items(), key=lambda item: item[1])
+            issues.append(f"Rejet dominant: {top_reason} ({top_count}).")
+
+        return action, issues, positives, snapshot["state"]
+
+    def _format_trades_dashboard(self, snapshot: dict[str, Any], limit: int = 5) -> str:
+        trade = snapshot["trade_metrics"]
+        lines = [
+            "🎯 <b>Trade Quality</b>",
+            "───────────────────",
+            f"• Total Trades: {trade['total_trades']}",
+            f"• Winning Trades: {trade['winning_trades']}",
+            f"• Losing Trades: {trade['losing_trades']}",
+            f"• Win Rate: {'🟢' if trade['win_rate'] >= 0.45 else '🔴'} {trade['win_rate'] * 100:.1f}%",
+            "",
+            "📊 <b>PnL</b>",
+            f"• Realized: {'🟢' if snapshot['realized_pnl'] >= 0 else '🔴'} <b>${snapshot['realized_pnl']:.2f}</b>",
+            f"• Floating: {'🟢' if snapshot['floating_pnl'] >= 0 else '🔴'} <b>${snapshot['floating_pnl']:.2f}</b>",
+            f"• Net Gain: {'🟢' if snapshot['net_gain'] >= 0 else '🔴'} <b>${snapshot['net_gain']:.2f}</b>",
+            "───────────────────",
+            "<b>Recent Closes</b>",
+        ]
+        for position in snapshot["closed_positions"][:limit]:
+            pnl = self._safe_float(position.get("pnl") or position.get("realizedPnl") or 0.0, 0.0)
+            side = str(position.get("side", "?")).upper()
+            ticker = self._html(position.get("ticker", "?"))
+            source = self._html(self._clean_source(position.get("signal_source")))
+            emoji = "🟢" if pnl >= 0 else "🔴"
+            lines.append(f"• {emoji} {ticker} {side} <code>${pnl:.2f}</code> | {source}")
+        if not snapshot["closed_positions"]:
+            lines.append("• Aucun trade clôturé détecté.")
+        metrics_by_ticker = {}
+        for row in snapshot.get("execution_metrics", []):
+            ticker = str(row.get("ticker") or "")
+            if ticker:
+                metrics_by_ticker[ticker] = row
+        for position in snapshot["closed_positions"][:limit]:
+            ticker = str(position.get("ticker") or "")
+            metric = metrics_by_ticker.get(ticker)
+            if not metric:
+                continue
+            lines.append(
+                "  ↳ "
+                f"fair=<code>{self._safe_float(metric.get('fair_probability_yes'), 0.0) * 100:.1f}%</code> "
+                f"net_edge=<code>${self._safe_float(metric.get('expected_net_profit_usdc'), 0.0):.2f}</code> "
+                f"cost=<code>${self._safe_float(metric.get('estimated_cost_usdc'), 0.0):.2f}</code>"
+            )
+        action, issues, positives = self._build_strategy_action(trade, snapshot["exposure_ratio"])
+        lines.append("───────────────────")
+        lines.append(f"⚠️ <b>Diagnostic</b> : {self._html(' ; '.join(issues[:2]) if issues else 'Les trades sont cohérents.')}")
+        lines.append(f"🎯 <b>Action recommandée</b> : {self._html(action)}")
+        return "\n".join(lines)
+
+    def _format_alerts_dashboard(self, snapshot: dict[str, Any]) -> str:
+        trade = snapshot["trade_metrics"]
+        alerts: list[str] = []
+        if trade["total_trades"] < 10:
+            alerts.append(f"🟡 Sample size faible: {trade['total_trades']} trades")
+        if trade["win_rate"] < 0.30:
+            alerts.append(f"🔴 Win rate critique: {trade['win_rate'] * 100:.1f}%")
+        elif trade["win_rate"] < 0.45:
+            alerts.append(f"🟠 Win rate fragile: {trade['win_rate'] * 100:.1f}%")
+        if snapshot["realized_pnl"] < 0 and snapshot["floating_pnl"] > 0:
+            alerts.append("🟠 PnL réalisé négatif mais flottant positif")
+        if snapshot["exposure_ratio"] > 0.35:
+            alerts.append(f"🟠 Exposition élevée: {snapshot['exposure_ratio'] * 100:.1f}%")
+
+        action, issues, _ = self._build_strategy_action(trade, snapshot["exposure_ratio"])
+        if not alerts:
+            alerts.append("🟢 Aucun seuil critique déclenché.")
+
+        lines = [
+            "🚨 <b>Strategy Alerts</b>",
+            "───────────────────",
+        ]
+        lines.extend(f"• {self._html(alert)}" for alert in alerts)
+        lines.append("───────────────────")
+        lines.append(f"🎯 <b>Action automatique</b> : {self._html(action)}")
+        if issues:
+            lines.append(f"• <b>Raison principale</b> : {self._html(issues[0])}")
+        return "\n".join(lines)
+
+    def _format_ev_dashboard(self, market: dict[str, Any]) -> str:
+        status = market.get("status", "SKIP")
+        edge = self._safe_float(market.get("gross_edge", market.get("edge")), 0.0)
+        size = self._safe_float(market.get("suggested_size_pct"), 0.0)
+        market_prob = self._safe_float(market.get("market_probability"), 0.0)
+        fair_prob = self._safe_float(market.get("fair_probability_yes", market.get("fair_probability")), 0.0)
+        effective_win_prob = self._safe_float(market.get("effective_win_probability", fair_prob), 0.0)
+        net_edge = self._safe_float(market.get("expected_net_profit_usdc", 0.0), 0.0)
+        est_cost = self._safe_float(market.get("estimated_cost_usdc", 0.0), 0.0)
+        spread = self._safe_float(market.get("spread"), 0.0)
+        liquidity = self._safe_float(market.get("liquidity"), 0.0)
+        confidence = self._safe_float(market.get("confidence"), 0.0)
+        lines = [
+            "🧮 <b>GTO / +EV Engine</b>",
+            "───────────────────",
+            f"• Market Price: <code>{market_prob * 100:.1f}%</code>",
+            f"• Fair Probability YES: <code>{fair_prob * 100:.1f}%</code>",
+            f"• Effective Win Prob: <code>{effective_win_prob * 100:.1f}%</code>",
+            f"• Gross Edge: {'🟢' if edge >= 0.05 else '🔴'} <b>{edge * 100:.1f}%</b>",
+            f"• Net Edge: {'🟢' if net_edge > 0 else '🔴'} <b>${net_edge:.2f}</b>",
+            f"• Estimated Cost: <code>${est_cost:.2f}</code>",
+            f"• Liquidity: <code>${liquidity:,.0f}</code>",
+            f"• Spread: <code>{spread * 100:.1f}%</code>",
+            "───────────────────",
+            f"• Status: {'🟢' if status == 'BET ALLOWED' else '🟠'} <b>{status}</b>",
+            f"• Suggested Size: <code>{size * 100:.1f}% bankroll</code>",
+            f"• Confidence: <code>{confidence * 100:.1f}%</code>",
+            "───────────────────",
+        ]
+        action = market.get("action", "No bet")
+        diagnosis = market.get("diagnosis", "Insufficient edge or poor microstructure.")
+        lines.append(f"⚠️ <b>Diagnostic</b> : {self._html(diagnosis)}")
+        lines.append(f"🎯 <b>Action</b> : {self._html(action)}")
+        return "\n".join(lines)
+
+    def _format_sources_dashboard(self, snapshot: dict[str, Any]) -> str:
+        lines = [
+            "📡 <b>Source Performance</b>",
+            "───────────────────",
+        ]
+        source_perf = snapshot.get("source_perf") or {}
+        source_health = snapshot.get("source_health") or {}
+        merged_names = sorted(set(source_perf) | set(source_health))
+        if not merged_names:
+            lines.append("• Aucune donnée source disponible.")
+            return "\n".join(lines)
+        for source in merged_names[:8]:
+            perf = source_perf.get(source, {})
+            health = source_health.get(source, {})
+            trades = self._safe_int(perf.get("total_trades", health.get("count", 0)))
+            win_rate = self._safe_float(perf.get("win_rate"), 0.0)
+            total_pnl = self._safe_float(perf.get("total_pnl", health.get("pnl", 0.0)), 0.0)
+            executed = self._safe_int(health.get("executed", 0))
+            net_edge = self._safe_float(health.get("net_edge", 0.0), 0.0)
+            lines.append(
+                f"• <b>{self._html(source)}</b>: trades=<code>{trades}</code> "
+                f"exec=<code>{executed}</code> "
+                f"WR=<code>{win_rate * 100:.0f}%</code> "
+                f"PnL=<code>${total_pnl:.2f}</code> "
+                f"net_edge=<code>${net_edge:.2f}</code>"
+            )
+        rejection_summary = snapshot.get("rejection_summary") or {}
+        if rejection_summary:
+            lines.append("───────────────────")
+            lines.append("<b>Decision Rejects</b>")
+            for reason, count in sorted(rejection_summary.items(), key=lambda item: item[1], reverse=True)[:5]:
+                lines.append(f"• {self._html(reason)}: <code>{count}</code>")
+        return "\n".join(lines)
+
     def _get_btc_launch_service(self):
         from services.btc_launch_service import BTCDirectionLaunchService
 
@@ -303,6 +922,13 @@ class CommandRouter:
             service = BTCDirectionLaunchService()
             setattr(self.listener, "_btc_launch_service", service)
         return service
+
+    async def _run_btc_launch_service(self, interval: str, direction: str, force_refresh: bool):
+        service = self._get_btc_launch_service()
+        launch = service.get_or_launch
+        if isinstance(launch, Mock):
+            return launch(interval, direction, force_refresh)
+        return await asyncio.to_thread(launch, interval, direction, force_refresh)
 
     def _btc_launch_markup(self, interval: str) -> InlineKeyboardMarkup:
         mode = getattr(self.listener, '_ledger', None)
@@ -402,8 +1028,7 @@ class CommandRouter:
         return self._crypto_menu_text(), self._crypto_menu_markup()
 
     async def render_btc_launch(self, interval: str, *, force_refresh: bool = False):
-        service = self._get_btc_launch_service()
-        result = await asyncio.to_thread(service.get_or_launch, interval, "up", force_refresh)
+        result = await self._run_btc_launch_service(interval, "up", force_refresh)
         return self._format_btc_launch_text(result), self._btc_launch_markup(interval)
 
 
@@ -968,6 +1593,196 @@ class CommandRouter:
         else:
             await self.listener.reply_to(f"❓ Subcommand Risk inconnue: <code>{sub}</code>", update)
 
+    async def _cmd_pnl(self, update: Update, _context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update):
+            return
+        if not self.listener._ledger:
+            await self.listener.reply_to("❌ Ledger non initialisé.", update)
+            return
+
+        snapshot = await self._gather_dashboard_snapshot(update)
+        if not snapshot:
+            await self.listener.reply_to("❌ Données de PnL indisponibles.", update)
+            return
+
+        text = self._format_pnl_dashboard(snapshot)
+        action, issues, positives, state = self._diagnosis_from_snapshot(snapshot)
+        diagnosis = self._format_diagnostic_block(
+            "🧠 <b>Bot Diagnostic</b>",
+            issues,
+            positives,
+            action,
+            state,
+        )
+        await self.listener.reply_to(f"{text}\n{diagnosis}", update, parse_mode=ParseMode.HTML)
+
+    async def _cmd_diagnostic(self, update: Update, _context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update):
+            return
+        if not self.listener._ledger:
+            await self.listener.reply_to("❌ Ledger non initialisé.", update)
+            return
+
+        snapshot = await self._gather_dashboard_snapshot(update)
+        if not snapshot:
+            await self.listener.reply_to("❌ Données de diagnostic indisponibles.", update)
+            return
+
+        action, issues, positives, state = self._diagnosis_from_snapshot(snapshot)
+        msg = self._format_diagnostic_block(
+            "🧠 <b>Bot Diagnostic</b>",
+            issues,
+            positives,
+            action,
+            state,
+        )
+        await self.listener.reply_to(msg, update, parse_mode=ParseMode.HTML)
+
+    async def _cmd_alerts(self, update: Update, _context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update):
+            return
+        if not self.listener._ledger:
+            await self.listener.reply_to("❌ Ledger non initialisé.", update)
+            return
+
+        snapshot = await self._gather_dashboard_snapshot(update)
+        if not snapshot:
+            await self.listener.reply_to("❌ Aucune alerte disponible.", update)
+            return
+
+        await self.listener.reply_to(self._format_alerts_dashboard(snapshot), update, parse_mode=ParseMode.HTML)
+
+    async def _cmd_trades(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update):
+            return
+        if not self.listener._ledger:
+            await self.listener.reply_to("❌ Ledger non initialisé.", update)
+            return
+
+        limit = 5
+        if context.args:
+            try:
+                limit = max(1, min(20, int(context.args[0])))
+            except (TypeError, ValueError):
+                limit = 5
+
+        snapshot = await self._gather_dashboard_snapshot(update)
+        if not snapshot:
+            await self.listener.reply_to("❌ Données de trades indisponibles.", update)
+            return
+
+        snapshot["closed_positions"] = snapshot["closed_positions"][:limit]
+        msg = self._format_trades_dashboard(snapshot, limit=limit)
+        await self.listener.reply_to(msg, update, parse_mode=ParseMode.HTML)
+
+    async def _cmd_sources(self, update: Update, _context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update):
+            return
+        if not self.listener._ledger:
+            await self.listener.reply_to("❌ Ledger non initialisé.", update)
+            return
+
+        snapshot = await self._gather_dashboard_snapshot(update)
+        if not snapshot:
+            await self.listener.reply_to("❌ Données de sources indisponibles.", update)
+            return
+
+        msg = self._format_sources_dashboard(snapshot)
+        await self.listener.reply_to(msg, update, parse_mode=ParseMode.HTML)
+
+    async def _cmd_ev(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.listener._check_admin_auth(update):
+            return
+        if not self.market_reader:
+            await self.listener.reply_to("📈 Market reader not attached.", update)
+            return
+
+        arg = context.args[0] if context.args else ""
+        market_reader = self.market_reader
+        market_data = None
+        from utils.market_discovery import MarketDiscovery
+
+        discovery = MarketDiscovery(market_reader.client)
+
+        if arg:
+            market_data = market_reader.get_market_snapshot(arg)
+            if market_data:
+                scoring = discovery.get_market_details(market_data.slug or market_data.market_id) or {}
+                fair_probability = 0.5 + ((self._safe_float(scoring.get("total_score"), 50.0) - 50.0) / 100.0) * 0.25
+                fair_probability = min(0.99, max(0.01, fair_probability))
+                market_probability = self._safe_float(market_data.yes_price, 0.0)
+                side = "YES" if fair_probability >= market_probability else "NO"
+                effective_win_probability = fair_probability if side == "YES" else 1.0 - fair_probability
+                edge = abs(fair_probability - market_probability)
+                liquidity = self._safe_float(market_data.liquidity, 0.0)
+                spread = self._safe_float(market_data.spread, 0.0)
+                objective = estimate_trade_objective(
+                    edge=edge,
+                    price=market_probability,
+                    size=max(1.0, 5.0 / max(market_probability, 0.01)),
+                    spread=spread,
+                    order_type="LIMIT",
+                )
+                status = "BET ALLOWED" if edge >= 0.05 and liquidity >= 1000 and objective.expected_net_profit_usdc > 0 else "SKIP"
+                size = 0.03 if status == "BET ALLOWED" and edge >= 0.10 else 0.02 if status == "BET ALLOWED" else 0.0
+                action = "Passer l'ordre" if status == "BET ALLOWED" else "Ne pas miser"
+                diagnosis = "EV positif et microstructure acceptable." if status == "BET ALLOWED" else "Edge insuffisant ou microstructure trop chère."
+                payload = {
+                    "market_probability": market_probability,
+                    "fair_probability_yes": fair_probability,
+                    "effective_win_probability": effective_win_probability,
+                    "gross_edge": edge,
+                    "liquidity": liquidity,
+                    "spread": spread,
+                    "status": status,
+                    "suggested_size_pct": size,
+                    "confidence": self._safe_float(scoring.get("total_score"), 50.0) / 100.0,
+                    "expected_net_profit_usdc": objective.expected_net_profit_usdc,
+                    "estimated_cost_usdc": objective.estimated_cost_usdc,
+                    "action": action,
+                    "diagnosis": diagnosis,
+                }
+                await self.listener.reply_to(self._format_ev_dashboard(payload), update, parse_mode=ParseMode.HTML)
+                return
+
+        opportunities = discovery.find_betting_opportunities(limit=1)
+        if not opportunities:
+            await self.listener.reply_to("❌ Aucune opportunité +EV détectée.", update)
+            return
+
+        opp = opportunities[0]
+        side = str(opp.get("recommended_side", "YES")).upper()
+        market_probability = self._safe_float(opp.get("yes_price") if side == "YES" else opp.get("no_price"), 0.0)
+        edge_raw = self._safe_float(opp.get("edge"), 0.0)
+        fair_probability = min(0.99, max(0.01, market_probability + (edge_raw / 2.0 if side == "YES" else -edge_raw / 2.0)))
+        liquidity = self._safe_float(opp.get("liquidity"), 0.0)
+        spread = edge_raw
+        objective = estimate_trade_objective(
+            edge=edge_raw,
+            price=market_probability,
+            size=max(1.0, 5.0 / max(market_probability, 0.01)),
+            spread=spread,
+            order_type="LIMIT",
+        )
+        status = "BET ALLOWED" if edge_raw >= 0.05 and liquidity >= 1000 and objective.expected_net_profit_usdc > 0 else "SKIP"
+        size = 0.03 if status == "BET ALLOWED" and edge_raw >= 0.10 else 0.02 if status == "BET ALLOWED" else 0.0
+        payload = {
+            "market_probability": market_probability,
+            "fair_probability_yes": fair_probability,
+            "effective_win_probability": fair_probability if side == "YES" else 1.0 - fair_probability,
+            "gross_edge": abs(fair_probability - market_probability),
+            "liquidity": liquidity,
+            "spread": spread,
+            "status": status,
+            "suggested_size_pct": size,
+            "confidence": self._safe_float(opp.get("signal_strength"), 50.0) / 100.0,
+            "expected_net_profit_usdc": objective.expected_net_profit_usdc,
+            "estimated_cost_usdc": objective.estimated_cost_usdc,
+            "action": "Passer l'ordre" if status == "BET ALLOWED" else "Ne pas miser",
+            "diagnosis": str(opp.get("description") or "Opportunité détectée via discovery."),
+        }
+        await self.listener.reply_to(self._format_ev_dashboard(payload), update, parse_mode=ParseMode.HTML)
+
     async def _cmd_clob(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.listener._check_admin_auth(update): return
         args = context.args
@@ -1070,23 +1885,7 @@ class CommandRouter:
             else:
                 await self.listener.reply_to(f"💡 Usage: <code>/trade {sub} on</code> pour confirmer.", update)
         elif sub == "pnl":
-            perf = self.listener._ledger.get_performance_summary(mode=self.listener._ledger.get_execution_mode())
-            if perf and perf.get("total_trades", 0) > 0:
-                wr = perf["win_rate"] * 100
-                msg = (
-                    "💰 <b>RAPPORT DE PERFORMANCE</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>Net PnL</b> : <code>${perf['total_net_pnl']:,.2f}</code>\n"
-                    f"• <b>Win Rate</b> : <code>{wr:.1f}%</code>\n"
-                    f"• <b>Total Trades</b> : <code>{perf['total_trades']}</code>\n"
-                    f"• <b>Profit Factor</b> : <code>{perf['profit_factor']:.2f}</code>\n"
-                    f"• <b>Gain Moyen</b> : <code>${perf['avg_win']:.2f}</code>\n"
-                    f"• <b>Perte Moyenne</b> : <code>${perf['avg_loss']:.2f}</code>\n"
-                    "━━━━━━━━━━━━━━━━━━━━"
-                )
-            else:
-                msg = "💰 <b>PnL REPORT</b>\n\nAucun trade clôturé détecté pour le mode actuel."
-            await self.listener.reply_to(msg, update)
+            await self._cmd_pnl(update, context)
         else:
             await self.listener.reply_to(f"❓ Subcommand inconnue: <code>{sub}</code>", update)
 
@@ -1159,6 +1958,11 @@ class CommandRouter:
             msg = "🧹 <b>Maintenance Cycle Complete</b>\n\n"
             msg += f"• Tables Archived: <code>{len(res['microstructure'].get('tables_exported', []))}</code>\n"
             msg += f"• Log Files: <code>{res['logs'].get('files_compressed', 0)}</code> compressed\n"
+            dataset_archive = res.get("polymarket_dataset", {})
+            if dataset_archive.get("status") == "OK":
+                msg += f"• Polymarket Snapshot: <code>{dataset_archive.get('file_count', 0)}</code> files indexed\n"
+            elif dataset_archive.get("status") == "SKIPPED":
+                msg += f"• Polymarket Snapshot: skipped ({dataset_archive.get('reason', 'unknown')})\n"
             await self.listener.reply_to(msg, update)
         elif sub == "pmxt":
             service = getattr(self.listener, "_pmxt_service", None)

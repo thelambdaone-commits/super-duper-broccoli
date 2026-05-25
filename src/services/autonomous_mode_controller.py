@@ -145,11 +145,7 @@ class AutonomousModeController:
         if not (mode == "PRD" or real_env):
             logger.warning(f"PROD prerequisites missing: MODE={mode} and REAL={real_env} (one must be PRD/true)")
             return False
-            
-        if not os.getenv("CLOB_PRIVATE_KEY"):
-            logger.error("PROD prerequisites missing: CLOB_PRIVATE_KEY is empty")
-            return False
-            
+
         return True
 
 

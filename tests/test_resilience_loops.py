@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from core.agents.agents.self_improvement_agent import SelfImprovementAgent
-from core.lobstar_cognitive_brain import LobstarCognitiveBrain
+from core.agents.self_improvement_agent import SelfImprovementAgent
+from services.lobstar_cognitive_brain import LobstarCognitiveBrain
 
 
 class _BrokenArbitrageEngine:

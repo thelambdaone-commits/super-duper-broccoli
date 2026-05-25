@@ -134,6 +134,11 @@ class MockLedger:
         self._mode = mode
 
 
+class AsyncValidationLedger(MockLedger):
+    async def validate_and_reserve(self, **kwargs) -> dict:
+        return super().validate_and_reserve(**kwargs)
+
+
 class MockFreqAIWithMinNotional:
     POLYMARKET_MIN_NOTIONAL = 5.0
 
@@ -340,6 +345,23 @@ class TestExecuteRegexSignal:
         with patch.object(ledger, "validate_and_reserve", return_value={
             "authorized": True, "size": 1.0, "reason": "ok",
         }):
+            result = await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
+
+        assert result["status"] == "SKIPPED"
+        assert "Polymarket minimum" in result["reason"]
+        freqai.clob_execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prod_mode_supports_async_validation_and_skips_cleanly_under_minimum(self) -> None:
+        ledger = AsyncValidationLedger(mode="PROD")
+        signal = {"asset": "SOL", "action": "BUY", "price": 0.50, "timestamp": 123}
+        freqai = AsyncMock()
+        freqai.POLYMARKET_MIN_NOTIONAL = 5.0
+        _attach_benign_order_book(freqai)
+
+        with patch.object(ledger, "validate_and_reserve", AsyncMock(return_value={
+            "authorized": True, "size": 1.0, "reason": "ok",
+        })):
             result = await execute_regex_signal(signal=signal, ledger=ledger, freqai=freqai)
 
         assert result["status"] == "SKIPPED"

@@ -31,7 +31,10 @@ async def dry_run_report(
     try:
         vault_secrets = secrets or {}
         vault_count = len(vault_secrets)
-        required_secrets = ["TELEGRAM_BOT_TOKEN", "CLOB_PRIVATE_KEY"]
+        mode_upper = (mode or "PAPER").upper()
+        required_secrets = ["TELEGRAM_BOT_TOKEN"]
+        if mode_upper in {"SHADOW", "PROD"}:
+            required_secrets.append("CLOB_PRIVATE_KEY")
         missing_secrets = [s for s in required_secrets if not vault_secrets.get(s)]
         _mark("vault", vault_count > 0 and not missing_secrets)
         session_wallet_count = vault.compter_wallets_session()

@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 
-from engine.backtest.backtester import Backtester
-from engine.backtest.metrics import sharpe_ratio, sortino_ratio, max_drawdown, calmar_ratio, information_coefficient, hit_rate
-from engine.backtest.costs import CostModel
+from core.backtest.backtester import Backtester
+from core.backtest.metrics import sharpe_ratio, sortino_ratio, max_drawdown, calmar_ratio, information_coefficient, hit_rate
+from core.backtest.costs import CostModel
 
 
 class TestCostModel:

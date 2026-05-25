@@ -1,6 +1,6 @@
 import pytest
 
-from core.freqai_engine import FreqAIEngine
+from polymarket.execution.freqai_engine import FreqAIEngine
 
 
 class _BooklessClient:
